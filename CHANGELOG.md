@@ -5,6 +5,14 @@ All notable changes to TomorrowCI are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.1-alpha.3] - 2026-08-06
+
+### Changed
+- Canonical evidence-index + mutation-resistant verify authorization kernel
+- Adversarial verifier suite; scan --json; no stale run-dir fallback in Action
+- RELEASE_PROVENANCE.json generation; real Cargo.lock SBOM versions
+- Alpha.2 marked rejected evidence-closure candidate
+
 ## [0.1.1-alpha.2] - 2026-08-06
 
 ### Changed
@@ -46,3 +54,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Live container e2e requires a running Docker/Podman daemon
 - yarn/pnpm, poetry, and remote GitHub clone scan are unsupported or incomplete
 - SBOM/signing use cargo-based dry-run scripts; full SLSA provenance is documented as future work
+

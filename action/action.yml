@@ -74,27 +74,38 @@ runs:
         fi
         SCAN_PATH="${{ inputs.path }}"
         CODE=0
-        if OUT=$("$BIN" scan "$SCAN_PATH" "${CFG_ARGS[@]}" 2>&1); then
+        if OUT=$("$BIN" scan "$SCAN_PATH" "${CFG_ARGS[@]}" --json 2>&1); then
           CODE=0
         else
           CODE=$?
         fi
         echo "$OUT"
-        RUN_ID=$(echo "$OUT" | sed -n 's/^run_id: //p' | tail -1)
-        RUN_DIR=""
-        if [[ -n "$RUN_ID" && -d "$SCAN_PATH/.tomorrowci/runs/$RUN_ID" ]]; then
-          RUN_DIR="$SCAN_PATH/.tomorrowci/runs/$RUN_ID"
-        else
-          RUN_DIR=$(ls -1dt "$SCAN_PATH"/.tomorrowci/runs/* 2>/dev/null | head -1 || true)
-        fi
-        if [[ -z "${RUN_DIR}" || ! -d "${RUN_DIR}" ]]; then
-          RUN_DIR=$(ls -1dt .tomorrowci/runs/* 2>/dev/null | head -1 || true)
-        fi
-        if [[ -z "${RUN_DIR}" || ! -d "${RUN_DIR}" ]]; then
-          echo "No evidence run directory produced" >> "$GITHUB_STEP_SUMMARY"
+        # Structured run_id only — no latest-directory fallback
+        RUN_ID=$(echo "$OUT" | python3 -c "import sys,json,re
+text=sys.stdin.read().splitlines()
+rid=''
+for line in reversed(text):
+  line=line.strip()
+  if line.startswith('{') and 'run_id' in line:
+    try:
+      rid=json.loads(line).get('run_id',''); break
+    except Exception:
+      pass
+  if line.startswith('run_id: '):
+    rid=line.split(':',1)[1].strip(); break
+print(rid)")
+        if [[ -z "$RUN_ID" ]]; then
+          echo "scan did not return a structured run_id" >> "$GITHUB_STEP_SUMMARY"
           exit 1
         fi
-        RUN_ID=$(basename "${RUN_DIR}")
+        RUN_DIR="$SCAN_PATH/.tomorrowci/runs/$RUN_ID"
+        if [[ ! -d "$RUN_DIR" ]]; then
+          RUN_DIR=".tomorrowci/runs/$RUN_ID"
+        fi
+        if [[ ! -d "$RUN_DIR" ]]; then
+          echo "evidence directory missing for run_id=$RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+        fi
         echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
         echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
         export RUN_DIR

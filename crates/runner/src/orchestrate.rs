@@ -1317,17 +1317,28 @@ pub fn replay_scenario(repo: &Path, run_id: &str, scenario_id: &str) -> Result<S
     env_run.image = env.tag().to_string();
     env_run.image_tag = env.tag().to_string();
 
-    // Verify workspace-manifest before re-execution
-    if root.join("workspace-manifest.json").exists() {
-        let vr = tomorrowci_evidence::verify_run_root(&root);
-        if let Ok(rep) = &vr {
-            if rep.errors.iter().any(|e| e.contains("workspace-manifest")) {
-                return Err(TcError::Blocked(format!(
-                    "workspace/manifest integrity failed: {:?}",
-                    rep.errors
-                )));
-            }
-        }
+    // Full verifier required before any attempt directory is created
+    let vr = tomorrowci_evidence::verify_run_root(&root)?;
+    if !vr.ok {
+        return Err(TcError::Blocked(format!(
+            "pre-replay verify failed: {:?}",
+            vr.errors
+                .iter()
+                .map(|e| format!("{}:{}", e.code, e.message))
+                .collect::<Vec<_>>()
+        )));
+    }
+
+    // Adapter from recorded identity (not unconditional Python)
+    let adapter_name = m
+        .identity
+        .as_ref()
+        .map(|i| i.adapter_name.as_str())
+        .unwrap_or("python");
+    if adapter_name != "python" && adapter_name != "node" && adapter_name != "rust" {
+        return Err(TcError::Blocked(format!(
+            "unsupported recorded adapter: {adapter_name}"
+        )));
     }
 
     let fetch_to = Duration::from_secs(env.fetch_timeout_seconds.unwrap_or(600));
@@ -1335,14 +1346,18 @@ pub fn replay_scenario(repo: &Path, run_id: &str, scenario_id: &str) -> Result<S
 
     let attempt_n = {
         let replays = sc_dir.join("replays");
-        let n = if replays.exists() {
-            std::fs::read_dir(&replays)
-                .map(|rd| rd.filter_map(|e| e.ok()).count())
-                .unwrap_or(0)
-        } else {
-            0
-        };
-        n + 1
+        let mut max = 0u32;
+        if replays.exists() {
+            for e in std::fs::read_dir(&replays).into_iter().flatten().flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if let Some(n) = name.strip_prefix("attempt-") {
+                    if let Ok(v) = n.parse::<u32>() {
+                        max = max.max(v);
+                    }
+                }
+            }
+        }
+        max + 1
     };
     let attempt_dir = sc_dir.join("replays").join(format!("attempt-{attempt_n}"));
     std::fs::create_dir_all(&attempt_dir)?;
@@ -1376,9 +1391,13 @@ pub fn replay_scenario(repo: &Path, run_id: &str, scenario_id: &str) -> Result<S
     })?;
     let finished = Utc::now();
 
-    let adapter = PythonAdapter;
     let new_sig = if raw.exit_code != Some(0) {
-        Some(adapter.normalize_failure(&raw))
+        use tomorrowci_adapters::EcosystemAdapter as _;
+        Some(match adapter_name {
+            "node" => tomorrowci_adapter_node::NodeAdapter.normalize_failure(&raw),
+            "rust" => tomorrowci_adapter_rust::RustAdapter.normalize_failure(&raw),
+            _ => PythonAdapter.normalize_failure(&raw),
+        })
     } else {
         None
     };
@@ -1421,7 +1440,7 @@ pub fn replay_scenario(repo: &Path, run_id: &str, scenario_id: &str) -> Result<S
         sc_dir.join("replay-result.json"),
         serde_json::to_string_pretty(&report)?,
     )?;
-    let _ = tomorrowci_evidence::finalize_run_checksums(&root);
+    tomorrowci_evidence::finalize_run_checksums(&root)?;
 
     let mut out = format!(
         "replay {scenario_id}: exit={:?} timed_out={} duration_ms={}\n",

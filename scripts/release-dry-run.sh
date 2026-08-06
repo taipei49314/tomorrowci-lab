@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 mkdir -p dist
 
-VERSION="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])' 2>/dev/null || echo "0.1.1-alpha.2")"
+VERSION="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])' 2>/dev/null || echo "0.1.1-alpha.3")"
 
 echo "== build release CLI =="
 cargo build -p tomorrowci-cli --release
@@ -47,7 +47,7 @@ for n in names:
     if n not in seen:
         seen.append(n)
 components = [{"type": "library", "name": n, "version": "locked"} for n in seen[:200]]
-meta_ver = "0.1.1-alpha.2"
+meta_ver = "0.1.1-alpha.3"
 for line in Path("Cargo.toml").read_text(encoding="utf-8").splitlines():
     if line.strip().startswith("version ="):
         meta_ver = line.split("=",1)[1].strip().strip('"')

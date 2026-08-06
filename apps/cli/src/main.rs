@@ -10,6 +10,7 @@ use tomorrowci_adapters::EcosystemAdapter;
 use tomorrowci_core::{compare_horizons, evaluate_policy_gate, Config, HorizonDelta, Verdict};
 use tomorrowci_evidence::{
     finalize_run_checksums, find_run_dir, load_run_manifest, verify_run_root,
+    write_verification_attestation,
 };
 use tomorrowci_metrics::{run_trust_audit, ClaimLedger, ClaimStatus, ScanMetrics, TrustVerdict};
 use tomorrowci_report::{
@@ -36,6 +37,9 @@ enum Commands {
         target: String,
         #[arg(long)]
         config: Option<PathBuf>,
+        /// Emit machine-readable scan result JSON on stdout (last line still human-friendly fields included)
+        #[arg(long)]
+        json: bool,
     },
     Show {
         run_id: String,
@@ -43,6 +47,8 @@ enum Commands {
     /// Verify evidence integrity for a run
     Verify {
         run_id: String,
+        #[arg(long)]
+        json: bool,
     },
     Replay {
         run_id: String,
@@ -95,9 +101,13 @@ fn real_main() -> Result<()> {
     match cli.command {
         Commands::Doctor => cmd_doctor(),
         Commands::Trust { json } => cmd_trust(json),
-        Commands::Scan { target, config } => cmd_scan(&target, config.as_deref()),
+        Commands::Scan {
+            target,
+            config,
+            json,
+        } => cmd_scan(&target, config.as_deref(), json),
         Commands::Show { run_id } => cmd_show(&run_id),
-        Commands::Verify { run_id } => cmd_verify(&run_id),
+        Commands::Verify { run_id, json } => cmd_verify(&run_id, json),
         Commands::Replay { run_id, scenario } => {
             let cwd = std::env::current_dir()?;
             // Prefer run under cwd; also resolve fixture-local runs
@@ -176,7 +186,7 @@ fn cmd_trust(json: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_scan(target: &str, config_path: Option<&Path>) -> Result<()> {
+fn cmd_scan(target: &str, config_path: Option<&Path>, json: bool) -> Result<()> {
     if target.starts_with("http://") || target.starts_with("https://") {
         bail!("remote GitHub clone scan: NOT_RUN in this build (local path only)");
     }
@@ -238,9 +248,22 @@ fn cmd_scan(target: &str, config_path: Option<&Path>) -> Result<()> {
                 out.evidence_root.display().to_string(),
             );
             claims.write_json(&out.evidence_root.join("claims.json"))?;
-            // Re-finalize checksums after claims.json is written
+            // Re-finalize inventory after claims.json is written
             finalize_run_checksums(&out.evidence_root)?;
-            println!("run_id: {}", out.manifest.run_id);
+            let run_id = out.manifest.run_id.clone();
+            println!("run_id: {run_id}");
+            if json {
+                let payload = serde_json::json!({
+                    "run_id": run_id,
+                    "evidence_root": out.evidence_root,
+                    "frontier_observed": out.manifest.frontier.observed,
+                    "first_failing_scenario": out.manifest.frontier.first_failing_scenario,
+                    "source_commit": out.manifest.repository.commit_sha,
+                    "tool_version": out.manifest.tool_version,
+                    "blocked": any_blocked,
+                });
+                println!("{}", serde_json::to_string(&payload)?);
+            }
             // Never promote BLOCKED to success: non-zero exit for infra/construction blocks
             if any_blocked {
                 println!("verdict: BLOCKED");
@@ -293,15 +316,22 @@ fn cmd_show(run_id: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_verify(run_id: &str) -> Result<()> {
+fn cmd_verify(run_id: &str, json: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let root = find_run_dir(&cwd, run_id);
     let rep = verify_run_root(&root)?;
-    println!("{}", serde_json::to_string_pretty(&rep)?);
+    let _ = write_verification_attestation(&root, &rep, env!("CARGO_PKG_VERSION"));
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rep)?);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&rep)?);
+        if rep.ok {
+            println!("verify: PASS");
+        }
+    }
     if !rep.ok {
         bail!("evidence verify FAILED: {} errors", rep.errors.len());
     }
-    println!("verify: PASS");
     Ok(())
 }
 

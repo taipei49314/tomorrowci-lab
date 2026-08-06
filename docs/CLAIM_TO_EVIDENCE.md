@@ -1,27 +1,20 @@
-# Claim-to-evidence matrix (v0.1.1-alpha.2)
+# Claim-to-evidence (Alpha.3 track)
 
-Statuses: **PASS** / **FAIL** / **BLOCKED** / **NOT_RUN** only.
+Statuses: PASS / FAIL / BLOCKED / NOT_RUN only.
 
 | Tag | Disposition |
 |-----|-------------|
-| `v0.1.0` | REJECTED product candidate |
-| `v0.1.1-alpha.1` | REJECTED acceptance candidate / live-path demonstration |
-| `v0.1.1-alpha.2` | Closure candidate — see gates below |
+| v0.1.0 | REJECTED product candidate |
+| v0.1.1-alpha.1 | REJECTED acceptance / live-path demonstration |
+| v0.1.1-alpha.2 | REJECTED evidence-closure / successful release-pipeline demonstration |
+| v0.1.1-alpha.3 | NOT_CREATED until mutation suite + self-verifying bundle |
 
-**Exact commit:** `bced9c0` (package `0.1.1-alpha.2`)  
-**Public CI:** https://github.com/taipei49314/tomorrowci-lab/actions/runs/31080022232  
-**Default branch:** `master` carries truthful README + audits.
+Exact workflow run IDs and evidence hashes are emitted as `RELEASE_PROVENANCE.json` by the tag workflow (not hard-coded into a source commit that must still be tested).
 
-| Claim | Status | Exact command / run | Exit / result | Artifact |
-|---|---|---|---|---|
-| Default-branch truth | **PASS** | `master` merge of alpha2 docs | green | README, audits |
-| encoding / fmt / clippy / tests | **PASS** | CI rust job 31080022232 | exit 0 | Actions |
-| version identity `0.1.1-alpha.2` | **PASS** | `tomorrowci --version` | matches | CI |
-| Live Python Docker scan | **PASS** | live-python job | horizon 3.10 | evidence artifact |
-| `tomorrowci verify` | **PASS** | live + Action | verify: PASS | run checksums |
-| Replay ×2 independent attempts | **PASS** | live-python replay step | both PASS | `replays/attempt-{1,2}/` |
-| Action dogfood `uses: ./action` | **PASS** | action-dogfood | success | Actions |
-| Consumer git repository Action | **PASS** | action-consumer (`git init` + commit) | success | Actions |
-| bash -n release-dry-run.sh | **PASS** | rust job | exit 0 | CI |
-| Node / Rust live | **NOT_RUN** | out of scope | — | — |
-| Dependency / ddmin / React / remote / image | **NOT_RUN** | out of scope | — | — |
+| Claim | Status |
+|---|---|
+| Live Python vertical slice | PASS (prior public CI; re-proven on each CI) |
+| Mutation-resistant verify | in progress (adversarial suite in tree) |
+| Exact replay authorization | in progress |
+| Self-verifying release bundle | NOT_RUN until tag workflow |
+| Node/Rust/dep/ddmin/React/remote/image | NOT_RUN |

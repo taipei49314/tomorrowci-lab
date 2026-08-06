@@ -2,7 +2,7 @@ name: release
 
 on:
   push:
-    tags: ["v0.1.1-alpha.2", "v0.1.1-alpha.*"]
+    tags: ["v0.1.1-alpha.3", "v0.1.1-alpha.*"]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -42,7 +42,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           set -euo pipefail
-          VER="${GITHUB_REF_NAME:-v0.1.1-alpha.2}"
+          VER="${GITHUB_REF_NAME:-v0.1.1-alpha.3}"
           STAGE="tomorrowci-${VER}-${{ matrix.target }}"
           mkdir -p "dist/$STAGE"
           cp target/release/tomorrowci "dist/$STAGE/"
@@ -54,7 +54,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $ver = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v0.1.1-alpha.2" }
+          $ver = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v0.1.1-alpha.3" }
           $stage = "tomorrowci-$ver-x86_64-pc-windows-msvc"
           New-Item -ItemType Directory -Force -Path "dist/$stage" | Out-Null
           Copy-Item target/release/tomorrowci.exe "dist/$stage/"
@@ -99,12 +99,10 @@ jobs:
           import json, re
           from pathlib import Path
           lock = Path("Cargo.lock").read_text(encoding="utf-8")
-          names = re.findall(r'name = "([^"]+)"', lock)
-          seen=[]
-          for n in names:
-            if n not in seen: seen.append(n)
-          components=[{"type":"library","name":n,"version":"locked"} for n in seen]
-          ver="0.1.1-alpha.2"
+          pkgs = re.findall(r'\[\[package\]\]\nname = "([^"]+)"\nversion = "([^"]+)"', lock)
+          components=[{"type":"library","name":n,"version":v,"purl":f"pkg:cargo/{n}@{v}"} for n,v in pkgs]
+          assert components and all(c["version"] != "locked" for c in components)
+          ver="0.1.1-alpha.3"
           for line in Path("Cargo.toml").read_text(encoding="utf-8").splitlines():
             if line.strip().startswith("version ="):
               ver=line.split("=",1)[1].strip().strip('"'); break
@@ -114,8 +112,39 @@ jobs:
           data=json.dumps(sbom, indent=2)+"\n"
           Path("dist/sbom.cdx.json").write_text(data, encoding="utf-8")
           assert not Path("dist/sbom.cdx.json").read_bytes().startswith(b"\xef\xbb\xbf")
-          assert len(components) > 0
           print("components", len(components), "version", ver)
+          PY
+      - name: Generate RELEASE_PROVENANCE.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, hashlib, os
+          from pathlib import Path
+          from datetime import datetime, timezone
+          dist=Path('dist')
+          arts={}
+          for p in sorted(dist.iterdir()):
+            if p.is_file() and p.name not in ('RELEASE_PROVENANCE.json',):
+              h=hashlib.sha256(p.read_bytes()).hexdigest()
+              arts[p.name]={"size":p.stat().st_size,"sha256":f"sha256:{h}"}
+          prov={
+            "schema_version":1,
+            "tag": os.environ.get("GITHUB_REF_NAME","v0.1.1-alpha.3"),
+            "git_sha": os.environ["GITHUB_SHA"],
+            "workflow_run_id": os.environ.get("GITHUB_RUN_ID"),
+            "workflow_run_attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT","1")),
+            "repository": os.environ.get("GITHUB_REPOSITORY","taipei49314/tomorrowci-lab"),
+            "tool_version":"0.1.1-alpha.3",
+            "acceptance_jobs":{"status":"see_workflow_run"},
+            "live_run_id": None,
+            "evidence_artifact_sha256": None,
+            "source_archive_sha256": None,
+            "sbom_sha256": arts.get("sbom.cdx.json",{}).get("sha256"),
+            "release_artifacts": arts,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+          }
+          Path('dist/RELEASE_PROVENANCE.json').write_text(json.dumps(prov, indent=2)+"\n", encoding='utf-8')
+          print(json.dumps(prov, indent=2))
           PY
       - name: Create GitHub pre-release
         if: startsWith(github.ref, 'refs/tags/') && (github.event_name != 'workflow_dispatch' || inputs.dry_run != true)

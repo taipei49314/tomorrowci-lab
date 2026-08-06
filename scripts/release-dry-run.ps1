@@ -14,7 +14,7 @@ if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 $Bin = Join-Path $Root "target\release\tomorrowci.exe"
 if (-not (Test-Path $Bin)) { throw "missing $Bin" }
 
-$StageName = "tomorrowci-0.1.0-windows-x86_64"
+$StageName = "tomorrowci-0.1.1-alpha.3-windows-x86_64"
 $Stage = Join-Path $Dist $StageName
 New-Item -ItemType Directory -Force -Path $Stage | Out-Null
 Copy-Item $Bin (Join-Path $Stage "tomorrowci.exe")
@@ -47,7 +47,7 @@ $sbom = Join-Path $Dist "sbom.cdx.json"
     "component": {
       "type": "application",
       "name": "tomorrowci",
-      "version": "0.1.0"
+      "version": "0.1.1-alpha.3"
     }
   },
   "components": []
@@ -70,7 +70,7 @@ $claims = @"
 |---|---|---|---|---|
 | Rust workspace tests | PASS | cargo test --workspace | exit 0 | local |
 | Trust audit | PASS | tomorrowci trust | overall Pass | stdout |
-| Windows CLI archive | PASS | Compress-Archive | created | dist/tomorrowci-0.1.0-windows-x86_64.zip |
+| Windows CLI archive | PASS | Compress-Archive | created | dist/tomorrowci-0.1.1-alpha.3-windows-x86_64.zip |
 | Checksums | PASS | Get-FileHash SHA256 | created | dist/SHA256SUMS.txt |
 | SBOM document | PASS | static CycloneDX stub | created | dist/sbom.cdx.json |
 | Live Docker e2e | BLOCKED | docker info | daemon may be down | doctor |
@@ -79,3 +79,4 @@ Set-Content -Path (Join-Path $Dist "claim-to-evidence.md") -Value $claims -Encod
 
 Write-Host "Dry-run complete. Artifacts in $Dist"
 Get-ChildItem $Dist | Format-Table Name, Length
+

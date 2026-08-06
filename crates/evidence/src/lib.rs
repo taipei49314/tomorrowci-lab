@@ -1,12 +1,16 @@
-//! Evidence directory layout and checksum helpers.
+//! Evidence directory layout, inventory, and authorization verifier.
 
+mod hashutil;
+mod index;
 mod verify;
 
+pub use hashutil::*;
+pub use index::*;
 pub use verify::*;
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use tomorrowci_core::{sha256_bytes, Result, RunManifest, TcError};
+use tomorrowci_core::{Result, RunManifest, TcError};
 
 pub const RUNS_DIR: &str = ".tomorrowci/runs";
 
@@ -39,15 +43,16 @@ impl EvidenceLayout {
     }
 }
 
+/// Canonical content hash of a file (`sha256:<hex>`).
 pub fn file_checksum(path: &Path) -> Result<String> {
-    let data = std::fs::read(path)?;
-    Ok(sha256_bytes(&data))
+    hash_file(path)
 }
 
 pub fn write_checksums(dir: &Path, files: &[(String, String)]) -> Result<()> {
     let mut lines = String::new();
     for (name, hash) in files {
-        lines.push_str(&format!("{hash}  {name}\n"));
+        let h = normalize_hash(hash).unwrap_or_else(|_| hash.clone());
+        lines.push_str(&format!("{h}  {name}\n"));
     }
     std::fs::write(dir.join("checksums.txt"), lines)?;
     Ok(())
@@ -78,5 +83,15 @@ mod tests {
             .write_json("verdicts.json", &serde_json::json!([]))
             .unwrap();
         assert!(layout.run_root.join("verdicts.json").exists());
+    }
+
+    #[test]
+    fn file_checksum_not_double_prefixed() {
+        let d = tempdir().unwrap();
+        let p = d.path().join("a.txt");
+        std::fs::write(&p, b"x").unwrap();
+        let h = file_checksum(&p).unwrap();
+        assert!(h.starts_with("sha256:"));
+        assert!(!h.contains("sha256:sha256:"));
     }
 }

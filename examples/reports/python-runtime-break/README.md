@@ -1,4 +1,4 @@
-﻿# Accepted live Python runtime-break example
+# Accepted live Python runtime-break example
 
 Generated from public CI live Docker scan (not ScriptedExecutor).
 

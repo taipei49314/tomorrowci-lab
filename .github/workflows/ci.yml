@@ -25,6 +25,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test
         run: cargo test --workspace
+      - name: adversarial verifier suite
+        run: cargo test -p tomorrowci-evidence --test adversarial_verifier
       - name: build release CLI
         run: cargo build -p tomorrowci-cli --release
       - name: node report helpers
@@ -32,7 +34,7 @@ jobs:
       - name: bash -n release dry-run
         run: bash -n scripts/release-dry-run.sh
       - name: version identity
-        run: ./target/release/tomorrowci --version | tee /tmp/v.txt; grep -E '0\.1\.1-alpha\.2' /tmp/v.txt
+        run: ./target/release/tomorrowci --version | tee /tmp/v.txt; grep -E '0\.1\.1-alpha\.3' /tmp/v.txt
       - name: trust audit
         run: ./target/release/tomorrowci trust
       - name: doctor

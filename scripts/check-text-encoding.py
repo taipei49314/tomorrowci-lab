@@ -12,7 +12,6 @@ SKIP_DIRS = {
     "node_modules",
     ".tomorrowci",
     "dist",
-    "examples",  # may contain large generated HTML
 }
 
 BOM = b"\xef\xbb\xbf"
