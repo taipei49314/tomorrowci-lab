@@ -42,7 +42,12 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           set -euo pipefail
-          VER="${GITHUB_REF_NAME:-v0.1.1-alpha.3}"
+          if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+            VER="${GITHUB_REF_NAME}"
+          else
+            VER="v0.1.1-alpha.3"
+          fi
+          VER="${VER//\//-}"
           STAGE="tomorrowci-${VER}-${{ matrix.target }}"
           mkdir -p "dist/$STAGE"
           cp target/release/tomorrowci "dist/$STAGE/"
@@ -54,7 +59,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $ver = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v0.1.1-alpha.3" }
+          if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $ver = $env:GITHUB_REF_NAME
+          } else {
+            $ver = "v0.1.1-alpha.3"
+          }
+          $ver = $ver -replace '/','-'
           $stage = "tomorrowci-$ver-x86_64-pc-windows-msvc"
           New-Item -ItemType Directory -Force -Path "dist/$stage" | Out-Null
           Copy-Item target/release/tomorrowci.exe "dist/$stage/"
