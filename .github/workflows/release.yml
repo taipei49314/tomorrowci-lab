@@ -135,8 +135,15 @@ jobs:
       - name: Package source archive + exact-commit bundle
         run: |
           set -euo pipefail
-          VER="${GITHUB_REF_NAME:-v0.1.1-alpha.3}"
-          mkdir -p bundle/source bundle/release bundle/live-evidence bundle/demo-report
+          # Tag ref names only; branch names (workflow_dispatch) contain '/' and break paths.
+          if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+            VER="${GITHUB_REF_NAME}"
+          else
+            VER="v0.1.1-alpha.3"
+          fi
+          # strip any residual path separators
+          VER="${VER//\//-}"
+          mkdir -p dist bundle/source bundle/release bundle/live-evidence bundle/demo-report
           git archive --format=tar.gz --prefix=tomorrowci-src/ -o "dist/tomorrowci-${VER}-source.tar.gz" HEAD
           tar -xzf "dist/tomorrowci-${VER}-source.tar.gz" -C bundle/source --strip-components=1
           # platform archives + SBOM into release/ (exclude the source tarball we just made)
@@ -208,9 +215,10 @@ jobs:
           Path("bundle/BUNDLE_MANIFEST.json").write_text(json.dumps(man, indent=2)+"\n", encoding="utf-8")
           print("bundle files", len(files), "live", man["live_run_id"])
           PY
-          VER_SAFE="${VER}"
-          (cd bundle && zip -r "../dist/tomorrowci-${VER_SAFE}-bundle.zip" .)
+          (cd bundle && zip -r "../dist/tomorrowci-${VER}-bundle.zip" .)
           ls -la dist/
+          test -f "dist/tomorrowci-${VER}-bundle.zip"
+          test -f "dist/tomorrowci-${VER}-source.tar.gz"
       - name: Generate RELEASE_PROVENANCE.json
         run: |
           set -euo pipefail
