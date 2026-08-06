@@ -81,19 +81,7 @@ runs:
         fi
         echo "$OUT"
         # Structured run_id only — no latest-directory fallback
-        RUN_ID=$(echo "$OUT" | python3 -c "import sys,json,re
-text=sys.stdin.read().splitlines()
-rid=''
-for line in reversed(text):
-  line=line.strip()
-  if line.startswith('{') and 'run_id' in line:
-    try:
-      rid=json.loads(line).get('run_id',''); break
-    except Exception:
-      pass
-  if line.startswith('run_id: '):
-    rid=line.split(':',1)[1].strip(); break
-print(rid)")
+        RUN_ID=$(echo "$OUT" | python3 "${{ github.action_path }}/extract-run-id.py" || true)
         if [[ -z "$RUN_ID" ]]; then
           echo "scan did not return a structured run_id" >> "$GITHUB_STEP_SUMMARY"
           exit 1

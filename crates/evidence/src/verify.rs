@@ -293,29 +293,30 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
         rep.checked_files += 1;
     }
 
-    // no extra unclassified files under run (excluding workspace/ and checksums/index)
-    if let Ok(on_disk) = list_run_payload_paths(run_root) {
-        for p in &on_disk {
-            if p == CHECKSUMS_NAME || p == INDEX_NAME {
-                continue;
-            }
-            if !index.files.contains_key(p) {
+    // no extra unclassified files under run (same collector as inventory build)
+    match crate::index::collect_payload_files(run_root) {
+        Ok(on_disk) => {
+            let disk_keys: BTreeSet<_> = on_disk.keys().cloned().collect();
+            let index_keys: BTreeSet<_> = index.files.keys().cloned().collect();
+            for p in disk_keys.difference(&index_keys) {
                 rep.err(
                     "extra_unclassified",
                     Some(p),
                     "file present on disk but not in evidence-index",
                 );
             }
-        }
-        for p in index.files.keys() {
-            if !on_disk.contains(p) {
-                rep.err(
-                    "index_missing_on_disk",
-                    Some(p),
-                    "indexed path missing on disk",
-                );
+            for p in index_keys.difference(&disk_keys) {
+                // tolerate only if path exists (race) else report
+                if !run_root.join(p).is_file() {
+                    rep.err(
+                        "index_missing_on_disk",
+                        Some(p),
+                        "indexed path missing on disk",
+                    );
+                }
             }
         }
+        Err(e) => rep.err("disk_inventory", None, e.to_string()),
     }
     rep.semantic_checks += 1;
 
@@ -672,36 +673,6 @@ fn parse_checksums(path: &Path) -> Result<BTreeMap<String, String>> {
         m.insert(name.to_string(), nh);
     }
     Ok(m)
-}
-
-fn list_run_payload_paths(run_root: &Path) -> Result<BTreeSet<String>> {
-    let mut out = BTreeSet::new();
-    fn walk(root: &Path, cur: &Path, out: &mut BTreeSet<String>) -> Result<()> {
-        for entry in std::fs::read_dir(cur)? {
-            let entry = entry?;
-            let p = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name == "workspace" || name == "attestations" {
-                continue;
-            }
-            if p.is_dir() {
-                walk(root, &p, out)?;
-            } else if p.is_file() {
-                let rel = p
-                    .strip_prefix(root)
-                    .unwrap()
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                if rel.ends_with("/checksums.txt") {
-                    continue;
-                }
-                out.insert(rel);
-            }
-        }
-        Ok(())
-    }
-    walk(run_root, run_root, &mut out)?;
-    Ok(out)
 }
 
 pub fn find_run_dir(cwd: &Path, run_id: &str) -> PathBuf {
