@@ -101,50 +101,45 @@ runs:
         echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
 
         # Machine-readable evidence decisions
+        # Parse evidence into same-step shell vars (GITHUB_ENV only applies to later steps)
         export RUN_DIR
-        python3 - <<'PY'
-        import json, os
-        run_dir = os.environ["RUN_DIR"]
-        fr = json.load(open(f"{run_dir}/frontier.json"))
-        run = json.load(open(f"{run_dir}/run.json"))
-        fo = bool(fr.get("observed"))
-        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as o:
-            o.write(f"frontier_observed={'true' if fo else 'false'}\n")
-        blocked = any(r.get("verdict") == "BLOCKED" for r in run.get("results", []))
-        baseline_pass = any(r.get("verdict") == "BASELINE_PASS" for r in run.get("results", []))
-        future_fail = any(r.get("verdict") == "FUTURE_FAIL" for r in run.get("results", []))
-        sig = (fr.get("failure_signature") or {}).get("normalized_hash")
-        with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as e:
-            e.write(f"TCI_BLOCKED={'1' if blocked else '0'}\n")
-            e.write(f"TCI_BASELINE_PASS={'1' if baseline_pass else '0'}\n")
-            e.write(f"TCI_FUTURE_FAIL={'1' if future_fail else '0'}\n")
-            e.write(f"TCI_SIG={'1' if sig else '0'}\n")
-            e.write(f"TCI_FO={'1' if fo else '0'}\n")
-        PY
+        eval "$(python3 - <<'PY'
+import json, os
+run_dir = os.environ["RUN_DIR"]
+fr = json.load(open(f"{run_dir}/frontier.json"))
+run = json.load(open(f"{run_dir}/run.json"))
+fo = bool(fr.get("observed"))
+blocked = any(r.get("verdict") == "BLOCKED" for r in run.get("results", []))
+baseline_pass = any(r.get("verdict") == "BASELINE_PASS" for r in run.get("results", []))
+future_fail = any(r.get("verdict") == "FUTURE_FAIL" for r in run.get("results", []))
+sig = bool((fr.get("failure_signature") or {}).get("normalized_hash"))
+print(f"TCI_BLOCKED={'1' if blocked else '0'}")
+print(f"TCI_BASELINE_PASS={'1' if baseline_pass else '0'}")
+print(f"TCI_FUTURE_FAIL={'1' if future_fail else '0'}")
+print(f"TCI_SIG={'1' if sig else '0'}")
+print(f"TCI_FO={'1' if fo else '0'}")
+with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as o:
+    o.write(f"frontier_observed={'true' if fo else 'false'}\n")
+PY
+)"
 
         if [[ -f "${RUN_DIR}/job-summary.md" ]]; then
           cat "${RUN_DIR}/job-summary.md" >> "$GITHUB_STEP_SUMMARY"
         fi
 
-        # Verify evidence
-        if ! "$BIN" verify "$RUN_ID"; then
-          # try from scan path cwd
-          (cd "$SCAN_PATH" && "$BIN" verify "$RUN_ID") || {
-            echo "evidence verify failed" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          }
+        # Verify evidence (cwd must resolve run dir)
+        if ! (cd "$SCAN_PATH" && "$BIN" verify "$RUN_ID") && ! "$BIN" verify "$RUN_ID"; then
+          echo "evidence verify failed" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
         fi
 
-        # BLOCKED always fails non-advisory
+        # BLOCKED always fails (advisory may not convert BLOCKED to PASS)
         if [[ "${TCI_BLOCKED:-0}" == "1" ]]; then
           echo "Scan produced BLOCKED scenario(s)." >> "$GITHUB_STEP_SUMMARY"
-          if [[ "${{ inputs.advisory }}" == "true" ]]; then
-            echo "Advisory cannot convert BLOCKED to PASS — failing." >> "$GITHUB_STEP_SUMMARY"
-          fi
           exit 2
         fi
 
-        # Unexpected non-zero (not handled as product horizon)
+        # Unexpected non-zero scan exit
         if [[ "$CODE" -ne 0 ]]; then
           echo "Unexpected scan exit code $CODE" >> "$GITHUB_STEP_SUMMARY"
           exit "$CODE"
@@ -152,7 +147,7 @@ runs:
 
         if [[ "${{ inputs.expect-horizon }}" == "true" ]]; then
           if [[ "${TCI_BASELINE_PASS:-0}" != "1" || "${TCI_FUTURE_FAIL:-0}" != "1" || "${TCI_SIG:-0}" != "1" || "${TCI_FO:-0}" != "1" ]]; then
-            echo "expect-horizon contract failed (baseline/future_fail/sig/observed)" >> "$GITHUB_STEP_SUMMARY"
+            echo "expect-horizon contract failed baseline=$TCI_BASELINE_PASS future=$TCI_FUTURE_FAIL sig=$TCI_SIG fo=$TCI_FO" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
         fi
