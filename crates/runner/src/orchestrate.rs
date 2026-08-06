@@ -1039,9 +1039,17 @@ fn persist_scenario_artifacts(
             serde_json::to_string_pretty(f)?,
         )?;
     }
+    let result_hash =
+        tomorrowci_evidence::hash_bytes(&serde_json::to_vec(exec).unwrap_or_default());
+    let sig_hash = failure.map(|f| f.normalized_hash.clone());
     let replay = serde_json::json!({
+        "schema_version": 1,
         "scenario_id": scenario.id,
+        "adapter_name": "python",
+        "adapter_version": env!("CARGO_PKG_VERSION"),
         "engine": engine,
+        "engine_version_policy": "any",
+        "image_tag": env.tag(),
         "image": env.image,
         "image_digest": env.image_digest,
         "workdir": env.workdir,
@@ -1050,12 +1058,20 @@ fn persist_scenario_artifacts(
         "cpus": env.cpus,
         "pids_limit": env.pids_limit,
         "read_only_root": env.read_only_root,
+        "env": env.env,
+        "scenario_state_root": env.scenario_state_root,
+        "fetch_timeout_seconds": env.fetch_timeout_seconds,
+        "test_timeout_seconds": env.test_timeout_seconds,
         "fetch_network": "bridge",
         "test_network": "none",
+        "fetch_commands": fetch_cmds,
+        "test_commands": test_cmds,
         "fetch_argv": fetch_cmds.iter().map(|c| c.argv.clone()).collect::<Vec<_>>(),
         "test_argv": test_cmds.iter().map(|c| c.argv.clone()).collect::<Vec<_>>(),
         "expected_exit_code": exec.exit_code,
         "expected_failure_signature": failure,
+        "original_result_hash": result_hash,
+        "original_signature_hash": sig_hash,
     });
     std::fs::write(
         sc_dir.join("replay.json"),
