@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "workflow_run": "31094336322",
+  "result": "PASS",
+  "note": "release job asserts Cargo.lock name/version multiset equality with CycloneDX components; no locked placeholders",
+  "artifact": "sbom.cdx.json"
+}

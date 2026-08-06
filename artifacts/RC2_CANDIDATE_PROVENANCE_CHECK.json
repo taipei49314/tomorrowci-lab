@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "workflow_run": "31094336322",
+  "bundle_zip": "tomorrowci-v0.1.1-alpha.3-bundle.zip",
+  "bundle_sha256": "sha256:a3a8d15cdd0e1db8d7cfdfe099644a9ded30d7b13bc08a435137673f2b640c37",
+  "live_run_id": "e07d27f23570",
+  "git_sha": "424a3a306d8dc2097d28a6e3c50c468791bf7b3d",
+  "detached_provenance_file": "RELEASE_PROVENANCE.json",
+  "result": "PASS_WITH_NOTES",
+  "notes": [
+    "Detached provenance generated after bundle zip in workflow",
+    "Follow-up commit adds CANDIDATE_PROVENANCE.json and null published_tag for dry-run"
+  ]
+}

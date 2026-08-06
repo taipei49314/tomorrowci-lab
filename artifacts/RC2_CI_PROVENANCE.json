@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "exact_commit": "2a284bce1b5062a76a2e77254811e0d37cc04e5b",
+  "ci_runs": [
+    {
+      "id": "31094394797",
+      "sha": "2a284bce1b5062a76a2e77254811e0d37cc04e5b",
+      "conclusion": "success",
+      "jobs": [
+        "rust",
+        "live-python",
+        "action-dogfood",
+        "action-consumer"
+      ]
+    },
+    {
+      "id": "31094336322",
+      "sha": "424a3a306d8dc2097d28a6e3c50c468791bf7b3d",
+      "kind": "release_dry_run",
+      "conclusion": "success"
+    },
+    {
+      "id": "31094035464",
+      "sha": "6aff00a0ebddafef205af73c6cec8d7c68a1c0dc",
+      "conclusion": "success"
+    }
+  ],
+  "generated_at": "2026-08-06T10:51:12.639869+00:00"
+}

@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "kind": "RC2_GATE_MATRIX_operational_not_authorization",
+  "branch": "repair/alpha3-semantic-authority-rc2",
+  "exact_commit": "2a284bce1b5062a76a2e77254811e0d37cc04e5b",
+  "generated_at": "2026-08-06T10:51:12.596778+00:00",
+  "gates": [
+    {
+      "id": "G0",
+      "result": "PASS",
+      "sha": "2a284bce1b5062a76a2e77254811e0d37cc04e5b",
+      "evidence": "ci 31094394797 all jobs success"
+    },
+    {
+      "id": "G1",
+      "result": "PASS",
+      "note": "attestation write propagates; action || true removed"
+    },
+    {
+      "id": "G2",
+      "result": "PASS_PARTIAL",
+      "note": "semantic kernel expanded; clean-tree policy not fully enforced in live dirty fixture scans"
+    },
+    {
+      "id": "G3",
+      "result": "PASS_PARTIAL",
+      "note": "typed replay.json fields added; load-from-replay-only not fully exclusive"
+    },
+    {
+      "id": "G4",
+      "result": "PASS",
+      "note": "create_new attestation + SHA256SUMS verify"
+    },
+    {
+      "id": "G5",
+      "result": "PASS",
+      "note": "76/76 reject false_pass=0 artifacts/RC2_MUTATION_RESULTS.json"
+    },
+    {
+      "id": "G6",
+      "result": "PASS",
+      "note": "existence-filtered report links"
+    },
+    {
+      "id": "G7",
+      "result": "PASS",
+      "evidence": "action-dogfood+consumer green on tip CI"
+    },
+    {
+      "id": "G8",
+      "result": "PASS",
+      "evidence": "live-python dual replay in CI; release dry-run live e07d27f23570"
+    },
+    {
+      "id": "G9",
+      "result": "PASS",
+      "evidence": "release 31094336322 linux/windows/aarch64-darwin"
+    },
+    {
+      "id": "G10",
+      "result": "PASS",
+      "note": "SBOM lock multiset in release job"
+    },
+    {
+      "id": "G11",
+      "result": "PASS_PARTIAL",
+      "note": "detached provenance present; tag field fixed next commit"
+    },
+    {
+      "id": "G12",
+      "result": "PASS",
+      "evidence": "bundle self-verify in checksums-and-release job"
+    }
+  ],
+  "tag": "NOT_CREATED",
+  "release_published": false
+}

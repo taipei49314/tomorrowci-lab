@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "workflow_run": "31094336322",
+  "git_sha": "424a3a306d8dc2097d28a6e3c50c468791bf7b3d",
+  "artifacts": {
+    "RELEASE_PROVENANCE.json": {
+      "size": 1921,
+      "sha256": "sha256:a978d9adddaab0df9d148a36c7eed3409e3c8fa7e3d6a2817e3cbaf5971aef0b"
+    },
+    "sbom.cdx.json": {
+      "size": 14976,
+      "sha256": "sha256:c1d9871b7a379c696998f197e4130e8d75bb510d73ce0290bf640e8d824e8753"
+    },
+    "SHA256SUMS.txt": {
+      "size": 369,
+      "sha256": "sha256:f9cf8ed153c3f49c0ca22a81b081b34c67a34eb9904447f0b158cef59b709d18"
+    },
+    "tomorrowci-v0.1.1-alpha.3-aarch64-apple-darwin.tar.gz": {
+      "size": 1130803,
+      "sha256": "sha256:2890b97ece3fad28e0bb5ed63121c56bc6b0bfe63747ba36cc79b9e7d434b456"
+    },
+    "tomorrowci-v0.1.1-alpha.3-bundle.zip": {
+      "size": 2578366,
+      "sha256": "sha256:a3a8d15cdd0e1db8d7cfdfe099644a9ded30d7b13bc08a435137673f2b640c37"
+    },
+    "tomorrowci-v0.1.1-alpha.3-source.tar.gz": {
+      "size": 117007,
+      "sha256": "sha256:bd0eec66cb4922014e3ebdc4a0b62ead5dbb9614c7caaf07ca7bff731d94c33c"
+    },
+    "tomorrowci-v0.1.1-alpha.3-x86_64-pc-windows-msvc.zip": {
+      "size": 1058117,
+      "sha256": "sha256:34ec58626665db145025f5bb2ca12d8d439e0c84e87412f039f490f3fcf7da9b"
+    },
+    "tomorrowci-v0.1.1-alpha.3-x86_64-unknown-linux-gnu.tar.gz": {
+      "size": 1257289,
+      "sha256": "sha256:06a728a221913d49be6ea008b77c4f4fbb011326a7a28fe1127632694dc546c9"
+    }
+  },
+  "macos_label": "aarch64-apple-darwin",
+  "linux_label": "x86_64-unknown-linux-gnu",
+  "windows_label": "x86_64-pc-windows-msvc",
+  "generated_at": "2026-08-06T10:51:12.688982+00:00"
+}

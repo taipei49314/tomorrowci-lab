@@ -266,9 +266,18 @@ jobs:
           live=os.environ.get("live_run_id") or None
           src_key=next((k for k in arts if k.endswith("-source.tar.gz")), None)
           bundle_key=next((k for k in arts if k.endswith("-bundle.zip")), None)
+          ref=os.environ.get("GITHUB_REF","")
+          ref_name=os.environ.get("GITHUB_REF_NAME","")
+          is_tag=ref.startswith("refs/tags/")
           prov={
             "schema_version":1,
-            "tag": os.environ.get("GITHUB_REF_NAME","v0.1.1-alpha.3"),
+            "mode": "release" if is_tag else "dry-run",
+            "ref_type": "tag" if is_tag else "branch",
+            "ref_name": ref_name,
+            "candidate_tag": "v0.1.1-alpha.3",
+            "published_tag": ref_name if is_tag else None,
+            "tag": ref_name if is_tag else None,
+            "release_published": False,
             "git_sha": os.environ["GITHUB_SHA"],
             "workflow_run_id": os.environ.get("GITHUB_RUN_ID"),
             "workflow_run_attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT","1")),
@@ -282,8 +291,9 @@ jobs:
             "release_artifacts": arts,
             "generated_at": datetime.now(timezone.utc).isoformat(),
           }
+          # Detached candidate provenance (outside ZIP); never claim outer ZIP hash inside the ZIP.
+          Path('dist/CANDIDATE_PROVENANCE.json').write_text(json.dumps(prov, indent=2)+"\n", encoding='utf-8')
           Path('dist/RELEASE_PROVENANCE.json').write_text(json.dumps(prov, indent=2)+"\n", encoding='utf-8')
-          # also embed provenance in dist for release
           print(json.dumps(prov, indent=2))
           PY
       - name: Create GitHub pre-release

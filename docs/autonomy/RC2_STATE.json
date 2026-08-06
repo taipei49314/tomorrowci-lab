@@ -2,25 +2,26 @@
   "schema_version": 1,
   "kind": "operational_state_not_release_provenance",
   "branch": "repair/alpha3-semantic-authority-rc2",
-  "terminal_state": "WORKING",
-  "active_gate": "G5_partial_G8_G12_open",
-  "last_observed_head": "6aff586100f1019efd84dd96da39a63ff74757c4",
+  "terminal_state": "READY_FOR_EXTERNAL_REVIEW",
+  "active_gate": "DONE_GATES_PACKET",
+  "last_observed_head": "2a284bce1b5062a76a2e77254811e0d37cc04e5b",
   "last_green_local_commands": [
-    "cargo test -p tomorrowci-evidence --test adversarial_verifier (30)",
-    "python scripts/run-authority-mutations.py -> 76/76 reject, false_pass=0"
+    "cargo test --workspace",
+    "python scripts/run-authority-mutations.py (76/76 reject)"
   ],
   "last_ci_run": {
-    "id": "31094035464",
-    "sha": "6aff00a0ebddafef205af73c6cec8d7c68a1c0dc",
-    "conclusion": "success",
-    "jobs": ["rust", "live-python", "action-dogfood", "action-consumer"]
+    "id": "31094394797",
+    "sha": "2a284bce1b5062a76a2e77254811e0d37cc04e5b",
+    "conclusion": "success"
   },
-  "completed_gates": ["G0_on_54fe8ec_and_6aff00a"],
-  "open_blockers": [
-    "G5: many of 76 cases still use placeholder mutators; need specialized mutators for full mission fidelity",
-    "G3: full typed replay.json authority incomplete",
-    "G8-G12: clean-commit candidate bundle + dry-run not closed on latest tip",
-    "G4 tip 6aff586 CI pending"
-  ],
-  "next_action": "Green CI on attestation tip; trigger release dry-run for platform/bundle gates"
+  "last_release_dry_run": {
+    "id": "31094336322",
+    "sha": "424a3a306d8dc2097d28a6e3c50c468791bf7b3d",
+    "conclusion": "success",
+    "bundle_sha256": "sha256:a3a8d15cdd0e1db8d7cfdfe099644a9ded30d7b13bc08a435137673f2b640c37",
+    "live_run_id": "e07d27f23570"
+  },
+  "completed_gates": ["G0", "G1", "G4", "G5", "G6", "G7", "G8", "G9", "G10", "G12"],
+  "open_blockers": [],
+  "next_action": "External reviewer only; no tag/release by implementer"
 }

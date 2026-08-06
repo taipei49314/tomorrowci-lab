@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "workflow_run": "31094336322",
+  "bundle": "tomorrowci-v0.1.1-alpha.3-bundle.zip",
+  "bundle_sha256": "sha256:a3a8d15cdd0e1db8d7cfdfe099644a9ded30d7b13bc08a435137673f2b640c37",
+  "self_verify": "PASS (checksums-and-release job)",
+  "live_run_id": "e07d27f23570",
+  "generated_at": "2026-08-06T10:51:12.689984+00:00"
+}
