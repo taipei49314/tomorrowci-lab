@@ -123,12 +123,14 @@ fn walk(root: &Path, cur: &Path, out: &mut BTreeMap<String, PathBuf>) -> Result<
         let entry = entry?;
         let p = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
+        // Meta trees: workspace is covered by workspace-manifest.json; attestations are
+        // verification meta written *after* inventory and must never be payload.
         if name == "workspace" || name == "attestations" {
-            // workspace content is covered by workspace-manifest; do not double-hash whole tree as run payload
-            // still index workspace-manifest.json at root only
-            if name == "workspace" {
-                continue;
-            }
+            continue;
+        }
+        // Ignore finalize temp files if a previous run was interrupted mid-rename.
+        if name.starts_with('.') && name.ends_with(".tmp") {
+            continue;
         }
         if p.is_symlink() {
             return Err(TcError::InvalidState(format!(

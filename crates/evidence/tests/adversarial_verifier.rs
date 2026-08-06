@@ -357,3 +357,21 @@ fn forged_replay_result_scenario_mismatch() {
         finalize_run_checksums(rr).unwrap();
     });
 }
+
+/// CLI verify writes attestations *after* PASS; those must not poison pre-replay verify.
+#[test]
+fn post_verify_attestations_do_not_break_inventory() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    let rr = d.path().join(".tomorrowci/runs").join(&id);
+    let att = rr.join("attestations");
+    fs::create_dir_all(&att).unwrap();
+    fs::write(att.join("verification-fake.json"), r#"{"ok":true}"#).unwrap();
+    fs::write(att.join("SHA256SUMS.txt"), "deadbeef  verification-fake.json\n").unwrap();
+    let rep = verify_run_root(&rr).unwrap();
+    assert!(
+        rep.ok,
+        "attestations must be excluded from payload inventory: {:?}",
+        rep.errors
+    );
+}

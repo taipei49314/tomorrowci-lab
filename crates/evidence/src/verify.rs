@@ -302,7 +302,7 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
                 rep.err(
                     "extra_unclassified",
                     Some(p),
-                    "file present on disk but not in evidence-index",
+                    format!("file present on disk but not in evidence-index: {p}"),
                 );
             }
             for p in index_keys.difference(&disk_keys) {
@@ -311,7 +311,7 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
                     rep.err(
                         "index_missing_on_disk",
                         Some(p),
-                        "indexed path missing on disk",
+                        format!("indexed path missing on disk: {p}"),
                     );
                 }
             }
