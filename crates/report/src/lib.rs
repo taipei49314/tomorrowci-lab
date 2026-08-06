@@ -182,6 +182,52 @@ pub fn write_html_report(manifest: &RunManifest, out: &Path) -> Result<()> {
         .map(|n| format!("<li>{}</li>", escape_html(n)))
         .collect();
 
+    let mut scenario_links = String::from("<h3>Per-scenario evidence</h3>");
+    for r in &manifest.results {
+        let sid = escape_html(&r.scenario_id);
+        let base = format!("scenarios/{sid}");
+        scenario_links.push_str(&format!("<h4 id=\"sc-{sid}\"><code>{sid}</code></h4><ul>"));
+        for f in [
+            "scenario.json",
+            "environment.json",
+            "fetch-commands.json",
+            "fetch-phase.json",
+            "fetch-result.json",
+            "fetch-stdout.log",
+            "fetch-stderr.log",
+            "test-commands.json",
+            "test-phase.json",
+            "test-result.json",
+            "stdout.log",
+            "stderr.log",
+            "result.json",
+            "failure-signature.json",
+            "replay.json",
+            "replay.sh",
+            "replay.ps1",
+        ] {
+            scenario_links.push_str(&format!("<li><a href=\"{base}/{f}\">{base}/{f}</a></li>"));
+        }
+        // known attempt slots (1..3) — missing files simply 404; present after dual replay
+        for n in 1..=3 {
+            let a = format!("{base}/replays/attempt-{n}");
+            scenario_links.push_str(&format!(
+                "<li><a href=\"{a}/result.json\">{a}/result.json</a></li>\
+                 <li><a href=\"{a}/stdout.log\">{a}/stdout.log</a></li>\
+                 <li><a href=\"{a}/stderr.log\">{a}/stderr.log</a></li>"
+            ));
+        }
+        scenario_links.push_str("</ul>");
+    }
+
+    let commit = escape_html(
+        manifest
+            .repository
+            .commit_sha
+            .as_deref()
+            .unwrap_or("(unknown)"),
+    );
+
     // Use replace (not format!) so CSS colors and #anchors are not parsed as format args.
     let html = HTML_TEMPLATE
         .replace("{{RUN}}", &escape_html(&manifest.run_id))
@@ -190,11 +236,13 @@ pub fn write_html_report(manifest: &RunManifest, out: &Path) -> Result<()> {
             &escape_html(&format!("{:?}", manifest.detection.ecosystem)),
         )
         .replace("{{TOOL}}", &escape_html(&manifest.tool_version))
+        .replace("{{COMMIT}}", &commit)
         .replace("{{FRONTIER}}", &frontier)
         .replace("{{MATRIX}}", &matrix)
         .replace("{{ROWS}}", &rows)
         .replace("{{PLAN_NOTES}}", &plan_notes)
-        .replace("{{NOTES}}", &notes);
+        .replace("{{NOTES}}", &notes)
+        .replace("{{SCENARIO_LINKS}}", &scenario_links);
     std::fs::write(out, html)?;
     Ok(())
 }
@@ -242,6 +290,7 @@ nav a { color: #7dd3fc; margin-right: 1rem; }
   <section class="banner" aria-labelledby="run-meta">
     <h2 id="run-meta" class="sr-only">Run metadata</h2>
     <p>Run <code>{{RUN}}</code> · Ecosystem <code>{{ECO}}</code> · Tool <code>{{TOOL}}</code></p>
+    <p>Source commit <code>{{COMMIT}}</code></p>
     <p id="horizon">{{FRONTIER}}</p>
     <p><em>Evidence grades only — no LLM root-cause claims. Color is not the only verdict cue (text badges).</em></p>
   </section>
@@ -284,9 +333,11 @@ nav a { color: #7dd3fc; margin-right: 1rem; }
       <li><a href="run.json">run.json</a></li>
       <li><a href="frontier.json">frontier.json</a></li>
       <li><a href="checksums.txt">checksums.txt</a></li>
+      <li><a href="evidence-index.json">evidence-index.json</a></li>
       <li><a href="workspace-manifest.json">workspace-manifest.json</a></li>
-      <li><a href="scenarios/">scenarios/</a> (environment, fetch/test phase, failure-signature, replay)</li>
+      <li><a href="attestations/">attestations/</a> (verifier meta; outside payload inventory)</li>
     </ul>
+    {{SCENARIO_LINKS}}
   </section>
 </main>
 <footer>
@@ -433,6 +484,11 @@ mod tests {
         assert!(body.contains("aria-label"));
         assert!(body.contains("prefers-reduced-motion"));
         assert!(body.contains("tabindex"));
+        assert!(body.contains("id=\"main\""));
+        assert!(body.contains("Skip to main content"));
+        assert!(body.contains("href=\"evidence-index.json\""));
+        assert!(body.contains("replays/attempt-1/result.json"));
+        assert!(!body.contains("scripted-test-digest"));
         let _ = m;
     }
 }
