@@ -77,9 +77,19 @@ pub fn write_github_job_summary(manifest: &RunManifest, out: &Path) -> Result<()
 
 /// Accessible static HTML report generated from real run data.
 pub fn write_html_report(manifest: &RunManifest, out: &Path) -> Result<()> {
+    write_html_report_from_root(manifest, out, out.parent())
+}
+
+/// Report generation with evidence root for existence-filtered links (G6).
+pub fn write_html_report_from_root(
+    manifest: &RunManifest,
+    out: &Path,
+    evidence_root: Option<&Path>,
+) -> Result<()> {
     if let Some(p) = out.parent() {
         std::fs::create_dir_all(p)?;
     }
+    let root = evidence_root.or_else(|| out.parent());
 
     let mut rows = String::new();
     for r in &manifest.results {
@@ -187,7 +197,7 @@ pub fn write_html_report(manifest: &RunManifest, out: &Path) -> Result<()> {
         let sid = escape_html(&r.scenario_id);
         let base = format!("scenarios/{sid}");
         scenario_links.push_str(&format!("<h4 id=\"sc-{sid}\"><code>{sid}</code></h4><ul>"));
-        for f in [
+        let candidates = [
             "scenario.json",
             "environment.json",
             "fetch-commands.json",
@@ -205,17 +215,39 @@ pub fn write_html_report(manifest: &RunManifest, out: &Path) -> Result<()> {
             "replay.json",
             "replay.sh",
             "replay.ps1",
-        ] {
-            scenario_links.push_str(&format!("<li><a href=\"{base}/{f}\">{base}/{f}</a></li>"));
+        ];
+        for f in candidates {
+            // Baseline must not link failure-signature unless present
+            let rel = format!("{base}/{f}");
+            let exists = root.map(|r| r.join(&rel).is_file()).unwrap_or(true);
+            if !exists {
+                continue;
+            }
+            scenario_links.push_str(&format!("<li><a href=\"{rel}\">{rel}</a></li>"));
         }
-        // known attempt slots (1..3) — missing files simply 404; present after dual replay
-        for n in 1..=3 {
-            let a = format!("{base}/replays/attempt-{n}");
-            scenario_links.push_str(&format!(
-                "<li><a href=\"{a}/result.json\">{a}/result.json</a></li>\
-                 <li><a href=\"{a}/stdout.log\">{a}/stdout.log</a></li>\
-                 <li><a href=\"{a}/stderr.log\">{a}/stderr.log</a></li>"
-            ));
+        // Only actual attempt directories on disk
+        if let Some(rroot) = root {
+            let attempts = rroot.join(format!("scenarios/{}/replays", r.scenario_id));
+            if attempts.is_dir() {
+                let mut names: Vec<_> = std::fs::read_dir(&attempts)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|e| e.path().is_dir())
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect();
+                names.sort();
+                for name in names {
+                    let a = format!("{base}/replays/{name}");
+                    for f in ["result.json", "stdout.log", "stderr.log"] {
+                        let rel = format!("{a}/{f}");
+                        if rroot.join(&rel).is_file() {
+                            scenario_links
+                                .push_str(&format!("<li><a href=\"{rel}\">{rel}</a></li>"));
+                        }
+                    }
+                }
+            }
         }
         scenario_links.push_str("</ul>");
     }
@@ -487,7 +519,8 @@ mod tests {
         assert!(body.contains("id=\"main\""));
         assert!(body.contains("Skip to main content"));
         assert!(body.contains("href=\"evidence-index.json\""));
-        assert!(body.contains("replays/attempt-1/result.json"));
+        // G6: no hard-coded nonexistent attempt links when evidence root empty
+        assert!(!body.contains("replays/attempt-1/result.json"));
         assert!(!body.contains("scripted-test-digest"));
         let _ = m;
     }
