@@ -1160,14 +1160,33 @@ pub fn write_verification_attestation(
     report: &VerifyReport,
     tool_version: &str,
 ) -> Result<PathBuf> {
+    write_verification_attestation_ex(run_root, report, tool_version, None)
+}
+
+/// Write external attestation with create_new uniqueness (G4).
+pub fn write_verification_attestation_ex(
+    run_root: &Path,
+    report: &VerifyReport,
+    tool_version: &str,
+    binary_path: Option<&Path>,
+) -> Result<PathBuf> {
     let att_dir = run_root.join("attestations");
     std::fs::create_dir_all(&att_dir)?;
-    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
-    let name = format!("verification-{ts}.json");
+    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%S%3fZ");
+    let nonce = uuid::Uuid::new_v4().simple();
+    let name = format!("verification-{ts}-{nonce}.json");
     let path = att_dir.join(&name);
+    let binary_sha = match binary_path {
+        Some(p) if p.is_file() => Some(hash_file(p)?),
+        _ => std::env::current_exe()
+            .ok()
+            .and_then(|p| hash_file(&p).ok()),
+    };
     let body = serde_json::json!({
         "schema_version": 1,
         "tool_version": tool_version,
+        "verifier_binary_sha256": binary_sha,
+        "invocation_mode": "verify",
         "run_id": report.run_id,
         "ok": report.ok,
         "index_hash": report.index_hash,
@@ -1179,12 +1198,25 @@ pub fn write_verification_attestation(
         "generated_at": chrono::Utc::now().to_rfc3339(),
     });
     let bytes = serde_json::to_vec_pretty(&body)?;
-    std::fs::write(&path, &bytes)?;
+    // create_new: never overwrite an existing attestation filename
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|e| TcError::Other(format!("attestation create_new failed: {e}")))?;
+    use std::io::Write;
+    f.write_all(&bytes)?;
+    f.sync_all()?;
     let h = hash_bytes(&bytes);
     let mut sums = String::new();
     let sums_path = att_dir.join("SHA256SUMS.txt");
     if sums_path.exists() {
         sums = std::fs::read_to_string(&sums_path)?;
+    }
+    if sums.lines().any(|l| l.contains(&name)) {
+        return Err(TcError::Other(format!(
+            "attestation inventory already lists {name}"
+        )));
     }
     sums.push_str(&format!("{h}  {name}\n"));
     std::fs::write(sums_path, sums)?;

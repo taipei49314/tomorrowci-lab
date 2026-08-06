@@ -106,7 +106,11 @@ pub fn scan_with_adapter(
             is_disposable_copy: true,
         },
     )?;
-    layout.write_json("config.normalized.json", &config)?;
+    // Must match Config::content_hash canonical bytes exactly (verify authority).
+    std::fs::write(
+        layout.run_root.join("config.normalized.json"),
+        tomorrowci_core::canonical_json_string(&config)?,
+    )?;
 
     let executor: Box<dyn ScenarioExecutor> = match ContainerExecutor::detect() {
         Ok(e) => Box::new(e),

@@ -10,9 +10,13 @@ pub fn sha256_str(s: &str) -> String {
     sha256_bytes(s.as_bytes())
 }
 
-pub fn canonical_json_hash<T: serde::Serialize>(value: &T) -> Result<String, serde_json::Error> {
+pub fn canonical_json_string<T: serde::Serialize>(value: &T) -> Result<String, serde_json::Error> {
     let v = serde_json::to_value(value)?;
-    let s = serde_json::to_string(&canonicalize(&v))?;
+    serde_json::to_string(&canonicalize(&v))
+}
+
+pub fn canonical_json_hash<T: serde::Serialize>(value: &T) -> Result<String, serde_json::Error> {
+    let s = canonical_json_string(value)?;
     Ok(sha256_str(&s))
 }
 

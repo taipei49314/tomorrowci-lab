@@ -4,10 +4,24 @@
   "branch": "repair/alpha3-semantic-authority-rc2",
   "terminal_state": "WORKING",
   "active_gate": "G0",
-  "last_observed_head": "89a5fcf6c1b935ce140371327429847757c32100",
-  "last_green_local_commands": [],
-  "last_ci_run": null,
+  "last_observed_head": "pending_push",
+  "last_green_local_commands": [
+    "cargo clippy --workspace --all-targets -- -D warnings",
+    "cargo test --workspace",
+    "cargo test -p tomorrowci-evidence --test adversarial_verifier"
+  ],
+  "last_ci_run": {
+    "id": "31093469107",
+    "sha": "84ddf9c98e51342c4a98181c9a705abd83dd0be6",
+    "rust": "success",
+    "live_python": "failure",
+    "note": "config_hash_mismatch fixed in follow-up"
+  },
   "completed_gates": [],
-  "open_blockers": ["CI failed on 89a5fcf — need diagnostics"],
-  "next_action": "Ingest exact CI failure logs for 31091413203 and reproduce G0 locally"
+  "open_blockers": [
+    "G0: live/action failed on config_hash_mismatch — fix pushed next",
+    "G5: 76 mutation harness partial",
+    "G3-G12 remaining"
+  ],
+  "next_action": "Push config canonical write; observe exact-SHA CI green chain"
 }
