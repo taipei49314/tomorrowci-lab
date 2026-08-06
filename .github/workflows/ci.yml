@@ -94,6 +94,16 @@ jobs:
           grep -q "replay: PASS" /tmp/r1.out
           grep -q "replay: PASS" /tmp/r2.out
           "$GITHUB_WORKSPACE/target/release/tomorrowci" verify "$RUN_ID"
+      - name: Prepare evidence for upload
+        if: always()
+        run: |
+          set -euo pipefail
+          # workspace-manifest excludes workspace/.tomorrowci/ (scenario venvs/caches).
+          # Strip it so upload can include-hidden-files for .tomorrowci.yml without EACCES
+          # on container-owned pip cache paths.
+          find fixtures/python-runtime-break/.tomorrowci/runs -type d -path '*/workspace/.tomorrowci' -prune -exec rm -rf {} + 2>/dev/null || true
+          # ensure config remains
+          find fixtures/python-runtime-break/.tomorrowci/runs -name '.tomorrowci.yml' -path '*/workspace/*' | head -3
       - name: Upload live evidence
         if: always()
         uses: actions/upload-artifact@v4

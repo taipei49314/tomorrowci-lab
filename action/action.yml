@@ -120,6 +120,18 @@ runs:
           fi
         fi
 
+    - name: Prepare evidence for upload
+      if: always()
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Drop workspace/.tomorrowci scenario state (not in workspace-manifest); keep .tomorrowci.yml
+        for base in "${{ inputs.path }}/.tomorrowci/runs" ".tomorrowci/runs"; do
+          if [ -d "$base" ]; then
+            find "$base" -type d -path '*/workspace/.tomorrowci' -prune -exec rm -rf {} + 2>/dev/null || true
+          fi
+        done
+
     - name: Upload evidence
       if: always()
       uses: actions/upload-artifact@v4
