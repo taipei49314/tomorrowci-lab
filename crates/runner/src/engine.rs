@@ -64,24 +64,7 @@ impl ScenarioExecutor for ContainerExecutor {
     }
 
     fn execute(&self, ctx: &ExecutionContext<'_>) -> Result<RawExecutionResult> {
-        // Prefer digest-pinned image ref when recorded
-        let image = ctx
-            .environment
-            .image_digest
-            .clone()
-            .filter(|d| d.contains("sha256:") || d.starts_with("sha256:"))
-            .map(|d| {
-                if d.contains('@') {
-                    d
-                } else if d.starts_with("sha256:") {
-                    // Id-only: use as image id
-                    d
-                } else {
-                    d
-                }
-            })
-            .unwrap_or_else(|| ctx.environment.image.clone());
-
+        let image = ctx.environment.run_image_ref();
         let req = RunRequest {
             engine: self.engine,
             image,

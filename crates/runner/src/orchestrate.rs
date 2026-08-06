@@ -3,6 +3,7 @@
 
 use crate::engine::{ContainerExecutor, ExecutionContext, ScenarioExecutor};
 use chrono::Utc;
+use indexmap::IndexMap;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -14,9 +15,11 @@ use tomorrowci_core::{
     classify_from_reruns, compute_breakage_frontier, ddmin_axes, plan_scenarios, Baseline,
     CommandSpec, Config, Ecosystem, EnvironmentAxis, EnvironmentSpec, EvidenceGrade,
     ExecutionResult, FailureSignature, ProjectDetection, RawExecutionResult, RepositorySnapshot,
-    Result, RunManifest, Scenario, TcError, Verdict,
+    Result, RunIdentity, RunManifest, Scenario, TcError, Verdict,
 };
-use tomorrowci_evidence::{write_checksums, write_run_manifest, EvidenceLayout};
+use tomorrowci_evidence::{
+    write_checksums, write_run_manifest, write_workspace_manifest, EvidenceLayout,
+};
 use tomorrowci_metrics::ScanMetrics;
 use tomorrowci_report::{write_github_job_summary, write_html_report, write_json_report};
 use tomorrowci_sandbox::{
@@ -85,8 +88,9 @@ pub fn scan_with_adapter(
 
     let work = layout.run_root.join("workspace");
     make_disposable_copy(repo, &work)?;
+    write_workspace_manifest(&work, &layout.run_root.join("workspace-manifest.json"))?;
 
-    // Byte-for-byte original unchanged: we only write under .tomorrowci/runs
+    // Target source files are not modified; evidence is under .tomorrowci/runs (excluded).
     let baseline = adapter.baseline(repo, &config)?;
     let rt_cands = adapter.candidates(&baseline, &config)?;
     let dep_cands = dependency_candidates(&baseline, &config);
@@ -127,21 +131,38 @@ pub fn scan_with_adapter(
 
     for scenario in &plan.scenarios {
         let mut env = adapter.materialize(scenario, &work)?;
-        env.image = normalize_image(eco, &scenario.runtime);
+        let tag = normalize_image(eco, &scenario.runtime);
+        env.image_tag = tag.clone();
+        env.image = tag; // legacy alias of tag only — never store digest here
         env.memory_mb = config.sandbox.memory_mb;
         env.cpus = config.sandbox.cpus;
         env.pids_limit = config.sandbox.pids_limit;
+        env.fetch_timeout_seconds = Some(config.execution.timeout_seconds.min(600));
+        env.test_timeout_seconds = Some(config.execution.timeout_seconds);
+        env.engine = Some(executor.engine_label());
+        let avail = tomorrowci_sandbox::detect_engines();
+        env.engine_version = avail.engine_version.clone();
 
         let sc_dir = layout.ensure_scenario(&scenario.id)?;
-        // Per-scenario isolated state under workspace/.tomorrowci/<scenario_id>
-        let sc_state = work.join(".tomorrowci").join(&scenario.id);
+        // True scenario-specific mounted state
+        let sc_state = work
+            .join(".tomorrowci")
+            .join("scenarios")
+            .join(&scenario.id);
         std::fs::create_dir_all(sc_state.join("venv"))?;
         std::fs::create_dir_all(sc_state.join("cache").join("pip"))?;
-        // Also prepare default paths used by Python adapter
-        prepare_scenario_state(&work)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::Permissions::from_mode(0o777);
+            let _ = std::fs::set_permissions(&sc_state, mode.clone());
+            let _ = std::fs::set_permissions(sc_state.join("venv"), mode.clone());
+            let _ = std::fs::set_permissions(sc_state.join("cache"), mode.clone());
+            let _ = std::fs::set_permissions(sc_state.join("cache").join("pip"), mode);
+        }
 
-        // IMAGE_RESOLVE
-        let digest = match executor.ensure_image(&env.image) {
+        // IMAGE_RESOLVE — pull/resolve by tag; record digest separately
+        let digest = match executor.ensure_image(env.tag()) {
             Ok(d) => d,
             Err(e) => {
                 let blocked = blocked_result(scenario, &env, &[], &e.to_string());
@@ -153,10 +174,12 @@ pub fn scan_with_adapter(
                     false,
                     0,
                     "n/a",
-                    &env.image,
+                    env.tag(),
                     None,
                     &[],
                     &e.to_string(),
+                    None,
+                    None,
                 )?;
                 persist_scenario_artifacts(
                     &sc_dir,
@@ -178,13 +201,7 @@ pub fn scan_with_adapter(
                 continue;
             }
         };
-        env.image_digest = Some(digest.clone());
-        // Execute using digest-pinned ref when possible
-        if digest.contains("@sha256:") {
-            env.image = digest.clone();
-        } else if digest.starts_with("sha256:") && !env.image.contains('@') {
-            // keep tag for pull identity but record digest; container run uses digest via engine
-        }
+        env.image_digest = Some(digest);
 
         let test_commands = build_scenario_commands(adapter, scenario, &config, &work)?;
         let fetch_cmds = match build_fetch_commands(eco, scenario, &work, is_scripted) {
@@ -225,12 +242,13 @@ pub fn scan_with_adapter(
         let mut fetch_raw: Option<RawExecutionResult> = None;
         if let Some(ref fcmds) = fetch_cmds {
             let fetch_start = Utc::now();
+            let fetch_timeout = Duration::from_secs(env.fetch_timeout_seconds.unwrap_or(600));
             let fr = match executor.execute(&ExecutionContext {
                 workspace: &work,
                 scenario,
                 environment: &env,
                 commands: fcmds,
-                timeout: Duration::from_secs(config.execution.timeout_seconds.min(600)),
+                timeout: fetch_timeout,
                 network: "bridge",
             }) {
                 Ok(r) => r,
@@ -244,10 +262,12 @@ pub fn scan_with_adapter(
                         false,
                         0,
                         "bridge",
-                        &env.image,
+                        env.tag(),
                         env.image_digest.clone(),
                         fcmds,
                         &e.to_string(),
+                        None,
+                        None,
                     )?;
                     persist_scenario_artifacts(
                         &sc_dir,
@@ -269,6 +289,7 @@ pub fn scan_with_adapter(
                     continue;
                 }
             };
+            let fetch_finished = Utc::now();
             let fetch_ok = fr.exit_code == Some(0) && !fr.timed_out;
             write_raw_logs(&sc_dir, "fetch", &fr)?;
             write_phase(
@@ -279,14 +300,16 @@ pub fn scan_with_adapter(
                 fr.timed_out,
                 fr.duration_ms,
                 "bridge",
-                &env.image,
+                env.tag(),
                 env.image_digest.clone(),
                 fcmds,
                 if fetch_ok { "ok" } else { "fetch failed" },
+                Some(fetch_start),
+                Some(fetch_finished),
             )?;
             std::fs::write(
                 sc_dir.join("fetch-result.json"),
-                serde_json::to_string_pretty(&fr_json(&fr, fetch_start))?,
+                serde_json::to_string_pretty(&fr_json(&fr, fetch_start, Some(fetch_finished)))?,
             )?;
             if !fetch_ok {
                 let mut blocked = blocked_result(
@@ -332,13 +355,15 @@ pub fn scan_with_adapter(
         let mut attempt_pass: Vec<bool> = Vec::new();
         let mut last_raw = None;
 
+        let test_timeout = Duration::from_secs(env.test_timeout_seconds.unwrap_or(900));
+        let test_started = Utc::now();
         for attempt in 1..=reruns {
             let raw = executor.execute(&ExecutionContext {
                 workspace: &work,
                 scenario,
                 environment: &env,
                 commands: &test_commands,
-                timeout: Duration::from_secs(config.execution.timeout_seconds),
+                timeout: test_timeout,
                 network: "none",
             })?;
 
@@ -359,6 +384,7 @@ pub fn scan_with_adapter(
                 break;
             }
         }
+        let test_finished = Utc::now();
 
         let raw = last_raw.ok_or_else(|| TcError::InvalidState("no test attempts".into()))?;
         write_phase(
@@ -369,14 +395,16 @@ pub fn scan_with_adapter(
             raw.timed_out,
             raw.duration_ms,
             "none",
-            &env.image,
+            env.tag(),
             env.image_digest.clone(),
             &test_commands,
             "test complete",
+            Some(test_started),
+            Some(test_finished),
         )?;
         std::fs::write(
             sc_dir.join("test-result.json"),
-            serde_json::to_string_pretty(&fr_json(&raw, Utc::now()))?,
+            serde_json::to_string_pretty(&fr_json(&raw, test_started, Some(test_finished)))?,
         )?;
 
         let verdict = if scenario.is_baseline {
@@ -494,6 +522,33 @@ pub fn scan_with_adapter(
     layout.write_json("frontier.json", &frontier)?;
 
     let run_finished = Utc::now();
+    let mut manifest_hashes = IndexMap::new();
+    for name in [
+        "requirements.txt",
+        "pyproject.toml",
+        "package.json",
+        "Cargo.toml",
+    ] {
+        let p = work.join(name);
+        if p.exists() {
+            if let Ok(h) = tomorrowci_evidence::file_checksum(&p) {
+                manifest_hashes.insert(name.into(), h);
+            }
+        }
+    }
+    let identity = RunIdentity {
+        source_commit: git_head(repo),
+        dirty_tree: git_dirty(repo),
+        tool_version: env!("CARGO_PKG_VERSION").into(),
+        adapter_name: adapter.name().into(),
+        adapter_version: env!("CARGO_PKG_VERSION").into(),
+        config_hash: config.content_hash()?,
+        manifest_hashes,
+        container_engine: Some(executor.engine_label()),
+        container_engine_version: tomorrowci_sandbox::detect_engines().engine_version,
+        started_at: run_started,
+        finished_at: Some(run_finished),
+    };
     let manifest = RunManifest {
         run_id: run_id.clone(),
         tool_version: env!("CARGO_PKG_VERSION").into(),
@@ -512,46 +567,29 @@ pub fn scan_with_adapter(
         results: results.clone(),
         frontier: frontier.clone(),
         evidence_root: layout.run_root.clone(),
+        identity: Some(identity),
     };
     write_run_manifest(&layout, &manifest)?;
     write_json_report(&manifest, &layout.run_root.join("report.json"))?;
     write_html_report(&manifest, &layout.run_root.join("report.html"))?;
     write_github_job_summary(&manifest, &layout.run_root.join("job-summary.md"))?;
 
-    // Run-level checksums for required files
-    let mut run_checksums = Vec::new();
-    for name in [
-        "run.json",
-        "plan.json",
-        "verdicts.json",
-        "frontier.json",
-        "report.html",
-        "job-summary.md",
-        "metrics.json",
-    ] {
-        let p = layout.run_root.join(name);
-        if p.exists() {
-            if let Ok(h) = tomorrowci_evidence::file_checksum(&p) {
-                run_checksums.push((name.into(), h));
-            }
-        }
-    }
-    write_checksums(&layout.run_root, &run_checksums)?;
-
     let metrics =
         ScanMetrics::from_manifest(&manifest, Some(wall_start.elapsed().as_millis() as u64));
     metrics.write_json(&layout.run_root.join("metrics.json"))?;
-    // refresh metrics checksum
-    if let Ok(h) = tomorrowci_evidence::file_checksum(&layout.run_root.join("metrics.json")) {
-        run_checksums.retain(|(n, _)| n != "metrics.json");
-        run_checksums.push(("metrics.json".into(), h));
-        write_checksums(&layout.run_root, &run_checksums)?;
-    }
 
     let mut terminal_summary = render_terminal_summary(&manifest);
     terminal_summary.push_str(&metrics.summary_line());
     terminal_summary.push('\n');
     std::fs::write(layout.run_root.join("summary.txt"), &terminal_summary)?;
+
+    if !layout.run_root.join("claims.json").exists() {
+        std::fs::write(
+            layout.run_root.join("claims.json"),
+            serde_json::to_string_pretty(&serde_json::json!([]))?,
+        )?;
+    }
+    tomorrowci_evidence::finalize_run_checksums(&layout.run_root)?;
 
     Ok(ScanOutcome {
         manifest,
@@ -559,6 +597,17 @@ pub fn scan_with_adapter(
         terminal_summary,
         metrics,
     })
+}
+
+fn git_dirty(repo: &Path) -> bool {
+    let out = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(repo)
+        .output();
+    match out {
+        Ok(o) if o.status.success() => !String::from_utf8_lossy(&o.stdout).trim().is_empty(),
+        _ => false,
+    }
 }
 
 /// Test-only scan with injected executor (scripted).
@@ -592,8 +641,10 @@ pub fn scan_with_executor(
 
     for scenario in &plan.scenarios {
         let mut env = adapter.materialize(scenario, &work)?;
-        env.image = normalize_image(eco, &scenario.runtime);
-        env.image_digest = Some(executor.ensure_image(&env.image)?);
+        let tag = normalize_image(eco, &scenario.runtime);
+        env.image_tag = tag.clone();
+        env.image = tag;
+        env.image_digest = Some(executor.ensure_image(env.tag())?);
         let commands = build_scenario_commands(adapter, scenario, &config, &work)?;
         let fetch_cmds = build_fetch_commands(eco, scenario, &work, true)
             .ok()
@@ -702,6 +753,7 @@ pub fn scan_with_executor(
         results,
         frontier,
         evidence_root: layout.run_root.clone(),
+        identity: None,
     };
     write_run_manifest(&layout, &manifest)?;
     write_html_report(&manifest, &layout.run_root.join("report.html"))?;
@@ -804,7 +856,7 @@ fn build_fetch_commands(
                     phase: "fetch".into(),
                 }]));
             }
-            Ok(Some(python_fetch_commands(work, upgrade)?))
+            Ok(Some(python_fetch_commands(work, upgrade, &scenario.id)?))
         }
         Ecosystem::Node => {
             let argv: Vec<String> = if upgrade {
@@ -901,12 +953,15 @@ fn write_phase(
     timed_out: bool,
     duration_ms: u64,
     network: &str,
-    image: &str,
+    image_tag: &str,
     image_digest: Option<String>,
     commands: &[CommandSpec],
     detail: &str,
+    started: Option<chrono::DateTime<Utc>>,
+    finished: Option<chrono::DateTime<Utc>>,
 ) -> Result<()> {
-    let now = Utc::now().to_rfc3339();
+    let started = started.unwrap_or_else(Utc::now);
+    let finished = finished.unwrap_or_else(Utc::now);
     let pr = PhaseResult {
         phase: phase.into(),
         ok,
@@ -914,11 +969,11 @@ fn write_phase(
         timed_out,
         duration_ms,
         network: network.into(),
-        image: image.into(),
+        image: image_tag.into(),
         image_digest,
         argv: commands.iter().map(|c| c.argv.clone()).collect(),
-        started_at: now.clone(),
-        finished_at: now,
+        started_at: started.to_rfc3339(),
+        finished_at: finished.to_rfc3339(),
         detail: detail.into(),
     };
     std::fs::write(
@@ -934,14 +989,19 @@ fn write_raw_logs(sc_dir: &Path, prefix: &str, raw: &RawExecutionResult) -> Resu
     Ok(())
 }
 
-fn fr_json(raw: &RawExecutionResult, started: chrono::DateTime<Utc>) -> serde_json::Value {
+fn fr_json(
+    raw: &RawExecutionResult,
+    started: chrono::DateTime<Utc>,
+    finished: Option<chrono::DateTime<Utc>>,
+) -> serde_json::Value {
+    let finished = finished.unwrap_or_else(Utc::now);
     serde_json::json!({
         "exit_code": raw.exit_code,
         "timed_out": raw.timed_out,
         "duration_ms": raw.duration_ms,
         "network_used": raw.network_used,
         "started_at": started.to_rfc3339(),
-        "finished_at": Utc::now().to_rfc3339(),
+        "finished_at": finished.to_rfc3339(),
     })
 }
 
@@ -1251,24 +1311,50 @@ pub fn replay_scenario(repo: &Path, run_id: &str, scenario_id: &str) -> Result<S
         )));
     }
 
+    // Keep image_tag as tag; digest only in image_digest
     let mut env_run = env.clone();
     env_run.image_digest = Some(recorded_digest.clone());
-    if recorded_digest.contains('@') {
-        env_run.image = recorded_digest.clone();
+    env_run.image = env.tag().to_string();
+    env_run.image_tag = env.tag().to_string();
+
+    // Verify workspace-manifest before re-execution
+    if root.join("workspace-manifest.json").exists() {
+        let vr = tomorrowci_evidence::verify_run_root(&root);
+        if let Ok(rep) = &vr {
+            if rep.errors.iter().any(|e| e.contains("workspace-manifest")) {
+                return Err(TcError::Blocked(format!(
+                    "workspace/manifest integrity failed: {:?}",
+                    rep.errors
+                )));
+            }
+        }
     }
 
-    // Re-prepare writable scenario state; fetch must recreate venv from recorded argv.
-    prepare_scenario_state(&work)?;
-    let _ = std::fs::remove_dir_all(work.join(".tomorrowci").join("venv"));
-    prepare_scenario_state(&work)?;
+    let fetch_to = Duration::from_secs(env.fetch_timeout_seconds.unwrap_or(600));
+    let test_to = Duration::from_secs(env.test_timeout_seconds.unwrap_or(900));
 
+    let attempt_n = {
+        let replays = sc_dir.join("replays");
+        let n = if replays.exists() {
+            std::fs::read_dir(&replays)
+                .map(|rd| rd.filter_map(|e| e.ok()).count())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        n + 1
+    };
+    let attempt_dir = sc_dir.join("replays").join(format!("attempt-{attempt_n}"));
+    std::fs::create_dir_all(&attempt_dir)?;
+
+    let started = Utc::now();
     if !fetch_cmds.is_empty() {
         let fr = executor.execute(&ExecutionContext {
             workspace: &work,
             scenario: &scenario,
             environment: &env_run,
             commands: &fetch_cmds,
-            timeout: Duration::from_secs(600),
+            timeout: fetch_to,
             network: "bridge",
         })?;
         if fr.exit_code != Some(0) || fr.timed_out {
@@ -1285,9 +1371,10 @@ pub fn replay_scenario(repo: &Path, run_id: &str, scenario_id: &str) -> Result<S
         scenario: &scenario,
         environment: &env_run,
         commands: &test_cmds,
-        timeout: Duration::from_secs(900),
+        timeout: test_to,
         network: "none",
     })?;
+    let finished = Utc::now();
 
     let adapter = PythonAdapter;
     let new_sig = if raw.exit_code != Some(0) {
@@ -1306,18 +1393,35 @@ pub fn replay_scenario(repo: &Path, run_id: &str, scenario_id: &str) -> Result<S
     let ok = exit_match && sig_match;
     let report = serde_json::json!({
         "scenario_id": scenario_id,
+        "attempt": attempt_n,
         "ok": ok,
+        "started_at": started.to_rfc3339(),
+        "finished_at": finished.to_rfc3339(),
         "original_exit": original.exit_code,
         "replay_exit": raw.exit_code,
+        "timed_out": raw.timed_out,
         "original_signature": original.failure.as_ref().map(|f| &f.normalized_hash),
         "replay_signature": new_sig.as_ref().map(|f| &f.normalized_hash),
         "recorded_digest": recorded_digest,
         "resolved_digest": resolved,
+        "engine": env_run.engine,
+        "engine_version": env_run.engine_version,
+        "image_tag": env_run.tag(),
+        "fetch_timeout_seconds": env.fetch_timeout_seconds,
+        "test_timeout_seconds": env.test_timeout_seconds,
     });
+    std::fs::write(
+        attempt_dir.join("result.json"),
+        serde_json::to_string_pretty(&report)?,
+    )?;
+    std::fs::write(attempt_dir.join("stdout.log"), &raw.stdout)?;
+    std::fs::write(attempt_dir.join("stderr.log"), &raw.stderr)?;
+    // compatibility alias for last replay
     std::fs::write(
         sc_dir.join("replay-result.json"),
         serde_json::to_string_pretty(&report)?,
     )?;
+    let _ = tomorrowci_evidence::finalize_run_checksums(&root);
 
     let mut out = format!(
         "replay {scenario_id}: exit={:?} timed_out={} duration_ms={}\n",

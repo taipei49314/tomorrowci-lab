@@ -134,6 +134,7 @@ mod tests {
 
     fn env() -> EnvironmentSpec {
         EnvironmentSpec {
+            image_tag: "python:3.9".into(),
             image: "python:3.9".into(),
             image_digest: Some("sha256:abc".into()),
             workdir: "/work".into(),
@@ -144,6 +145,11 @@ mod tests {
             pids_limit: 256,
             user: Some("nobody".into()),
             read_only_root: true,
+            scenario_state_root: None,
+            fetch_timeout_seconds: None,
+            test_timeout_seconds: None,
+            engine: None,
+            engine_version: None,
         }
     }
 

@@ -156,17 +156,21 @@ impl EcosystemAdapter for PythonAdapter {
             .split('-')
             .next()
             .unwrap_or(&scenario.runtime);
+        let state = format!("/work/.tomorrowci/scenarios/{}", scenario.id);
+        let venv = format!("{state}/venv");
+        let image = format!("python:{ver}-slim");
         Ok(EnvironmentSpec {
-            image: format!("python:{ver}-slim"),
+            image_tag: image.clone(),
+            image: image.clone(),
             image_digest: None,
             workdir: "/work".into(),
             env: {
                 let mut m = IndexMap::new();
-                m.insert("PIP_CACHE_DIR".into(), "/work/.tomorrowci/cache/pip".into());
-                m.insert("VIRTUAL_ENV".into(), "/work/.tomorrowci/venv".into());
+                m.insert("PIP_CACHE_DIR".into(), format!("{state}/cache/pip"));
+                m.insert("VIRTUAL_ENV".into(), venv.clone());
                 m.insert(
                     "PATH".into(),
-                    "/work/.tomorrowci/venv/bin:/usr/local/bin:/usr/bin:/bin".into(),
+                    format!("{venv}/bin:/usr/local/bin:/usr/bin:/bin"),
                 );
                 m
             },
@@ -174,23 +178,24 @@ impl EcosystemAdapter for PythonAdapter {
             memory_mb: 2048,
             cpus: 1.0,
             pids_limit: 256,
-            // Non-root; workspace mount is rw for scenario-local venv
             user: Some("65534:65534".into()),
             read_only_root: true,
+            scenario_state_root: Some(state),
+            fetch_timeout_seconds: None,
+            test_timeout_seconds: None,
+            engine: None,
+            engine_version: None,
         })
     }
 
-    fn commands(&self, _scenario: &Scenario, config: &Config) -> Result<Vec<CommandSpec>> {
-        // Test must use scenario-local venv Python
+    fn commands(&self, scenario: &Scenario, config: &Config) -> Result<Vec<CommandSpec>> {
+        let py = format!(
+            "/work/.tomorrowci/scenarios/{}/venv/bin/python",
+            scenario.id
+        );
         let test = if config.project.test_command == "auto" {
-            vec![
-                "/work/.tomorrowci/venv/bin/python".into(),
-                "-m".into(),
-                "pytest".into(),
-                "-q".into(),
-            ]
+            vec![py, "-m".into(), "pytest".into(), "-q".into()]
         } else {
-            // Prefer rewriting bare `python` to venv python for fixture default
             let parts: Vec<String> = config
                 .project
                 .test_command
@@ -199,7 +204,7 @@ impl EcosystemAdapter for PythonAdapter {
                 .collect();
             if parts.first().map(|s| s.as_str()) == Some("python") {
                 let mut p = parts;
-                p[0] = "/work/.tomorrowci/venv/bin/python".into();
+                p[0] = py;
                 p
             } else {
                 parts
@@ -247,24 +252,29 @@ impl EcosystemAdapter for PythonAdapter {
     }
 }
 
-/// Fetch phase: create venv in mounted workspace and pip install requirements.
-pub fn python_fetch_commands(workspace: &Path, upgrade: bool) -> Result<Vec<CommandSpec>> {
+/// Fetch phase: create scenario-local venv and pip install requirements.
+pub fn python_fetch_commands(
+    workspace: &Path,
+    upgrade: bool,
+    scenario_id: &str,
+) -> Result<Vec<CommandSpec>> {
     if !workspace.join("requirements.txt").exists() {
-        // pyproject-only without requirements: UNSUPPORTED for this milestone
         return Err(TcError::Unsupported(
             "Python install path requires requirements.txt in this repair milestone (pip only); pyproject-only is UNSUPPORTED".into(),
         ));
     }
-    // Always recreate venv so replay / multi-scenario runs cannot reuse a stale
-    // interpreter from a previous candidate.
+    let state = format!("/work/.tomorrowci/scenarios/{scenario_id}");
+    let venv = format!("{state}/venv");
+    let cache = format!("{state}/cache/pip");
+    let py = format!("{venv}/bin/python");
     let mut install = vec![
-        "/work/.tomorrowci/venv/bin/python".into(),
+        py.clone(),
         "-m".into(),
         "pip".into(),
         "install".into(),
         "-q".into(),
         "--cache-dir".into(),
-        "/work/.tomorrowci/cache/pip".into(),
+        cache,
         "-r".into(),
         "requirements.txt".into(),
     ];
@@ -273,18 +283,19 @@ pub fn python_fetch_commands(workspace: &Path, upgrade: bool) -> Result<Vec<Comm
     }
     Ok(vec![
         CommandSpec {
-            argv: vec!["rm".into(), "-rf".into(), "/work/.tomorrowci/venv".into()],
+            argv: vec!["rm".into(), "-rf".into(), venv.clone()],
             cwd: Some("/work".into()),
             network: false,
             phase: "fetch".into(),
         },
         CommandSpec {
-            argv: vec![
-                "python".into(),
-                "-m".into(),
-                "venv".into(),
-                "/work/.tomorrowci/venv".into(),
-            ],
+            argv: vec!["mkdir".into(), "-p".into(), format!("{state}/cache/pip")],
+            cwd: Some("/work".into()),
+            network: false,
+            phase: "fetch".into(),
+        },
+        CommandSpec {
+            argv: vec!["python".into(), "-m".into(), "venv".into(), venv],
             cwd: Some("/work".into()),
             network: false,
             phase: "fetch".into(),

@@ -120,7 +120,12 @@ pub struct CommandSpec {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvironmentSpec {
+    /// Human-readable image tag (never overwritten by digest).
+    #[serde(default)]
+    pub image_tag: String,
+    /// Legacy alias of `image_tag` for older evidence/readers.
     pub image: String,
+    /// Immutable digest ref (`repo@sha256:...` or `sha256:...`).
     pub image_digest: Option<String>,
     pub workdir: String,
     pub env: IndexMap<String, String>,
@@ -130,6 +135,51 @@ pub struct EnvironmentSpec {
     pub pids_limit: u32,
     pub user: Option<String>,
     pub read_only_root: bool,
+    /// Mounted scenario-local state root inside the container (e.g. `/work/.tomorrowci/scenarios/id`).
+    #[serde(default)]
+    pub scenario_state_root: Option<String>,
+    #[serde(default)]
+    pub fetch_timeout_seconds: Option<u64>,
+    #[serde(default)]
+    pub test_timeout_seconds: Option<u64>,
+    #[serde(default)]
+    pub engine: Option<String>,
+    #[serde(default)]
+    pub engine_version: Option<String>,
+}
+
+impl EnvironmentSpec {
+    /// Prefer explicit image_tag; fall back to legacy `image`.
+    pub fn tag(&self) -> &str {
+        if !self.image_tag.is_empty() {
+            &self.image_tag
+        } else {
+            &self.image
+        }
+    }
+
+    /// Docker/Podman image reference: digest if present, else tag.
+    pub fn run_image_ref(&self) -> String {
+        self.image_digest
+            .clone()
+            .filter(|d| !d.is_empty())
+            .unwrap_or_else(|| self.tag().to_string())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunIdentity {
+    pub source_commit: Option<String>,
+    pub dirty_tree: bool,
+    pub tool_version: String,
+    pub adapter_name: String,
+    pub adapter_version: String,
+    pub config_hash: String,
+    pub manifest_hashes: IndexMap<String, String>,
+    pub container_engine: Option<String>,
+    pub container_engine_version: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,4 +257,6 @@ pub struct RunManifest {
     pub results: Vec<ExecutionResult>,
     pub frontier: BreakageFrontier,
     pub evidence_root: PathBuf,
+    #[serde(default)]
+    pub identity: Option<RunIdentity>,
 }

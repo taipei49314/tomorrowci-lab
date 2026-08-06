@@ -8,7 +8,9 @@ use tomorrowci_adapter_python::PythonAdapter;
 use tomorrowci_adapter_rust::RustAdapter;
 use tomorrowci_adapters::EcosystemAdapter;
 use tomorrowci_core::{compare_horizons, evaluate_policy_gate, Config, HorizonDelta, Verdict};
-use tomorrowci_evidence::load_run_manifest;
+use tomorrowci_evidence::{
+    finalize_run_checksums, find_run_dir, load_run_manifest, verify_run_root,
+};
 use tomorrowci_metrics::{run_trust_audit, ClaimLedger, ClaimStatus, ScanMetrics, TrustVerdict};
 use tomorrowci_report::{
     write_github_job_summary, write_html_report, write_json_report, write_sarif_stub,
@@ -36,6 +38,10 @@ enum Commands {
         config: Option<PathBuf>,
     },
     Show {
+        run_id: String,
+    },
+    /// Verify evidence integrity for a run
+    Verify {
         run_id: String,
     },
     Replay {
@@ -91,9 +97,17 @@ fn real_main() -> Result<()> {
         Commands::Trust { json } => cmd_trust(json),
         Commands::Scan { target, config } => cmd_scan(&target, config.as_deref()),
         Commands::Show { run_id } => cmd_show(&run_id),
+        Commands::Verify { run_id } => cmd_verify(&run_id),
         Commands::Replay { run_id, scenario } => {
             let cwd = std::env::current_dir()?;
-            print!("{}", replay_scenario(&cwd, &run_id, &scenario)?);
+            // Prefer run under cwd; also resolve fixture-local runs
+            let root = find_run_dir(&cwd, &run_id);
+            let repo = root
+                .parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+                .unwrap_or(&cwd);
+            print!("{}", replay_scenario(repo, &run_id, &scenario)?);
             Ok(())
         }
         Commands::Explain { run_id } => {
@@ -224,6 +238,9 @@ fn cmd_scan(target: &str, config_path: Option<&Path>) -> Result<()> {
                 out.evidence_root.display().to_string(),
             );
             claims.write_json(&out.evidence_root.join("claims.json"))?;
+            // Re-finalize checksums after claims.json is written
+            finalize_run_checksums(&out.evidence_root)?;
+            println!("run_id: {}", out.manifest.run_id);
             // Never promote BLOCKED to success: non-zero exit for infra/construction blocks
             if any_blocked {
                 println!("verdict: BLOCKED");
@@ -266,12 +283,25 @@ fn load_config(root: &Path, config_path: Option<&Path>) -> Result<Config> {
 
 fn cmd_show(run_id: &str) -> Result<()> {
     let cwd = std::env::current_dir()?;
-    let m = load_run_manifest(&cwd.join(".tomorrowci/runs").join(run_id))?;
+    let root = find_run_dir(&cwd, run_id);
+    let m = load_run_manifest(&root)?;
     println!("run: {}", m.run_id);
     for r in &m.results {
         println!("  {} => {:?}", r.scenario_id, r.verdict);
     }
     println!("frontier.observed: {}", m.frontier.observed);
+    Ok(())
+}
+
+fn cmd_verify(run_id: &str) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let root = find_run_dir(&cwd, run_id);
+    let rep = verify_run_root(&root)?;
+    println!("{}", serde_json::to_string_pretty(&rep)?);
+    if !rep.ok {
+        bail!("evidence verify FAILED: {} errors", rep.errors.len());
+    }
+    println!("verify: PASS");
     Ok(())
 }
 

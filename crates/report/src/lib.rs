@@ -276,6 +276,18 @@ nav a { color: #7dd3fc; margin-right: 1rem; }
     <h3>Frontier notes</h3>
     <ul>{{NOTES}}</ul>
   </section>
+
+  <section aria-labelledby="evidence-h" id="evidence">
+    <h2 id="evidence-h">Evidence links</h2>
+    <p>Relative paths under the run evidence root (open next to this report):</p>
+    <ul>
+      <li><a href="run.json">run.json</a></li>
+      <li><a href="frontier.json">frontier.json</a></li>
+      <li><a href="checksums.txt">checksums.txt</a></li>
+      <li><a href="workspace-manifest.json">workspace-manifest.json</a></li>
+      <li><a href="scenarios/">scenarios/</a> (environment, fetch/test phase, failure-signature, replay)</li>
+    </ul>
+  </section>
 </main>
 <footer>
   <p>Read-only report derived from evidence bundle. Rebuild with <code>tomorrowci report</code>.</p>
@@ -379,6 +391,7 @@ mod tests {
                 timed_out: false,
                 failure: None,
                 environment: EnvironmentSpec {
+                    image_tag: "x".into(),
                     image: "x".into(),
                     image_digest: None,
                     workdir: "/w".into(),
@@ -389,6 +402,11 @@ mod tests {
                     pids_limit: 1,
                     user: None,
                     read_only_root: true,
+                    scenario_state_root: None,
+                    fetch_timeout_seconds: None,
+                    test_timeout_seconds: None,
+                    engine: None,
+                    engine_version: None,
                 },
                 commands: vec![],
             }],
@@ -404,6 +422,7 @@ mod tests {
                 notes: vec!["<b>x</b>".into()],
             },
             evidence_root: ".".into(),
+            identity: None,
         };
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("r.html");

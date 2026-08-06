@@ -99,7 +99,8 @@ impl EcosystemAdapter for RustAdapter {
         let tag = scenario.runtime.trim_start_matches("rust:");
         let image = format!("rust:{tag}-bookworm");
         Ok(EnvironmentSpec {
-            image,
+            image_tag: image.clone(),
+            image: image.clone(),
             image_digest: None,
             workdir: "/work".into(),
             env: IndexMap::new(),
@@ -109,6 +110,11 @@ impl EcosystemAdapter for RustAdapter {
             pids_limit: 512,
             user: None,
             read_only_root: false,
+            scenario_state_root: None,
+            fetch_timeout_seconds: None,
+            test_timeout_seconds: None,
+            engine: None,
+            engine_version: None,
         })
     }
 

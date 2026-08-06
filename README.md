@@ -1,4 +1,4 @@
-﻿# TomorrowCI
+# TomorrowCI
 
 > **Continuous Integration Against the Future.**
 
@@ -11,32 +11,30 @@ No breakage claim without replayable evidence.
 
 ## Product status (evidence-based)
 
-**TomorrowCI is an experimental pre-alpha architecture under live-path validation.**
+**TomorrowCI is an experimental pre-alpha architecture under evidence-and-release closure.**
 
 | Area | Status | Notes |
 |------|--------|--------|
-| M0 Repository contract | **partial** | Workspace, schema, docs exist; claims corrected after audit |
-| M1 Python vertical slice | **in repair** | Live Docker path required; scripted tests â‰  acceptance |
-| M2 Planner / deps / ddmin / flaky | **NOT_RUN** (live) | Scripted classifier only; real ddmin not acceptance |
-| M3 Node + Rust adapters | **NOT_RUN** | Out of current repair scope |
-| M4 Action + report + compare | **partial / FAIL dogfood** | Action must use `uses: ./action`; React UI **NOT_RUN** |
-| M5 Release candidate | **rejected for v0.1.0** | Tag preserved; not a verified product release |
+| Live Python runtime vertical slice | **PASS** (demonstrated) | Real Docker path on public CI; see claim ledger |
+| Live report (minimum static) | **in closure** | Real digests; Phase F links/tests in alpha.2 track |
+| Action dogfood + consumer | **PASS** (alpha.1 demonstrated; re-prove on final alpha.2 commit) | `uses: ./action` |
+| Evidence integrity + exact replay | **in closure** | alpha.1 operational replay accepted; exact-manifest incomplete |
+| Release gate | **in closure** | alpha.1 rejected for premature tag / weak release workflow |
+| Node / Rust live adapters | **NOT_RUN** | Out of alpha.2 scope |
+| Dependency axis / real ddmin | **NOT_RUN** | Out of alpha.2 scope |
+| React/TypeScript interactive report | **NOT_RUN** | Out of alpha.2 scope |
+| Remote GitHub URL scan | **NOT_RUN** | Out of alpha.2 scope |
+| Container image publish | **NOT_RUN** | Must not be implied by release |
 
-Tag **`v0.1.0`** is a **lab / pre-alpha candidate** whose **live container path was unverified**. Independent forensic audit: **REJECT**. See [docs/audits/v0.1.0-rejection.md](docs/audits/v0.1.0-rejection.md).
+### Tags (audit history)
 
-Repair branch target: `repair/real-python-vertical-slice` â†’ candidate **`v0.1.1-alpha.1`** only after the alpha acceptance checklist passes.
+| Tag | Disposition |
+|-----|-------------|
+| `v0.1.0` | **REJECTED** product candidate — scripted acceptance; red CI |
+| `v0.1.1-alpha.1` | **REJECTED acceptance candidate** / live-path demonstration — Python slice real; evidence envelope + release gate incomplete ([audit note](docs/audits/v0.1.1-alpha.1-rejection.md)) |
+| `v0.1.1-alpha.2` | **NOT_CREATED** until every alpha.2 closure gate passes |
 
 Full matrix: [docs/CLAIM_TO_EVIDENCE.md](docs/CLAIM_TO_EVIDENCE.md).
-
-## What it is / is not
-
-| TomorrowCI | Not TomorrowCI |
-|---|---|
-| Tests against real runtime/dependency candidates | A dependency update PR bot |
-| OBSERVED / SIMULATED / SCHEDULED_RISK / INCONCLUSIVE grades | Invented future APIs |
-| Sandboxed execution (Docker/Podman) | Default host execution of untrusted code |
-| Typed verdicts (`BLOCKED` â‰  `PASS`) | Collapsing everything into FAIL/PASS |
-| Local-first, no telemetry, no cloud account | A SaaS-only scanner |
 
 ## Quick start
 
@@ -51,16 +49,15 @@ cargo build -p tomorrowci-cli --release
 ./target/release/tomorrowci trust
 ./target/release/tomorrowci scan fixtures/python-runtime-break \
   --config fixtures/python-runtime-break/.tomorrowci.yml
+./target/release/tomorrowci verify <run-id>
 ```
 
 Without a container daemon, `scan` returns **BLOCKED** (not a silent host run).
 
-Scripted demo HTML ( **not** acceptance evidence ):
+## Tree immutability contract
 
-```bash
-cargo run -p tomorrowci-gen-demo
-# open examples/reports/python-runtime-break/report.html
-```
+**Target source files under the scanned path are not modified by scenario execution.**  
+Evidence is written under `<scan-root>/.tomorrowci/runs/` (and is **excluded** from the immutability claim). Disposable workspace copies are used for container mounts.
 
 ## CLI
 
@@ -68,6 +65,7 @@ cargo run -p tomorrowci-gen-demo
 tomorrowci doctor
 tomorrowci trust
 tomorrowci scan <path> [--config .tomorrowci.yml]
+tomorrowci verify <run-id>
 tomorrowci show <run-id>
 tomorrowci replay <run-id> --scenario <id>
 tomorrowci explain <run-id>
@@ -77,47 +75,6 @@ tomorrowci compare --base <id> --head <id> [--gate]
 tomorrowci init-action
 ```
 
-## Configuration
-
-Schema: `packages/schema/tomorrowci-config.schema.json`  
-Example: `fixtures/python-runtime-break/.tomorrowci.yml`
-
-## Fixtures
-
-| Fixture | Intent | Acceptance status |
-|---------|--------|-------------------|
-| `fixtures/python-runtime-break` | Stdlib break on newer Python | **repair acceptance target** (live Docker) |
-| `fixtures/python-dependency-break` | Dependency-axis (incomplete / simulated) | **NOT_RUN** |
-| `fixtures/node-dependency-break` | Node runtime API | **NOT_RUN** |
-| `fixtures/rust-msrv-break` | Older rustc | **NOT_RUN** |
-
-## GitHub Action
-
-Composite action: [`action/action.yml`](action/action.yml)
-
-Must be dogfooded via `uses: ./action` in public CI. Building the CLI from a **consumer** repository is supported by building from `${{ github.action_path }}/..` with an isolated target dir (or a release binary + checksum).
-
-## Security
-
-- Target code is **never** executed on the host by default
-- No privileged containers; no docker.sock into the target
-- Residual container escape risk: [docs/threat-model](docs/threat-model/README.md)
-- Untrusted report HTML is escaped; see `SECURITY.md`
-
-## Documentation
-
-- [Claim-to-evidence](docs/CLAIM_TO_EVIDENCE.md)
-- [v0.1.0 rejection audit notes](docs/audits/v0.1.0-rejection.md)
-- [Architecture](docs/architecture/README.md)
-- [Threat model](docs/threat-model/README.md)
-- [Release](docs/RELEASE.md)
-- [ADRs](docs/adr/)
-
 ## License
 
-Apache-2.0 â€” see [LICENSE](LICENSE)
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
-
+Apache-2.0 — see [LICENSE](LICENSE)

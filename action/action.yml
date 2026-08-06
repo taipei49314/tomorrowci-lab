@@ -16,7 +16,7 @@ inputs:
     required: false
     default: ""
   advisory:
-    description: If true, never fail the job solely because a horizon was found
+    description: If true, softens horizon policy only (never converts BLOCKED/invalid evidence to PASS)
     required: false
     default: "true"
   base-run-id:
@@ -24,7 +24,7 @@ inputs:
     required: false
     default: ""
   expect-horizon:
-    description: If true, require frontier.observed (fixture acceptance)
+    description: If true, require baseline PASS + FUTURE_FAIL horizon + signature + verify PASS
     required: false
     default: "false"
 
@@ -73,22 +73,22 @@ runs:
           CFG_ARGS+=(--config "${{ inputs.config }}")
         fi
         SCAN_PATH="${{ inputs.path }}"
-        set +e
-        OUT=$("$BIN" scan "$SCAN_PATH" "${CFG_ARGS[@]}" 2>&1)
-        CODE=$?
-        set -e
-        echo "$OUT"
-        # Never treat BLOCKED as success for non-advisory infrastructure
-        if echo "$OUT" | grep -q "verdict: BLOCKED"; then
-          echo "Scan BLOCKED (infrastructure)." >> "$GITHUB_STEP_SUMMARY"
-          if [[ "${{ inputs.advisory }}" == "true" ]]; then
-            echo "Advisory mode: job continues, but frontier is not a PASS." >> "$GITHUB_STEP_SUMMARY"
-          else
-            exit 2
-          fi
+        # Structured handling: no set +e; capture status via if
+        CODE=0
+        if OUT=$("$BIN" scan "$SCAN_PATH" "${CFG_ARGS[@]}" 2>&1); then
+          CODE=0
+        else
+          CODE=$?
         fi
-        # Evidence is written under the scan target path
-        RUN_DIR=$(ls -1dt "$SCAN_PATH"/.tomorrowci/runs/* 2>/dev/null | head -1 || true)
+        echo "$OUT"
+        RUN_ID=$(echo "$OUT" | sed -n 's/^run_id: //p' | tail -1)
+        # Evidence under scan target
+        RUN_DIR=""
+        if [[ -n "$RUN_ID" && -d "$SCAN_PATH/.tomorrowci/runs/$RUN_ID" ]]; then
+          RUN_DIR="$SCAN_PATH/.tomorrowci/runs/$RUN_ID"
+        else
+          RUN_DIR=$(ls -1dt "$SCAN_PATH"/.tomorrowci/runs/* 2>/dev/null | head -1 || true)
+        fi
         if [[ -z "${RUN_DIR}" || ! -d "${RUN_DIR}" ]]; then
           RUN_DIR=$(ls -1dt .tomorrowci/runs/* 2>/dev/null | head -1 || true)
         fi
@@ -99,31 +99,61 @@ runs:
         RUN_ID=$(basename "${RUN_DIR}")
         echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
         echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
-        if [[ -f "${RUN_DIR}/frontier.json" ]]; then
-          FO=$(python3 -c "import json,sys; print('true' if json.load(open(sys.argv[1])).get('observed') else 'false')" "$RUN_DIR/frontier.json" 2>/dev/null || echo false)
-        else
-          FO=false
-        fi
-        echo "frontier_observed=$FO" >> "$GITHUB_OUTPUT"
+
+        # Machine-readable evidence decisions
+        export RUN_DIR
+        python3 - <<'PY'
+        import json, os
+        run_dir = os.environ["RUN_DIR"]
+        fr = json.load(open(f"{run_dir}/frontier.json"))
+        run = json.load(open(f"{run_dir}/run.json"))
+        fo = bool(fr.get("observed"))
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as o:
+            o.write(f"frontier_observed={'true' if fo else 'false'}\n")
+        blocked = any(r.get("verdict") == "BLOCKED" for r in run.get("results", []))
+        baseline_pass = any(r.get("verdict") == "BASELINE_PASS" for r in run.get("results", []))
+        future_fail = any(r.get("verdict") == "FUTURE_FAIL" for r in run.get("results", []))
+        sig = (fr.get("failure_signature") or {}).get("normalized_hash")
+        with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as e:
+            e.write(f"TCI_BLOCKED={'1' if blocked else '0'}\n")
+            e.write(f"TCI_BASELINE_PASS={'1' if baseline_pass else '0'}\n")
+            e.write(f"TCI_FUTURE_FAIL={'1' if future_fail else '0'}\n")
+            e.write(f"TCI_SIG={'1' if sig else '0'}\n")
+            e.write(f"TCI_FO={'1' if fo else '0'}\n")
+        PY
+
         if [[ -f "${RUN_DIR}/job-summary.md" ]]; then
           cat "${RUN_DIR}/job-summary.md" >> "$GITHUB_STEP_SUMMARY"
         fi
-        if [[ -f "${RUN_DIR}/metrics.json" ]]; then
-          echo '### Metrics' >> "$GITHUB_STEP_SUMMARY"
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat "${RUN_DIR}/metrics.json" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+        # Verify evidence
+        if ! "$BIN" verify "$RUN_ID"; then
+          # try from scan path cwd
+          (cd "$SCAN_PATH" && "$BIN" verify "$RUN_ID") || {
+            echo "evidence verify failed" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
         fi
-        # Contract: expect-horizon for fixture acceptance
-        if [[ "${{ inputs.expect-horizon }}" == "true" && "$FO" != "true" ]]; then
-          echo "Expected breakage horizon was not observed (frontier_observed=$FO)" >> "$GITHUB_STEP_SUMMARY"
-          exit 1
+
+        # BLOCKED always fails non-advisory
+        if [[ "${TCI_BLOCKED:-0}" == "1" ]]; then
+          echo "Scan produced BLOCKED scenario(s)." >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${{ inputs.advisory }}" == "true" ]]; then
+            echo "Advisory cannot convert BLOCKED to PASS — failing." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 2
         fi
-        # Horizon discovery is product success; do not fail solely for that.
-        # Fail on unexpected CLI crashes (non-zero without BLOCKED path handled above).
-        if [[ "$CODE" -ne 0 && "$CODE" -ne 2 ]]; then
-          if [[ "${{ inputs.advisory }}" != "true" ]]; then
-            exit "$CODE"
+
+        # Unexpected non-zero (not handled as product horizon)
+        if [[ "$CODE" -ne 0 ]]; then
+          echo "Unexpected scan exit code $CODE" >> "$GITHUB_STEP_SUMMARY"
+          exit "$CODE"
+        fi
+
+        if [[ "${{ inputs.expect-horizon }}" == "true" ]]; then
+          if [[ "${TCI_BASELINE_PASS:-0}" != "1" || "${TCI_FUTURE_FAIL:-0}" != "1" || "${TCI_SIG:-0}" != "1" || "${TCI_FO:-0}" != "1" ]]; then
+            echo "expect-horizon contract failed (baseline/future_fail/sig/observed)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
         fi
 
@@ -143,11 +173,13 @@ runs:
       run: |
         set -euo pipefail
         BIN="${{ steps.bin.outputs.bin }}"
-        HEAD=$(ls -1dt .tomorrowci/runs/* | head -1 | xargs basename)
-        "$BIN" compare --base "${{ inputs.base-run-id }}" --head "$HEAD" --gate || {
+        HEAD="${{ steps.scan.outputs.run_id }}"
+        if "$BIN" compare --base "${{ inputs.base-run-id }}" --head "$HEAD" --gate; then
+          exit 0
+        else
           if [[ "${{ inputs.advisory }}" == "true" ]]; then
-            echo "Horizon gate failed (advisory)." >> "$GITHUB_STEP_SUMMARY"
+            echo "Horizon gate failed (advisory softens regression policy only)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           exit 3
-        }
+        fi

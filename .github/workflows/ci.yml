@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, master, "repair/**"]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -16,6 +17,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: text encoding
+        run: python3 scripts/check-text-encoding.py
       - name: fmt
         run: cargo fmt --all -- --check
       - name: clippy
@@ -26,6 +29,10 @@ jobs:
         run: cargo build -p tomorrowci-cli --release
       - name: node report helpers
         run: node --test packages/report-ui/test/*.test.js
+      - name: bash -n release dry-run
+        run: bash -n scripts/release-dry-run.sh
+      - name: version identity
+        run: ./target/release/tomorrowci --version | tee /tmp/v.txt; grep -E '0\.1\.1-alpha\.2' /tmp/v.txt
       - name: trust audit
         run: ./target/release/tomorrowci trust
       - name: doctor
@@ -47,30 +54,30 @@ jobs:
           ./target/release/tomorrowci doctor
           ./target/release/tomorrowci scan "$FIXTURE" \
             --config "$FIXTURE/.tomorrowci.yml" | tee /tmp/scan.out
-          # Must not be BLOCKED
           if grep -q "verdict: BLOCKED" /tmp/scan.out; then
             echo "Live scan BLOCKED"
             exit 2
           fi
-          # Evidence is rooted at the scan target
-          RUN_DIR=$(ls -1dt "$FIXTURE"/.tomorrowci/runs/* | head -1)
+          RUN_ID=$(sed -n 's/^run_id: //p' /tmp/scan.out | tail -1)
+          RUN_DIR="$FIXTURE/.tomorrowci/runs/$RUN_ID"
+          test -d "$RUN_DIR"
           echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
-          echo "run_id=$(basename "$RUN_DIR")" >> "$GITHUB_OUTPUT"
-          echo "fixture=$FIXTURE" >> "$GITHUB_OUTPUT"
-          test -f "$RUN_DIR/run.json"
-          test -f "$RUN_DIR/frontier.json"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          ./target/release/tomorrowci verify "$RUN_ID" || (cd "$FIXTURE" && ../../target/release/tomorrowci verify "$RUN_ID")
           python3 - <<PY
           import json
-          f = json.load(open("$RUN_DIR/frontier.json"))
+          run_dir = "$RUN_DIR"
+          f = json.load(open(f"{run_dir}/frontier.json"))
           assert f.get("observed") is True, f
-          assert f.get("first_failing_scenario"), f
-          print("horizon_ok", f.get("horizon_label"), f.get("first_failing_scenario"))
-          m = json.load(open("$RUN_DIR/run.json"))
+          m = json.load(open(f"{run_dir}/run.json"))
+          assert m.get("repository", {}).get("commit_sha")
           for r in m["results"]:
-              dig = (r.get("environment") or {}).get("image_digest")
-              assert dig, r
-              assert "scripted-test-digest" not in str(dig), dig
-          print("digests_ok", len(m["results"]))
+              env = r.get("environment") or {}
+              assert env.get("image_digest"), r
+              tag = env.get("image_tag") or env.get("image")
+              assert tag and "sha256:" not in tag, env
+              assert "scripted-test-digest" not in str(env.get("image_digest"))
+          print("live_identity_ok", m["run_id"], m["repository"]["commit_sha"])
           PY
       - name: replay equivalence twice
         working-directory: fixtures/python-runtime-break
@@ -78,25 +85,13 @@ jobs:
           set -euo pipefail
           RUN_ID="${{ steps.live.outputs.run_id }}"
           SC=$(python3 -c "import json; print(json.load(open('.tomorrowci/runs/'+'$RUN_ID'+'/frontier.json'))['first_failing_scenario'])")
-          echo "replaying $RUN_ID scenario $SC"
           "$GITHUB_WORKSPACE/target/release/tomorrowci" replay "$RUN_ID" --scenario "$SC" | tee /tmp/r1.out
           "$GITHUB_WORKSPACE/target/release/tomorrowci" replay "$RUN_ID" --scenario "$SC" | tee /tmp/r2.out
-          S1=$(grep -E '^(original_signature|replay_signature)=' /tmp/r1.out | sort)
-          S2=$(grep -E '^(original_signature|replay_signature)=' /tmp/r2.out | sort)
-          test -n "$S1"
-          test "$S1" = "$S2"
+          test -f ".tomorrowci/runs/$RUN_ID/scenarios/$SC/replays/attempt-1/result.json"
+          test -f ".tomorrowci/runs/$RUN_ID/scenarios/$SC/replays/attempt-2/result.json"
           grep -q "replay: PASS" /tmp/r1.out
           grep -q "replay: PASS" /tmp/r2.out
-      - name: evidence checksums present
-        run: |
-          set -euo pipefail
-          RUN_DIR="${{ steps.live.outputs.run_dir }}"
-          test -f "$RUN_DIR/checksums.txt"
-          SC=$(python3 -c "import json; print(json.load(open('$RUN_DIR/frontier.json'))['first_failing_scenario'])")
-          test -f "$RUN_DIR/scenarios/$SC/checksums.txt"
-          test -f "$RUN_DIR/scenarios/$SC/failure-signature.json"
-          test -f "$RUN_DIR/scenarios/$SC/replay.json"
-          ! grep -R "scripted-test-digest" "$RUN_DIR" || (echo "scripted digest in live evidence" && exit 1)
+          "$GITHUB_WORKSPACE/target/release/tomorrowci" verify "$RUN_ID"
       - name: Upload live evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -127,14 +122,19 @@ jobs:
         with:
           path: tomorrowci-src
       - uses: dtolnay/rust-toolchain@stable
-      - name: Create consumer fixture repository
+      - name: Create real consumer git repository
         run: |
           set -euo pipefail
           mkdir -p consumer
           cp -a tomorrowci-src/fixtures/python-runtime-break/. consumer/
-          # Consumer has no Cargo workspace
           test ! -f consumer/Cargo.toml
-      - name: Invoke Action from consumer path context
+          cd consumer
+          git init
+          git config user.email "ci@tomorrowci.local"
+          git config user.name "TomorrowCI CI"
+          git add .
+          git commit -m fixture
+      - name: Invoke Action against consumer repository
         uses: ./tomorrowci-src/action
         with:
           path: consumer

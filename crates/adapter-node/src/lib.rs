@@ -108,8 +108,10 @@ impl EcosystemAdapter for NodeAdapter {
 
     fn materialize(&self, scenario: &Scenario, _workspace: &Path) -> Result<EnvironmentSpec> {
         let tag = scenario.runtime.trim_start_matches("node:");
+        let image = format!("node:{tag}");
         Ok(EnvironmentSpec {
-            image: format!("node:{tag}"),
+            image_tag: image.clone(),
+            image,
             image_digest: None,
             workdir: "/work".into(),
             env: IndexMap::new(),
@@ -119,6 +121,11 @@ impl EcosystemAdapter for NodeAdapter {
             pids_limit: 512,
             user: Some("node".into()),
             read_only_root: false, // npm needs write for node_modules
+            scenario_state_root: None,
+            fetch_timeout_seconds: None,
+            test_timeout_seconds: None,
+            engine: None,
+            engine_version: None,
         })
     }
 

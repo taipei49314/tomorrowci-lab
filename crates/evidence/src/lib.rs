@@ -1,5 +1,9 @@
 //! Evidence directory layout and checksum helpers.
 
+mod verify;
+
+pub use verify::*;
+
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tomorrowci_core::{sha256_bytes, Result, RunManifest, TcError};
