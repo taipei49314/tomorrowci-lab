@@ -80,8 +80,8 @@ runs:
           CODE=$?
         fi
         echo "$OUT"
-        # Structured run_id only — no latest-directory fallback
-        RUN_ID=$(echo "$OUT" | python3 "${{ github.action_path }}/extract-run-id.py" || true)
+        # Structured run_id only — no latest-directory fallback; parser non-zero exits (G1, pipefail)
+        RUN_ID=$(echo "$OUT" | python3 "${{ github.action_path }}/extract-run-id.py")
         if [[ -z "$RUN_ID" ]]; then
           echo "scan did not return a structured run_id" >> "$GITHUB_STEP_SUMMARY"
           exit 1

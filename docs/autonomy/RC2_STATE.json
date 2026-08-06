@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "kind": "operational_state_not_release_provenance",
+  "branch": "repair/alpha3-semantic-authority-rc2",
+  "terminal_state": "WORKING",
+  "active_gate": "G0",
+  "last_observed_head": "89a5fcf6c1b935ce140371327429847757c32100",
+  "last_green_local_commands": [],
+  "last_ci_run": null,
+  "completed_gates": [],
+  "open_blockers": ["CI failed on 89a5fcf — need diagnostics"],
+  "next_action": "Ingest exact CI failure logs for 31091413203 and reproduce G0 locally"
+}

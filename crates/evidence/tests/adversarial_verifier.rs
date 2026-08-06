@@ -619,11 +619,7 @@ fn uppercase_hash_rejected() {
             .as_str()
             .unwrap()
             .to_string();
-        let upper = h
-            .replace("sha256:", "SHA256:")
-            .to_ascii_uppercase()
-            .replacen("SHA256:", "SHA256:", 1);
-        // force SHA256: + uppercase hex
+        // force non-canonical SHA256: + uppercase hex
         let hex = h.trim_start_matches("sha256:");
         v["files"]["run.json"]["sha256"] =
             serde_json::json!(format!("SHA256:{}", hex.to_ascii_uppercase()));
@@ -632,7 +628,6 @@ fn uppercase_hash_rejected() {
             serde_json::to_string_pretty(&v).unwrap(),
         )
         .unwrap();
-        let _ = upper;
     });
 }
 

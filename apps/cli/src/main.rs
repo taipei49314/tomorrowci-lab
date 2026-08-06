@@ -320,7 +320,13 @@ fn cmd_verify(run_id: &str, json: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let root = find_run_dir(&cwd, run_id);
     let rep = verify_run_root(&root)?;
-    let _ = write_verification_attestation(&root, &rep, env!("CARGO_PKG_VERSION"));
+    // Attestation write is required; failure must prevent PASS (G1).
+    if let Err(e) = write_verification_attestation(&root, &rep, env!("CARGO_PKG_VERSION")) {
+        if json {
+            println!("{}", serde_json::to_string_pretty(&rep)?);
+        }
+        bail!("verification attestation write failed: {e:#}");
+    }
     if json {
         println!("{}", serde_json::to_string_pretty(&rep)?);
     } else {

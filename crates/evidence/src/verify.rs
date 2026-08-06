@@ -678,7 +678,7 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
                                 && !file_cmds.is_empty()
                                 && serde_json::to_value(&file_cmds).ok()
                                     != serde_json::to_value(
-                                        &r.commands
+                                        r.commands
                                             .iter()
                                             .filter(|c| c.phase != "fetch")
                                             .cloned()
