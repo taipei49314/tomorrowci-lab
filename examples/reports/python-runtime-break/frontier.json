@@ -1,0 +1,20 @@
+{
+  "observed": true,
+  "horizon_label": "3.10",
+  "first_failing_scenario": "py310-locked",
+  "last_passing_scenario": "baseline",
+  "changed_axes": [
+    "runtime"
+  ],
+  "failure_signature": {
+    "kind": "ImportError",
+    "summary": "ImportError while importing test module '/work/tests/test_app.py'.",
+    "normalized_hash": "sha256:497fdbfe256b888b5434e458a115da03209e70bdd8bf250fecd76704e67a5ac9",
+    "primary_frame": null
+  },
+  "grade": "OBSERVED",
+  "replay_command": "tomorrowci replay 77f7f5ea7b80 --scenario py310-locked",
+  "notes": [
+    "Breakage horizon authorized after confirmed FUTURE_FAIL."
+  ]
+}

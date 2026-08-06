@@ -1,4 +1,4 @@
-# TomorrowCI
+﻿# TomorrowCI
 
 > **Continuous Integration Against the Future.**
 
@@ -16,7 +16,7 @@ No breakage claim without replayable evidence.
 | Area | Status | Notes |
 |------|--------|--------|
 | M0 Repository contract | **partial** | Workspace, schema, docs exist; claims corrected after audit |
-| M1 Python vertical slice | **in repair** | Live Docker path required; scripted tests ≠ acceptance |
+| M1 Python vertical slice | **in repair** | Live Docker path required; scripted tests â‰  acceptance |
 | M2 Planner / deps / ddmin / flaky | **NOT_RUN** (live) | Scripted classifier only; real ddmin not acceptance |
 | M3 Node + Rust adapters | **NOT_RUN** | Out of current repair scope |
 | M4 Action + report + compare | **partial / FAIL dogfood** | Action must use `uses: ./action`; React UI **NOT_RUN** |
@@ -24,7 +24,7 @@ No breakage claim without replayable evidence.
 
 Tag **`v0.1.0`** is a **lab / pre-alpha candidate** whose **live container path was unverified**. Independent forensic audit: **REJECT**. See [docs/audits/v0.1.0-rejection.md](docs/audits/v0.1.0-rejection.md).
 
-Repair branch target: `repair/real-python-vertical-slice` → candidate **`v0.1.1-alpha.1`** only after the alpha acceptance checklist passes.
+Repair branch target: `repair/real-python-vertical-slice` â†’ candidate **`v0.1.1-alpha.1`** only after the alpha acceptance checklist passes.
 
 Full matrix: [docs/CLAIM_TO_EVIDENCE.md](docs/CLAIM_TO_EVIDENCE.md).
 
@@ -35,7 +35,7 @@ Full matrix: [docs/CLAIM_TO_EVIDENCE.md](docs/CLAIM_TO_EVIDENCE.md).
 | Tests against real runtime/dependency candidates | A dependency update PR bot |
 | OBSERVED / SIMULATED / SCHEDULED_RISK / INCONCLUSIVE grades | Invented future APIs |
 | Sandboxed execution (Docker/Podman) | Default host execution of untrusted code |
-| Typed verdicts (`BLOCKED` ≠ `PASS`) | Collapsing everything into FAIL/PASS |
+| Typed verdicts (`BLOCKED` â‰  `PASS`) | Collapsing everything into FAIL/PASS |
 | Local-first, no telemetry, no cloud account | A SaaS-only scanner |
 
 ## Quick start
@@ -115,8 +115,9 @@ Must be dogfooded via `uses: ./action` in public CI. Building the CLI from a **c
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE)
+Apache-2.0 â€” see [LICENSE](LICENSE)
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+

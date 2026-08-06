@@ -1,39 +1,42 @@
 # Claim-to-evidence matrix (repair track)
 
-Statuses used here: **PASS** / **FAIL** / **BLOCKED** / **NOT_RUN** only.
+Statuses: **PASS** / **FAIL** / **BLOCKED** / **NOT_RUN** only.
 
-This matrix supersedes the v0.1.0 “everything PASS” ledger.  
-Historical tag `v0.1.0` is **rejected** — see [audits/v0.1.0-rejection.md](audits/v0.1.0-rejection.md).
+Historical tag `v0.1.0` is **rejected** — see [audits/v0.1.0-rejection.md](audits/v0.1.0-rejection.md).  
+Repair commit proven on public CI: `808e6cee6368b7732e9811a280cc3ad81f569df5`  
+Actions run: https://github.com/taipei49314/tomorrowci-lab/actions/runs/31076845770
 
 | Claim | Status | Exact command / run | Exit / result | Artifact |
 |---|---|---|---|---|
-| Rust source compiles on public CI (fmt/clippy/test) | **NOT_RUN** until green CI on repair commit | `.github/workflows/ci.yml` | pending | Actions run |
-| Local workspace unit tests (scripted semantics) | **PASS** (narrow) | `cargo test --workspace` | exit 0 for classifier/sandbox unit tests | local / CI log |
-| Scripted runner horizon classification | **PASS** (narrow) | `cargo test -p tomorrowci-runner --test m1_m2_pipeline` | proves plan/verdict only | test log |
-| Python **live** Docker adapter (baseline + later fail) | **BLOCKED** / **NOT_RUN** until Docker run on exact commit | `tomorrowci scan fixtures/python-runtime-break --config fixtures/python-runtime-break/.tomorrowci.yml` | requires daemon | `.tomorrowci/runs/*/run.json` |
+| fmt + clippy + workspace tests (public CI) | **PASS** | `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace` on run 31076845770 | exit 0 | Actions `rust` job |
+| Release CLI build (public CI) | **PASS** | `cargo build -p tomorrowci-cli --release` | exit 0 | Actions `rust` / `live-python` |
+| Scripted runner horizon classification | **PASS** (narrow) | `cargo test -p tomorrowci-runner --test m1_m2_pipeline` | planner/verdict only | test log |
+| Python **live** Docker adapter (baseline + later fail) | **PASS** | `tomorrowci scan fixtures/python-runtime-break --config fixtures/python-runtime-break/.tomorrowci.yml` on GHA | baseline PASS; py310+ FAIL; horizon 3.10 | run `77f7f5ea7b80` |
+| Digest-pinned image resolution | **PASS** | same live scan | digests on every scenario | `environment.json` |
+| Fetch state preserved (venv on mount) | **PASS** | live scan fetch+test phases | baseline tests pass after pip | fetch/test evidence |
+| Exact digest-pinned replay ×2 | **PASS** | `tomorrowci replay 77f7f5ea7b80 --scenario py310-locked` ×2 | both `replay: PASS`; same signature hash | Actions live-python; `replay-result.json` |
+| HTML report from **live** run | **PASS** | generated with live scan | no scripted digest | `report.html` in evidence |
+| XSS log escaping helpers | **PASS** (narrow) | `node --test packages/report-ui/test/*.test.js` + report crate tests | pass | CI |
+| Action dogfood (`uses: ./action`) | **PASS** | workflow job `action-dogfood` | success | Actions |
+| Action from consumer repository | **PASS** | workflow job `action-consumer` | success | Actions |
+| Evidence artifact uploaded | **PASS** | artifact `tomorrowci-live-python-evidence` | zip SHA256 `dc62442d...` | Actions |
+| Job summary present | **PASS** | Action appends `job-summary.md` | present | Actions summary |
 | Node live adapter | **NOT_RUN** | — | out of repair scope | — |
 | Rust live adapter | **NOT_RUN** | — | out of repair scope | — |
-| Dependency-axis forecasting | **NOT_RUN** | fixtures simulated / incomplete | not acceptance | — |
-| Real ddmin execution | **NOT_RUN** | reduction labels only at v0.1.0 | not acceptance | — |
-| Exact digest-pinned replay | **NOT_RUN** until live path + dual replay | `tomorrowci replay <run-id> --scenario <id>` ×2 | signature equality | scenario `replay.json` |
-| HTML report from **live** run | **NOT_RUN** | prior demo is scripted | no acceptance | — |
-| Demo report (`examples/reports/...`) | **NOT_RUN** (not acceptance evidence) | `cargo run -p tomorrowci-gen-demo` | scripted digests | example only |
-| XSS log escaping helpers | **PASS** (narrow) | `node --test packages/report-ui/test/*.test.js` + report crate tests | pass | test log |
-| React/TypeScript interactive report | **NOT_RUN** | zero `.tsx` / React app | later milestone | — |
-| Checked-in Action file exists | presence only — not completion | `action/action.yml` | file present | action/ |
-| Action dogfood (`uses: ./action`) | **FAIL** until public run invokes Action | CI must contain `uses: ./action` | pending | workflow |
-| Action works from consumer repo | **NOT_RUN** until consumer CI job | separate checkout | pending | workflow |
+| Dependency-axis forecasting | **NOT_RUN** | incomplete fixtures | not acceptance | — |
+| Real ddmin execution | **NOT_RUN** | label summary only | not acceptance | — |
+| React/TypeScript interactive report | **NOT_RUN** | zero React app | later milestone | — |
 | Remote GitHub URL scan | **NOT_RUN** | CLI rejects http(s) | honest | CLI |
-| Container image publish | **NOT_RUN** | release does not build image | — | — |
-| Full multi-OS release + real SBOM | **NOT_RUN** for alpha gate beyond verified artifacts | — | empty SBOM at v0.1.0 | — |
-| Public CI green on candidate commit | **FAIL** / **NOT_RUN** | was red on `7a08c48` | repair required | Actions |
+| Container image publish | **NOT_RUN** | not built | — | — |
+| Full multi-OS release + real SBOM | **NOT_RUN** | alpha does not claim complete M5 | — | — |
+| Demo report via gen-demo | **NOT_RUN** (not acceptance) | scripted digests | example only | `examples/` |
 
-## Scripted vs live (hard rule)
+## Live run identity
 
-- **ScriptedExecutor** tests may **PASS** only for planner/classifier/orchestration semantics.
-- They **must not** satisfy any live adapter, report acceptance, replay acceptance, Action, or fixture acceptance claim.
-- `sha256:scripted-test-digest` in any demo is **not** production evidence.
-
-## Definition of Done
-
-Unchanged from the original mission: no PASS without execution on the exact commit; public CI green; live Python path with digest, fetch state, evidence, replay; Action dogfood. See repair mission Phase G checklist.
+| Field | Value |
+|-------|--------|
+| Run id | `77f7f5ea7b80` |
+| Commit | `808e6cee6368b7732e9811a280cc3ad81f569df5` |
+| Baseline image | `python@sha256:2d97f6910b16bd338d3060f261f53f144965f755599aab1acda1e13cf1731b1b` |
+| First fail | `py310-locked` / `python@sha256:34a2c9467a0231d8c29a5ecadc219733a9393b026882b44d91616b9dae6088b6` |
+| Failure signature | `sha256:497fdbfe256b888b5434e458a115da03209e70bdd8bf250fecd76704e67a5ac9` |

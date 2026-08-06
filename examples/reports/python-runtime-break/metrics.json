@@ -1,6 +1,6 @@
 {
-  "run_id": "test0ea837f7",
-  "recorded_at": "2026-08-06T05:10:18.435806600Z",
+  "run_id": "77f7f5ea7b80",
+  "recorded_at": "2026-08-06T06:21:19.277650079Z",
   "scenarios_total": 4,
   "scenarios_pass": 1,
   "scenarios_fail": 3,
@@ -10,11 +10,11 @@
   "scenarios_inconclusive": 0,
   "baseline_ok": true,
   "frontier_observed": true,
-  "total_duration_ms": 20,
-  "mean_duration_ms": 5.0,
+  "total_duration_ms": 2957,
+  "mean_duration_ms": 739.25,
   "evidence_grade": "Observed",
   "ecosystem": "Python",
-  "wall_ms": 37,
+  "wall_ms": 37436,
   "verdict_histogram": {
     "BaselinePass": 1,
     "FutureFail": 3

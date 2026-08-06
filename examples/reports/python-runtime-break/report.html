@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>TomorrowCI Report test0ea837f7</title>
+<title>TomorrowCI Report 77f7f5ea7b80</title>
 <style>
 :root { color-scheme: dark; }
 body { font-family: system-ui, sans-serif; margin: 0; background: #0b1220; color: #e5eefc; line-height: 1.5; }
@@ -40,14 +40,14 @@ nav a { color: #7dd3fc; margin-right: 1rem; }
 <main id="main">
   <section class="banner" aria-labelledby="run-meta">
     <h2 id="run-meta" class="sr-only">Run metadata</h2>
-    <p>Run <code>test0ea837f7</code> · Ecosystem <code>Python</code> · Tool <code>0.1.0</code></p>
-    <p id="horizon"><strong>Observed breakage horizon:</strong> <code>3.10</code> (grade Observed)</p>
+    <p>Run <code>77f7f5ea7b80</code> · Ecosystem <code>Python</code> · Tool <code>0.1.0</code></p>
+    <p id="horizon"><strong>Observed breakage horizon:</strong> <code>3.10</code> (grade Observed)<p>Failure signature: <code>sha256:497fdbfe256b888b5434e458a115da03209e70bdd8bf250fecd76704e67a5ac9</code> — ImportError while importing test module &#39;/work/tests/test_app.py&#39;.</p><p>Replay: <code>tomorrowci replay 77f7f5ea7b80 --scenario py310-locked</code></p></p>
     <p><em>Evidence grades only — no LLM root-cause claims. Color is not the only verdict cue (text badges).</em></p>
   </section>
 
   <section aria-labelledby="matrix-h" id="matrix">
     <h2 id="matrix-h">Scenario matrix</h2>
-    <table aria-label="Scenario matrix"><thead><tr><th scope="col">Scenario</th><th scope="col">Runtime</th><th scope="col">Deps</th><th scope="col">State</th></tr></thead><tbody><tr><th scope="row"><code>baseline</code></th><td>3.9</td><td>locked</td><td><span class="badge pass">PASS</span></td></tr><tr><th scope="row"><code>py310-locked</code></th><td>3.10</td><td>locked</td><td><span class="badge fail">FAIL</span></td></tr><tr><th scope="row"><code>py311-locked</code></th><td>3.11</td><td>locked</td><td><span class="badge fail">FAIL</span></td></tr><tr><th scope="row"><code>py312-locked</code></th><td>3.12</td><td>locked</td><td><span class="badge fail">FAIL</span></td></tr></tbody></table>
+    <table aria-label="Scenario matrix"><thead><tr><th scope="col">Scenario</th><th scope="col">Runtime</th><th scope="col">Deps</th><th scope="col">Image digest</th><th scope="col">State</th></tr></thead><tbody><tr><th scope="row"><code>baseline</code></th><td>3.9</td><td>locked</td><td><code>python@sha256:2d97f6910b16bd338d3060f261f53f144965f755599aab1acda1e13cf1731b1b</code></td><td><span class="badge pass">PASS</span></td></tr><tr><th scope="row"><code>py310-locked</code></th><td>3.10</td><td>locked</td><td><code>python@sha256:34a2c9467a0231d8c29a5ecadc219733a9393b026882b44d91616b9dae6088b6</code></td><td><span class="badge fail">FAIL</span></td></tr><tr><th scope="row"><code>py311-locked</code></th><td>3.11</td><td>locked</td><td><code>python@sha256:94c50be2dc994b873b55bc123e95e6dbade08095b3dfd790f51c34de3f08cbb7</code></td><td><span class="badge fail">FAIL</span></td></tr><tr><th scope="row"><code>py312-locked</code></th><td>3.12</td><td>locked</td><td><code>python@sha256:646fb0bca3dd3ea1bcc6feb72c17ed16eed6e10cffc732fcc1478bd3e7f02d7b</code></td><td><span class="badge fail">FAIL</span></td></tr></tbody></table>
   </section>
 
   <section aria-labelledby="results-h" id="results">
@@ -58,14 +58,16 @@ nav a { color: #7dd3fc; margin-right: 1rem; }
           <th scope="col">Scenario</th>
           <th scope="col">Verdict</th>
           <th scope="col">Axes</th>
+          <th scope="col">Image</th>
+          <th scope="col">Digest</th>
           <th scope="col">Duration ms</th>
         </tr>
       </thead>
       <tbody>
-<tr tabindex="0"><td><code>baseline</code></td><td><span class="badge pass" aria-label="verdict PASS">PASS</span></td><td>[]</td><td>5</td></tr>
-<tr tabindex="0"><td><code>py310-locked</code></td><td><span class="badge fail" aria-label="verdict FAIL">FAIL</span></td><td>[Runtime]</td><td>5</td></tr>
-<tr tabindex="0"><td><code>py311-locked</code></td><td><span class="badge fail" aria-label="verdict FAIL">FAIL</span></td><td>[Runtime]</td><td>5</td></tr>
-<tr tabindex="0"><td><code>py312-locked</code></td><td><span class="badge fail" aria-label="verdict FAIL">FAIL</span></td><td>[Runtime]</td><td>5</td></tr>
+<tr tabindex="0"><td><code>baseline</code></td><td><span class="badge pass" aria-label="verdict PASS">PASS</span></td><td>[]</td><td><code>python@sha256:2d97f6910b16bd338d3060f261f53f144965f755599aab1acda1e13cf1731b1b</code></td><td><code>python@sha256:2d97f6910b16bd338d3060f261f53f144965f755599aab1acda1e13cf1731b1b</code></td><td>701</td></tr>
+<tr tabindex="0"><td><code>py310-locked</code></td><td><span class="badge fail" aria-label="verdict FAIL">FAIL</span></td><td>[Runtime]</td><td><code>python@sha256:34a2c9467a0231d8c29a5ecadc219733a9393b026882b44d91616b9dae6088b6</code></td><td><code>python@sha256:34a2c9467a0231d8c29a5ecadc219733a9393b026882b44d91616b9dae6088b6</code></td><td>702</td></tr>
+<tr tabindex="0"><td><code>py311-locked</code></td><td><span class="badge fail" aria-label="verdict FAIL">FAIL</span></td><td>[Runtime]</td><td><code>python@sha256:94c50be2dc994b873b55bc123e95e6dbade08095b3dfd790f51c34de3f08cbb7</code></td><td><code>python@sha256:94c50be2dc994b873b55bc123e95e6dbade08095b3dfd790f51c34de3f08cbb7</code></td><td>752</td></tr>
+<tr tabindex="0"><td><code>py312-locked</code></td><td><span class="badge fail" aria-label="verdict FAIL">FAIL</span></td><td>[Runtime]</td><td><code>python@sha256:646fb0bca3dd3ea1bcc6feb72c17ed16eed6e10cffc732fcc1478bd3e7f02d7b</code></td><td><code>python@sha256:646fb0bca3dd3ea1bcc6feb72c17ed16eed6e10cffc732fcc1478bd3e7f02d7b</code></td><td>802</td></tr>
 
       </tbody>
     </table>
