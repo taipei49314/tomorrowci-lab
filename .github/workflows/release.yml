@@ -172,6 +172,11 @@ jobs:
           LIVE_ROOT="$FIXTURE/.tomorrowci/runs/$RUN_ID"
           test -f "$LIVE_ROOT/workspace/.tomorrowci.yml"
           ./target/release/tomorrowci verify "$RUN_ID" || (cd "$FIXTURE" && ../../target/release/tomorrowci verify "$RUN_ID")
+          # Drop non-manifest scenario state under workspace (container-owned caches)
+          while IFS= read -r -d '' d; do
+            sudo rm -rf "$d" || rm -rf "$d" || true
+          done < <(find "$LIVE_ROOT" -type d -path '*/workspace/.tomorrowci' -print0 2>/dev/null || true)
+          ./target/release/tomorrowci verify "$RUN_ID" || (cd "$FIXTURE" && ../../target/release/tomorrowci verify "$RUN_ID")
           LIVE_RUN_ID=$(basename "$LIVE_ROOT")
           cp -a "$LIVE_ROOT" "bundle/live-evidence/${LIVE_RUN_ID}"
           cp -a "$LIVE_ROOT/report.html" bundle/demo-report/
