@@ -367,7 +367,11 @@ fn post_verify_attestations_do_not_break_inventory() {
     let att = rr.join("attestations");
     fs::create_dir_all(&att).unwrap();
     fs::write(att.join("verification-fake.json"), r#"{"ok":true}"#).unwrap();
-    fs::write(att.join("SHA256SUMS.txt"), "deadbeef  verification-fake.json\n").unwrap();
+    fs::write(
+        att.join("SHA256SUMS.txt"),
+        "deadbeef  verification-fake.json\n",
+    )
+    .unwrap();
     let rep = verify_run_root(&rr).unwrap();
     assert!(
         rep.ok,

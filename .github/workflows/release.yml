@@ -49,7 +49,7 @@ jobs:
           cp README.md LICENSE CHANGELOG.md "dist/$STAGE/"
           tar -C dist -czf "dist/${STAGE}.tar.gz" "$STAGE"
           ./target/release/tomorrowci --version | tee dist/version.txt
-          grep -E '0\.1\.1-alpha\.2' dist/version.txt
+          grep -E '0\.1\.1-alpha\.3' dist/version.txt
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -61,7 +61,7 @@ jobs:
           Copy-Item README.md,LICENSE,CHANGELOG.md "dist/$stage/"
           Compress-Archive -Path "dist/$stage/*" -DestinationPath "dist/$stage.zip"
           ./target/release/tomorrowci.exe --version | Tee-Object dist/version.txt
-          Select-String -Path dist/version.txt -Pattern '0\.1\.1-alpha\.2' | Out-Null
+          if (-not (Select-String -Path dist/version.txt -Pattern '0\.1\.1-alpha\.3')) { throw "version mismatch" }
       - name: Upload dist
         uses: actions/upload-artifact@v4
         with:
