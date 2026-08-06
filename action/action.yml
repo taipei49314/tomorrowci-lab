@@ -16,7 +16,7 @@ inputs:
     required: false
     default: ""
   advisory:
-    description: If true, softens horizon policy only (never converts BLOCKED/invalid evidence to PASS)
+    description: Softens horizon regression policy only; never converts BLOCKED to PASS
     required: false
     default: "true"
   base-run-id:
@@ -24,7 +24,7 @@ inputs:
     required: false
     default: ""
   expect-horizon:
-    description: If true, require baseline PASS + FUTURE_FAIL horizon + signature + verify PASS
+    description: Require baseline PASS + FUTURE_FAIL + signature + observed + verify PASS
     required: false
     default: "false"
 
@@ -73,7 +73,6 @@ runs:
           CFG_ARGS+=(--config "${{ inputs.config }}")
         fi
         SCAN_PATH="${{ inputs.path }}"
-        # Structured handling: no set +e; capture status via if
         CODE=0
         if OUT=$("$BIN" scan "$SCAN_PATH" "${CFG_ARGS[@]}" 2>&1); then
           CODE=0
@@ -82,7 +81,6 @@ runs:
         fi
         echo "$OUT"
         RUN_ID=$(echo "$OUT" | sed -n 's/^run_id: //p' | tail -1)
-        # Evidence under scan target
         RUN_DIR=""
         if [[ -n "$RUN_ID" && -d "$SCAN_PATH/.tomorrowci/runs/$RUN_ID" ]]; then
           RUN_DIR="$SCAN_PATH/.tomorrowci/runs/$RUN_ID"
@@ -99,55 +97,26 @@ runs:
         RUN_ID=$(basename "${RUN_DIR}")
         echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
         echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
-
-        # Machine-readable evidence decisions
-        # Parse evidence into same-step shell vars (GITHUB_ENV only applies to later steps)
         export RUN_DIR
-        eval "$(python3 - <<'PY'
-import json, os
-run_dir = os.environ["RUN_DIR"]
-fr = json.load(open(f"{run_dir}/frontier.json"))
-run = json.load(open(f"{run_dir}/run.json"))
-fo = bool(fr.get("observed"))
-blocked = any(r.get("verdict") == "BLOCKED" for r in run.get("results", []))
-baseline_pass = any(r.get("verdict") == "BASELINE_PASS" for r in run.get("results", []))
-future_fail = any(r.get("verdict") == "FUTURE_FAIL" for r in run.get("results", []))
-sig = bool((fr.get("failure_signature") or {}).get("normalized_hash"))
-print(f"TCI_BLOCKED={'1' if blocked else '0'}")
-print(f"TCI_BASELINE_PASS={'1' if baseline_pass else '0'}")
-print(f"TCI_FUTURE_FAIL={'1' if future_fail else '0'}")
-print(f"TCI_SIG={'1' if sig else '0'}")
-print(f"TCI_FO={'1' if fo else '0'}")
-with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as o:
-    o.write(f"frontier_observed={'true' if fo else 'false'}\n")
-PY
-)"
-
+        eval "$(python3 "${{ github.action_path }}/parse-evidence.py" "$RUN_DIR")"
         if [[ -f "${RUN_DIR}/job-summary.md" ]]; then
           cat "${RUN_DIR}/job-summary.md" >> "$GITHUB_STEP_SUMMARY"
         fi
-
-        # Verify evidence (cwd must resolve run dir)
         if ! (cd "$SCAN_PATH" && "$BIN" verify "$RUN_ID") && ! "$BIN" verify "$RUN_ID"; then
           echo "evidence verify failed" >> "$GITHUB_STEP_SUMMARY"
           exit 1
         fi
-
-        # BLOCKED always fails (advisory may not convert BLOCKED to PASS)
         if [[ "${TCI_BLOCKED:-0}" == "1" ]]; then
           echo "Scan produced BLOCKED scenario(s)." >> "$GITHUB_STEP_SUMMARY"
           exit 2
         fi
-
-        # Unexpected non-zero scan exit
         if [[ "$CODE" -ne 0 ]]; then
           echo "Unexpected scan exit code $CODE" >> "$GITHUB_STEP_SUMMARY"
           exit "$CODE"
         fi
-
         if [[ "${{ inputs.expect-horizon }}" == "true" ]]; then
           if [[ "${TCI_BASELINE_PASS:-0}" != "1" || "${TCI_FUTURE_FAIL:-0}" != "1" || "${TCI_SIG:-0}" != "1" || "${TCI_FO:-0}" != "1" ]]; then
-            echo "expect-horizon contract failed baseline=$TCI_BASELINE_PASS future=$TCI_FUTURE_FAIL sig=$TCI_SIG fo=$TCI_FO" >> "$GITHUB_STEP_SUMMARY"
+            echo "expect-horizon failed baseline=$TCI_BASELINE_PASS future=$TCI_FUTURE_FAIL sig=$TCI_SIG fo=$TCI_FO" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
         fi
@@ -173,7 +142,7 @@ PY
           exit 0
         else
           if [[ "${{ inputs.advisory }}" == "true" ]]; then
-            echo "Horizon gate failed (advisory softens regression policy only)." >> "$GITHUB_STEP_SUMMARY"
+            echo "Horizon gate failed (advisory softens regression only)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           exit 3
