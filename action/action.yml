@@ -102,8 +102,9 @@ runs:
 
         # Machine-readable evidence decisions
         # Parse evidence into same-step shell vars (GITHUB_ENV only applies to later steps)
+        export RUN_DIR
         eval "$(python3 - <<'PY'
-import json, os, shlex
+import json, os
 run_dir = os.environ["RUN_DIR"]
 fr = json.load(open(f"{run_dir}/frontier.json"))
 run = json.load(open(f"{run_dir}/run.json"))
