@@ -79,8 +79,8 @@ jobs:
           RUN_ID="${{ steps.live.outputs.run_id }}"
           SC=$(python3 -c "import json; print(json.load(open('.tomorrowci/runs/'+'$RUN_ID'+'/frontier.json'))['first_failing_scenario'])")
           echo "replaying $RUN_ID scenario $SC"
-          ../../../target/release/tomorrowci replay "$RUN_ID" --scenario "$SC" | tee /tmp/r1.out
-          ../../../target/release/tomorrowci replay "$RUN_ID" --scenario "$SC" | tee /tmp/r2.out
+          "$GITHUB_WORKSPACE/target/release/tomorrowci" replay "$RUN_ID" --scenario "$SC" | tee /tmp/r1.out
+          "$GITHUB_WORKSPACE/target/release/tomorrowci" replay "$RUN_ID" --scenario "$SC" | tee /tmp/r2.out
           S1=$(grep -E '^(original_signature|replay_signature)=' /tmp/r1.out | sort)
           S2=$(grep -E '^(original_signature|replay_signature)=' /tmp/r2.out | sort)
           test -n "$S1"
