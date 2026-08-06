@@ -898,7 +898,72 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
     // replay attempt semantic checks (forged result detection if present)
     check_replay_attempts(run_root, &mut rep);
 
+    // External attestation inventory (if present): hashes must match (G4)
+    check_attestation_inventory(run_root, &mut rep);
+
     Ok(rep)
+}
+
+fn check_attestation_inventory(run_root: &Path, rep: &mut VerifyReport) {
+    let att = run_root.join("attestations");
+    let sums = att.join("SHA256SUMS.txt");
+    if !sums.is_file() {
+        return;
+    }
+    let text = match std::fs::read_to_string(&sums) {
+        Ok(t) => t,
+        Err(e) => {
+            rep.err(
+                "attestation_sums_read",
+                Some("attestations/SHA256SUMS.txt"),
+                e.to_string(),
+            );
+            return;
+        }
+    };
+    let mut seen = BTreeSet::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.split_whitespace();
+        let hash = parts.next().unwrap_or("");
+        let name = parts.next().unwrap_or("");
+        if name.is_empty() {
+            continue;
+        }
+        if !seen.insert(name.to_string()) {
+            rep.err(
+                "attestation_duplicate",
+                Some(name),
+                "duplicate attestation inventory path",
+            );
+        }
+        if let Err(e) = normalize_hash(hash) {
+            rep.err("attestation_malformed_hash", Some(name), e.to_string());
+            continue;
+        }
+        let path = att.join(name);
+        if !path.is_file() {
+            rep.err(
+                "attestation_missing",
+                Some(name),
+                "attestation listed but missing on disk",
+            );
+            continue;
+        }
+        if let Ok(actual) = hash_file(&path) {
+            if !hashes_equal(&actual, hash) {
+                rep.err(
+                    "attestation_hash_mismatch",
+                    Some(name),
+                    "attestation content does not match SHA256SUMS",
+                );
+            }
+        }
+    }
+    rep.semantic_checks += 1;
 }
 
 fn check_phase_timestamps(v: &serde_json::Value, path: &str, rep: &mut VerifyReport) {
