@@ -9,53 +9,55 @@ No forecast without an executable scenario.
 No breakage claim without replayable evidence.
 ```
 
-![Architecture](docs/architecture/diagram.md)
+## Product status (evidence-based)
 
-## What it is / is not
+**TomorrowCI is an experimental pre-alpha architecture under evidence-and-release closure.**
 
-| TomorrowCI | Not TomorrowCI |
-|---|---|
-| Tests against real runtime/dependency candidates | A dependency update PR bot |
-| OBSERVED / SIMULATED / SCHEDULED_RISK / INCONCLUSIVE grades | Invented future APIs |
-| Sandboxed execution (Docker/Podman) | Default host execution of untrusted code |
-| Typed verdicts (`BLOCKED` ≠ `PASS`) | Collapsing everything into FAIL/PASS |
-| Local-first, no telemetry, no cloud account | A SaaS-only scanner |
+| Area | Status | Notes |
+|------|--------|--------|
+| Live Python runtime vertical slice | **PASS** (demonstrated) | Real Docker path on public CI; see claim ledger |
+| Live report (minimum static) | **in closure** | Real digests; Phase F links/tests in alpha.2 track |
+| Action dogfood + consumer | **PASS** (alpha.1 demonstrated; re-prove on final alpha.2 commit) | `uses: ./action` |
+| Evidence integrity + exact replay | **in closure** | alpha.1 operational replay accepted; exact-manifest incomplete |
+| Release gate | **in closure** | alpha.1 rejected for premature tag / weak release workflow |
+| Node / Rust live adapters | **NOT_RUN** | Out of alpha.2 scope |
+| Dependency axis / real ddmin | **NOT_RUN** | Out of alpha.2 scope |
+| React/TypeScript interactive report | **NOT_RUN** | Out of alpha.2 scope |
+| Remote GitHub URL scan | **NOT_RUN** | Out of alpha.2 scope |
+| Container image publish | **NOT_RUN** | Must not be implied by release |
 
-## Status (public v0.1 candidate)
+### Tags (audit history)
 
-| Milestone | Status |
-|-----------|--------|
-| M0 Repository contract | Done |
-| M1 Python vertical slice | Done |
-| M2 Planner / deps / ddmin / flaky | Done |
-| M3 Node + Rust adapters | Done |
-| M4 Action + accessible report + compare | Done |
-| M5 Release candidate docs + dry-run | Done |
+| Tag | Disposition |
+|-----|-------------|
+| `v0.1.0` | **REJECTED** product candidate — scripted acceptance; red CI |
+| `v0.1.1-alpha.1` | **REJECTED acceptance candidate** / live-path demonstration — Python slice real; evidence envelope + release gate incomplete ([audit note](docs/audits/v0.1.1-alpha.1-rejection.md)) |
+| `v0.1.1-alpha.2` | **NOT_CREATED** until every alpha.2 closure gate passes |
 
-See [docs/CLAIM_TO_EVIDENCE.md](docs/CLAIM_TO_EVIDENCE.md) for the full claim matrix.
+Full matrix: [docs/CLAIM_TO_EVIDENCE.md](docs/CLAIM_TO_EVIDENCE.md).
 
 ## Quick start
 
-**Prerequisites:** Rust toolchain; Docker or Podman for live scans.
+**Prerequisites:** Rust toolchain; **Docker or Podman daemon** for live scans.
 
 ```bash
-git clone <this-repo>
-cd tomorrowci
+git clone https://github.com/taipei49314/tomorrowci-lab
+cd tomorrowci-lab
 cargo build -p tomorrowci-cli --release
 
 ./target/release/tomorrowci doctor
 ./target/release/tomorrowci trust
-./target/release/tomorrowci scan fixtures/python-runtime-break
+./target/release/tomorrowci scan fixtures/python-runtime-break \
+  --config fixtures/python-runtime-break/.tomorrowci.yml
+./target/release/tomorrowci verify <run-id>
 ```
 
-Without a container daemon, `scan` correctly returns **BLOCKED** (not a silent host run).
+Without a container daemon, `scan` returns **BLOCKED** (not a silent host run).
 
-Generate the committed demo HTML report (scripted evidence, no Docker):
+## Tree immutability contract
 
-```bash
-cargo run -p tomorrowci-gen-demo
-# open examples/reports/python-runtime-break/report.html
-```
+**Target source files under the scanned path are not modified by scenario execution.**  
+Evidence is written under `<scan-root>/.tomorrowci/runs/` (and is **excluded** from the immutability claim). Disposable workspace copies are used for container mounts.
 
 ## CLI
 
@@ -63,6 +65,7 @@ cargo run -p tomorrowci-gen-demo
 tomorrowci doctor
 tomorrowci trust
 tomorrowci scan <path> [--config .tomorrowci.yml]
+tomorrowci verify <run-id>
 tomorrowci show <run-id>
 tomorrowci replay <run-id> --scenario <id>
 tomorrowci explain <run-id>
@@ -72,60 +75,6 @@ tomorrowci compare --base <id> --head <id> [--gate]
 tomorrowci init-action
 ```
 
-## Configuration
-
-Schema: `packages/schema/tomorrowci-config.schema.json`  
-Example: `fixtures/python-runtime-break/.tomorrowci.yml`
-
-## Fixtures
-
-| Fixture | Intent |
-|---------|--------|
-| `fixtures/python-runtime-break` | Stdlib break on newer Python |
-| `fixtures/python-dependency-break` | Dependency-axis failure |
-| `fixtures/node-dependency-break` | Node runtime API break (`toSorted`) |
-| `fixtures/rust-msrv-break` | Older rustc cannot compile LazyCell |
-
-## GitHub Action
-
-Composite action: [`action/action.yml`](action/action.yml)  
-Template: `tomorrowci init-action`
-
-Permissions default to `contents: read`. Advisory mode does not fail the job on horizon findings; policy gate is explicit.
-
-## Release
-
-```bash
-# Windows
-./scripts/release-dry-run.ps1
-
-# Unix
-./scripts/release-dry-run.sh
-```
-
-See [docs/RELEASE.md](docs/RELEASE.md). Tag `v*` triggers `.github/workflows/release.yml`.
-
-## Security
-
-- Target code is **never** executed on the host by default
-- No privileged containers; no docker.sock into the target
-- Residual container escape risk is documented in [docs/threat-model](docs/threat-model/README.md)
-- Report untrusted HTML is escaped; see `SECURITY.md`
-
-## Documentation
-
-- [Architecture](docs/architecture/README.md) · [Diagram](docs/architecture/diagram.md)
-- [Threat model](docs/threat-model/README.md)
-- [Adapter authoring](docs/adapter-authoring/README.md)
-- [Report format](docs/report-format/README.md)
-- [ADRs](docs/adr/)
-- [Terminal demo](docs/demo/terminal-session.md)
-- [Support policy](SUPPORT.md)
-
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE)
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

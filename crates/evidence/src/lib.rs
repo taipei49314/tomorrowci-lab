@@ -1,5 +1,9 @@
 //! Evidence directory layout and checksum helpers.
 
+mod verify;
+
+pub use verify::*;
+
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tomorrowci_core::{sha256_bytes, Result, RunManifest, TcError};
@@ -70,7 +74,9 @@ mod tests {
         let d = tempdir().unwrap();
         let layout = EvidenceLayout::create(d.path(), "abc123").unwrap();
         assert!(layout.run_root.exists());
-        layout.write_json("verdicts.json", &serde_json::json!([])).unwrap();
+        layout
+            .write_json("verdicts.json", &serde_json::json!([]))
+            .unwrap();
         assert!(layout.run_root.join("verdicts.json").exists());
     }
 }

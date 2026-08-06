@@ -87,6 +87,7 @@ pub struct PolicyGateResult {
     pub reasons: Vec<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn evaluate_policy_gate(
     baseline_invalid: bool,
     new_future_failure: bool,
@@ -109,7 +110,9 @@ pub fn evaluate_policy_gate(
     }
     if let Some(th) = policy_blocked_ratio_above {
         if blocked_ratio > th {
-            reasons.push(format!("blocked_ratio_above ({blocked_ratio:.2} > {th:.2})"));
+            reasons.push(format!(
+                "blocked_ratio_above ({blocked_ratio:.2} > {th:.2})"
+            ));
         }
     }
     PolicyGateResult {

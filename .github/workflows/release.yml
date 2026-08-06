@@ -2,7 +2,7 @@ name: release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v0.1.1-alpha.2", "v0.1.1-alpha.*"]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -14,9 +14,13 @@ permissions:
   contents: write
 
 jobs:
+  acceptance:
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: acceptance
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - os: ubuntu-latest
@@ -32,26 +36,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build
+      - name: Build host target (named archive matches runner)
         run: cargo build -p tomorrowci-cli --release
       - name: Package (unix)
         if: runner.os != 'Windows'
         run: |
-          STAGE=tomorrowci-${GITHUB_REF_NAME:-v0.1.0}-${{ matrix.target }}
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME:-v0.1.1-alpha.2}"
+          STAGE="tomorrowci-${VER}-${{ matrix.target }}"
           mkdir -p "dist/$STAGE"
           cp target/release/tomorrowci "dist/$STAGE/"
           cp README.md LICENSE CHANGELOG.md "dist/$STAGE/"
           tar -C dist -czf "dist/${STAGE}.tar.gz" "$STAGE"
+          ./target/release/tomorrowci --version | tee dist/version.txt
+          grep -E '0\.1\.1-alpha\.2' dist/version.txt
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $stage = "tomorrowci-$env:GITHUB_REF_NAME-x86_64-pc-windows-msvc"
-          if (-not $env:GITHUB_REF_NAME) { $stage = "tomorrowci-v0.1.0-x86_64-pc-windows-msvc" }
+          $ver = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v0.1.1-alpha.2" }
+          $stage = "tomorrowci-$ver-x86_64-pc-windows-msvc"
           New-Item -ItemType Directory -Force -Path "dist/$stage" | Out-Null
           Copy-Item target/release/tomorrowci.exe "dist/$stage/"
           Copy-Item README.md,LICENSE,CHANGELOG.md "dist/$stage/"
           Compress-Archive -Path "dist/$stage/*" -DestinationPath "dist/$stage.zip"
+          ./target/release/tomorrowci.exe --version | Tee-Object dist/version.txt
+          Select-String -Path dist/version.txt -Pattern '0\.1\.1-alpha\.2' | Out-Null
       - name: Upload dist
         uses: actions/upload-artifact@v4
         with:
@@ -66,43 +76,58 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Flatten and checksum
+      - name: Require all three platform archives + checksums + SBOM
         run: |
+          set -euo pipefail
           mkdir -p dist
           find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} dist/ \;
           cd dist
-          sha256sum ./* > SHA256SUMS.txt
           ls -la
+          test -f *x86_64-unknown-linux-gnu*.tar.gz || test -f *linux*.tar.gz
+          test -f *x86_64-apple-darwin*.tar.gz || test -f *darwin*.tar.gz
+          test -f *x86_64-pc-windows-msvc*.zip || test -f *windows*.zip
+          # exact count: at least 3 archives
+          test "$(ls -1 | grep -E '\.(tar\.gz|zip)$' | wc -l)" -ge 3
+          sha256sum ./*.tar.gz ./*.zip > SHA256SUMS.txt
           test -s SHA256SUMS.txt
-          # Require at least one archive
-          test "$(ls -1 | grep -E '\.(tar\.gz|zip)$' | wc -l)" -ge 1
-      - name: Minimal SBOM
+          # verify each
+          sha256sum -c SHA256SUMS.txt
+      - name: Generate SBOM from Cargo.lock
         run: |
-          cat > dist/sbom.cdx.json <<'EOF'
-          {
-            "bomFormat": "CycloneDX",
-            "specVersion": "1.5",
-            "version": 1,
-            "metadata": {
-              "component": {
-                "type": "application",
-                "name": "tomorrowci",
-                "version": "0.1.0"
-              }
-            },
-            "components": []
-          }
-          EOF
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/') && inputs.dry_run != true
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, re
+          from pathlib import Path
+          lock = Path("Cargo.lock").read_text(encoding="utf-8")
+          names = re.findall(r'name = "([^"]+)"', lock)
+          seen=[]
+          for n in names:
+            if n not in seen: seen.append(n)
+          components=[{"type":"library","name":n,"version":"locked"} for n in seen]
+          ver="0.1.1-alpha.2"
+          for line in Path("Cargo.toml").read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("version ="):
+              ver=line.split("=",1)[1].strip().strip('"'); break
+          sbom={"bomFormat":"CycloneDX","specVersion":"1.5","version":1,
+                "metadata":{"component":{"type":"application","name":"tomorrowci","version":ver}},
+                "components":components}
+          data=json.dumps(sbom, indent=2)+"\n"
+          Path("dist/sbom.cdx.json").write_text(data, encoding="utf-8")
+          assert not Path("dist/sbom.cdx.json").read_bytes().startswith(b"\xef\xbb\xbf")
+          assert len(components) > 0
+          print("components", len(components), "version", ver)
+          PY
+      - name: Create GitHub pre-release
+        if: startsWith(github.ref, 'refs/tags/') && (github.event_name != 'workflow_dispatch' || inputs.dry_run != true)
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           generate_release_notes: true
+          prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Dry-run artifact upload
-        if: inputs.dry_run == true || !startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == true
         uses: actions/upload-artifact@v4
         with:
           name: release-dist

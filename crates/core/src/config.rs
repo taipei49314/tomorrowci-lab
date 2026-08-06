@@ -82,21 +82,12 @@ impl Default for BaselineConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CandidatesConfig {
     #[serde(default)]
     pub runtime: RuntimeCandidates,
     #[serde(default)]
     pub dependencies: DependencyCandidates,
-}
-
-impl Default for CandidatesConfig {
-    fn default() -> Self {
-        Self {
-            runtime: RuntimeCandidates::default(),
-            dependencies: DependencyCandidates::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -299,7 +290,9 @@ impl Config {
             ));
         }
         if self.execution.max_parallel == 0 {
-            return Err(TcError::Config("execution.max_parallel must be >= 1".into()));
+            return Err(TcError::Config(
+                "execution.max_parallel must be >= 1".into(),
+            ));
         }
         let eng = self.sandbox.engine.as_str();
         if !matches!(eng, "auto" | "docker" | "podman") {

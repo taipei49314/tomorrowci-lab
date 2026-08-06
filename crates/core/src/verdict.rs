@@ -21,9 +21,7 @@ pub fn compute_breakage_frontier(
             failure_signature: None,
             grade: EvidenceGrade::Inconclusive,
             replay_command: None,
-            notes: vec![
-                "No observed breakage horizon: baseline is not BASELINE_PASS.".into(),
-            ],
+            notes: vec!["No observed breakage horizon: baseline is not BASELINE_PASS.".into()],
         };
     }
 
@@ -58,8 +56,7 @@ pub fn compute_breakage_frontier(
                     grade: EvidenceGrade::Inconclusive,
                     replay_command: None,
                     notes: vec![
-                        "First failure not yet confirmed by reruns; horizon not authorized."
-                            .into(),
+                        "First failure not yet confirmed by reruns; horizon not authorized.".into(),
                     ],
                 };
             }
@@ -95,9 +92,7 @@ pub fn compute_breakage_frontier(
             failure_signature: None,
             grade: EvidenceGrade::Inconclusive,
             replay_command: None,
-            notes: vec![
-                "No observed breakage horizon within tested candidates.".into(),
-            ],
+            notes: vec!["No observed breakage horizon within tested candidates.".into()],
         },
     }
 }
@@ -139,6 +134,7 @@ mod tests {
 
     fn env() -> EnvironmentSpec {
         EnvironmentSpec {
+            image_tag: "python:3.9".into(),
             image: "python:3.9".into(),
             image_digest: Some("sha256:abc".into()),
             workdir: "/work".into(),
@@ -149,6 +145,11 @@ mod tests {
             pids_limit: 256,
             user: Some("nobody".into()),
             read_only_root: true,
+            scenario_state_root: None,
+            fetch_timeout_seconds: None,
+            test_timeout_seconds: None,
+            engine: None,
+            engine_version: None,
         }
     }
 
@@ -204,7 +205,10 @@ mod tests {
     #[test]
     fn horizon_when_confirmed() {
         let ordered = vec![
-            (scenario("b", true, "3.9"), result("b", Verdict::BaselinePass)),
+            (
+                scenario("b", true, "3.9"),
+                result("b", Verdict::BaselinePass),
+            ),
             (
                 scenario("py310", false, "3.10"),
                 result("py310", Verdict::FutureFail),
@@ -223,14 +227,8 @@ mod tests {
 
     #[test]
     fn flaky_classification() {
-        assert_eq!(
-            classify_from_reruns(&[true, false, true]),
-            Verdict::Flaky
-        );
-        assert_eq!(
-            classify_from_reruns(&[false, false]),
-            Verdict::FutureFail
-        );
+        assert_eq!(classify_from_reruns(&[true, false, true]), Verdict::Flaky);
+        assert_eq!(classify_from_reruns(&[false, false]), Verdict::FutureFail);
     }
 
     #[test]

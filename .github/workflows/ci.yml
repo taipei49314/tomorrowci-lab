@@ -2,8 +2,9 @@ name: ci
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, "repair/**"]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -16,6 +17,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: text encoding
+        run: python3 scripts/check-text-encoding.py
       - name: fmt
         run: cargo fmt --all -- --check
       - name: clippy
@@ -24,23 +27,117 @@ jobs:
         run: cargo test --workspace
       - name: build release CLI
         run: cargo build -p tomorrowci-cli --release
+      - name: node report helpers
+        run: node --test packages/report-ui/test/*.test.js
+      - name: bash -n release dry-run
+        run: bash -n scripts/release-dry-run.sh
+      - name: version identity
+        run: ./target/release/tomorrowci --version | tee /tmp/v.txt; grep -E '0\.1\.1-alpha\.2' /tmp/v.txt
       - name: trust audit
         run: ./target/release/tomorrowci trust
       - name: doctor
         run: ./target/release/tomorrowci doctor
-      - name: dogfood action path (composite scripted)
+
+  live-python:
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: build release CLI
+        run: cargo build -p tomorrowci-cli --release
+      - name: live Docker Python fixture
+        id: live
         run: |
-          ./target/release/tomorrowci trust
-          # Fixture scan may BLOCK without Docker images; must not pretend PASS
-          set +e
-          ./target/release/tomorrowci scan fixtures/python-runtime-break
-          set -e
-          ./target/release/tomorrowci init-action --out /tmp/tw.yml
-          test -f /tmp/tw.yml
-      - name: Upload any evidence
+          set -euo pipefail
+          FIXTURE=fixtures/python-runtime-break
+          ./target/release/tomorrowci doctor
+          ./target/release/tomorrowci scan "$FIXTURE" \
+            --config "$FIXTURE/.tomorrowci.yml" | tee /tmp/scan.out
+          if grep -q "verdict: BLOCKED" /tmp/scan.out; then
+            echo "Live scan BLOCKED"
+            exit 2
+          fi
+          RUN_ID=$(sed -n 's/^run_id: //p' /tmp/scan.out | tail -1)
+          RUN_DIR="$FIXTURE/.tomorrowci/runs/$RUN_ID"
+          test -d "$RUN_DIR"
+          echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          ./target/release/tomorrowci verify "$RUN_ID" || (cd "$FIXTURE" && ../../target/release/tomorrowci verify "$RUN_ID")
+          python3 - <<PY
+          import json
+          run_dir = "$RUN_DIR"
+          f = json.load(open(f"{run_dir}/frontier.json"))
+          assert f.get("observed") is True, f
+          m = json.load(open(f"{run_dir}/run.json"))
+          assert m.get("repository", {}).get("commit_sha")
+          for r in m["results"]:
+              env = r.get("environment") or {}
+              assert env.get("image_digest"), r
+              tag = env.get("image_tag") or env.get("image")
+              assert tag and "sha256:" not in tag, env
+              assert "scripted-test-digest" not in str(env.get("image_digest"))
+          print("live_identity_ok", m["run_id"], m["repository"]["commit_sha"])
+          PY
+      - name: replay equivalence twice
+        working-directory: fixtures/python-runtime-break
+        run: |
+          set -euo pipefail
+          RUN_ID="${{ steps.live.outputs.run_id }}"
+          SC=$(python3 -c "import json; print(json.load(open('.tomorrowci/runs/'+'$RUN_ID'+'/frontier.json'))['first_failing_scenario'])")
+          "$GITHUB_WORKSPACE/target/release/tomorrowci" replay "$RUN_ID" --scenario "$SC" | tee /tmp/r1.out
+          "$GITHUB_WORKSPACE/target/release/tomorrowci" replay "$RUN_ID" --scenario "$SC" | tee /tmp/r2.out
+          test -f ".tomorrowci/runs/$RUN_ID/scenarios/$SC/replays/attempt-1/result.json"
+          test -f ".tomorrowci/runs/$RUN_ID/scenarios/$SC/replays/attempt-2/result.json"
+          grep -q "replay: PASS" /tmp/r1.out
+          grep -q "replay: PASS" /tmp/r2.out
+          "$GITHUB_WORKSPACE/target/release/tomorrowci" verify "$RUN_ID"
+      - name: Upload live evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tomorrowci-evidence
-          path: .tomorrowci/runs/
-          if-no-files-found: ignore
+          name: tomorrowci-live-python-evidence
+          path: fixtures/python-runtime-break/.tomorrowci/runs/
+          if-no-files-found: warn
+
+  action-dogfood:
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Dogfood checked-in Action
+        uses: ./action
+        with:
+          path: fixtures/python-runtime-break
+          config: fixtures/python-runtime-break/.tomorrowci.yml
+          advisory: "false"
+          expect-horizon: "true"
+
+  action-consumer:
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tomorrowci-src
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Create real consumer git repository
+        run: |
+          set -euo pipefail
+          mkdir -p consumer
+          cp -a tomorrowci-src/fixtures/python-runtime-break/. consumer/
+          test ! -f consumer/Cargo.toml
+          cd consumer
+          git init
+          git config user.email "ci@tomorrowci.local"
+          git config user.name "TomorrowCI CI"
+          git add .
+          git commit -m fixture
+      - name: Invoke Action against consumer repository
+        uses: ./tomorrowci-src/action
+        with:
+          path: consumer
+          config: consumer/.tomorrowci.yml
+          advisory: "false"
+          expect-horizon: "true"

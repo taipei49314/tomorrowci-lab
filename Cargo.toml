@@ -17,10 +17,10 @@ members = [
 default-members = ["apps/cli"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1-alpha.2"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/tomorrowci/tomorrowci"
+repository = "https://github.com/taipei49314/tomorrowci-lab"
 authors = ["TomorrowCI Contributors"]
 rust-version = "1.75"
 

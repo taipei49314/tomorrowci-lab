@@ -37,16 +37,14 @@ fn node_runtime_break_horizon() {
     map.insert("node18-locked".into(), vec![1, 1]); // first ordered cand after skip 20
     map.insert("node22-locked".into(), vec![0, 0]);
     // candidates order: 18, 22, 24 — 20 skipped as baseline
-    let exec = ScriptedExecutor::new(map)
-        .with_stderr("TypeError: arr.toSorted is not a function");
+    let exec = ScriptedExecutor::new(map).with_stderr("TypeError: arr.toSorted is not a function");
 
     let out = scan_with_executor(d.path(), &adapter, cfg, &exec, det.detection).unwrap();
-    assert!(
-        out.manifest.frontier.observed,
-        "{}",
-        out.terminal_summary
+    assert!(out.manifest.frontier.observed, "{}", out.terminal_summary);
+    assert_eq!(
+        out.manifest.detection.ecosystem,
+        tomorrowci_core::Ecosystem::Node
     );
-    assert_eq!(out.manifest.detection.ecosystem, tomorrowci_core::Ecosystem::Node);
     assert!(out.evidence_root.join("report.html").exists());
     assert!(out.terminal_summary.contains("Observed breakage horizon"));
 }
@@ -60,8 +58,11 @@ fn rust_msrv_break_horizon() {
     )
     .unwrap();
     std::fs::create_dir_all(d.path().join("src")).unwrap();
-    std::fs::write(d.path().join("src/lib.rs"), "pub fn x()->i32{1}\n#[test] fn t(){assert_eq!(x(),1)}\n")
-        .unwrap();
+    std::fs::write(
+        d.path().join("src/lib.rs"),
+        "pub fn x()->i32{1}\n#[test] fn t(){assert_eq!(x(),1)}\n",
+    )
+    .unwrap();
 
     let adapter = RustAdapter;
     let det = adapter.detect(d.path());
@@ -79,20 +80,12 @@ fn rust_msrv_break_horizon() {
     map.insert("baseline".into(), vec![0]);
     map.insert("rust-174".into(), vec![1, 1]);
     map.insert("rust-beta".into(), vec![0, 0]);
-    let exec = ScriptedExecutor::new(map).with_stderr(
-        "error[E0658]: use of unstable library feature `lazy_cell` (MSRV)",
-    );
+    let exec = ScriptedExecutor::new(map)
+        .with_stderr("error[E0658]: use of unstable library feature `lazy_cell` (MSRV)");
 
     let out = scan_with_executor(d.path(), &adapter, cfg, &exec, det.detection).unwrap();
-    assert!(
-        out.manifest.frontier.observed,
-        "{}",
-        out.terminal_summary
-    );
-    assert_eq!(
-        out.manifest.frontier.horizon_label.as_deref(),
-        Some("1.74")
-    );
+    assert!(out.manifest.frontier.observed, "{}", out.terminal_summary);
+    assert_eq!(out.manifest.frontier.horizon_label.as_deref(), Some("1.74"));
     let fail = out
         .manifest
         .results

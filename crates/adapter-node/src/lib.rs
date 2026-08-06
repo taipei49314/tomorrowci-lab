@@ -23,9 +23,7 @@ impl EcosystemAdapter for NodeAdapter {
         let pnpm = path_exists(repo, "pnpm-lock.yaml");
         let mut notes = Vec::new();
         if yarn && !has_lock {
-            notes.push(
-                "yarn.lock without package-lock.json => yarn UNSUPPORTED in v0.1.".into(),
-            );
+            notes.push("yarn.lock without package-lock.json => yarn UNSUPPORTED in v0.1.".into());
         }
         if pnpm && !has_lock {
             notes.push(
@@ -110,8 +108,10 @@ impl EcosystemAdapter for NodeAdapter {
 
     fn materialize(&self, scenario: &Scenario, _workspace: &Path) -> Result<EnvironmentSpec> {
         let tag = scenario.runtime.trim_start_matches("node:");
+        let image = format!("node:{tag}");
         Ok(EnvironmentSpec {
-            image: format!("node:{tag}"),
+            image_tag: image.clone(),
+            image,
             image_digest: None,
             workdir: "/work".into(),
             env: IndexMap::new(),
@@ -121,12 +121,23 @@ impl EcosystemAdapter for NodeAdapter {
             pids_limit: 512,
             user: Some("node".into()),
             read_only_root: false, // npm needs write for node_modules
+            scenario_state_root: None,
+            fetch_timeout_seconds: None,
+            test_timeout_seconds: None,
+            engine: None,
+            engine_version: None,
         })
     }
 
     fn commands(&self, _scenario: &Scenario, config: &Config) -> Result<Vec<CommandSpec>> {
         let argv = if config.project.test_command == "auto" {
-            vec!["npm".into(), "test".into(), "--".into(), "--reporter".into(), "tap".into()]
+            vec![
+                "npm".into(),
+                "test".into(),
+                "--".into(),
+                "--reporter".into(),
+                "tap".into(),
+            ]
         } else {
             config
                 .project
@@ -170,7 +181,7 @@ impl EcosystemAdapter for NodeAdapter {
                 .chars()
                 .take(200)
                 .collect(),
-            normalized_hash: tomorrowci_core::sha256_str(&format!("{kind}")),
+            normalized_hash: tomorrowci_core::sha256_str(kind),
             primary_frame: None,
         }
     }

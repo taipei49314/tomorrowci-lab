@@ -128,7 +128,10 @@ pub fn run_trust_audit() -> Result<TrustReport> {
         Verdict::Unsupported,
         Verdict::Inconclusive,
     ];
-    if bad_promo.iter().all(|v| !v.is_pass_like() && v.may_not_be_promoted_to_pass()) {
+    if bad_promo
+        .iter()
+        .all(|v| !v.is_pass_like() && v.may_not_be_promoted_to_pass())
+    {
         probes.push(ok(
             "T6_NO_VERDICT_PROMOTE",
             "BLOCKED/UNSUPPORTED/INCONCLUSIVE cannot be treated as PASS",
@@ -157,7 +160,11 @@ pub fn run_trust_audit() -> Result<TrustReport> {
         .map(|o| o.status.success())
         .unwrap_or(false);
     probes.push(if git_ok {
-        ok("T8_GIT", "git available for commit SHA recording", "git --version ok")
+        ok(
+            "T8_GIT",
+            "git available for commit SHA recording",
+            "git --version ok",
+        )
     } else {
         TrustProbe {
             id: "T8_GIT".into(),

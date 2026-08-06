@@ -5,7 +5,22 @@ All notable changes to TomorrowCI are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [0.1.0] — 2026-08-06
+## [0.1.1-alpha.2] - 2026-08-06
+
+### Changed
+
+- Evidence integrity: image tag/digest separation, phase timestamps, scenario-local venvs
+- `tomorrowci verify` checksum boundary including claims.json
+- Independent replay attempt artifacts under `replays/attempt-N/`
+- Action structured exit handling; consumer git repository dogfood
+- Package version `0.1.1-alpha.2`; acceptance-gated release workflow with prerelease
+
+### Notes
+
+- `v0.1.1-alpha.1` preserved as rejected acceptance candidate
+- `v0.1.0` preserved as rejected product candidate
+
+## [0.1.0] - 2026-08-06
 
 ### Added
 

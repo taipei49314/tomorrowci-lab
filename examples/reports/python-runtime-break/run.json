@@ -1,12 +1,12 @@
 {
-  "run_id": "test0ea837f7",
+  "run_id": "77f7f5ea7b80",
   "tool_version": "0.1.0",
-  "started_at": "2026-08-06T05:10:18.406643500Z",
-  "finished_at": "2026-08-06T05:10:18.406651800Z",
+  "started_at": "2026-08-06T06:20:41.841089620Z",
+  "finished_at": "2026-08-06T06:21:19.275434507Z",
   "repository": {
-    "source": "C:\\Users\\1\\tomorrowci\\tools\\gen-demo\\../..\\fixtures/python-runtime-break",
-    "path": "C:\\Users\\1\\tomorrowci\\tools\\gen-demo\\../..\\fixtures/python-runtime-break",
-    "commit_sha": "e654ab774d0636e11f119ec471c3ec9db1e2738d",
+    "source": "fixtures/python-runtime-break",
+    "path": "fixtures/python-runtime-break",
+    "commit_sha": "808e6cee6368b7732e9811a280cc3ad81f569df5",
     "is_disposable_copy": true
   },
   "config_hash": "sha256:2c2726b1678de914a9e36c2c6be7c6be2ae9868a74e0e2a78488671765caa515",
@@ -19,13 +19,13 @@
     "package_manager": "pip",
     "confidence": 0.9,
     "notes": [
-      "Python project detected; package manager: pip (v0.1)."
+      "Python project detected; package manager: pip only."
     ]
   },
   "baseline": {
     "runtime": "3.9",
     "dependencies": "locked",
-    "declared_by": "config/auto"
+    "declared_by": "config"
   },
   "plan": {
     "plan_id": "plan-4",
@@ -90,25 +90,66 @@
       "attempt": 1,
       "verdict": "BASELINE_PASS",
       "exit_code": 0,
-      "duration_ms": 5,
+      "duration_ms": 701,
       "timed_out": false,
       "failure": null,
       "environment": {
-        "image": "python:3.9",
-        "image_digest": "sha256:scripted-test-digest",
+        "image": "python@sha256:2d97f6910b16bd338d3060f261f53f144965f755599aab1acda1e13cf1731b1b",
+        "image_digest": "python@sha256:2d97f6910b16bd338d3060f261f53f144965f755599aab1acda1e13cf1731b1b",
         "workdir": "/work",
-        "env": {},
+        "env": {
+          "PIP_CACHE_DIR": "/work/.tomorrowci/cache/pip",
+          "VIRTUAL_ENV": "/work/.tomorrowci/venv",
+          "PATH": "/work/.tomorrowci/venv/bin:/usr/local/bin:/usr/bin:/bin"
+        },
         "network_mode": "none",
-        "memory_mb": 4096,
-        "cpus": 2.0,
-        "pids_limit": 512,
+        "memory_mb": 2048,
+        "cpus": 1.0,
+        "pids_limit": 256,
         "user": "65534:65534",
         "read_only_root": true
       },
       "commands": [
         {
           "argv": [
+            "rm",
+            "-rf",
+            "/work/.tomorrowci/venv"
+          ],
+          "cwd": "/work",
+          "network": false,
+          "phase": "fetch"
+        },
+        {
+          "argv": [
             "python",
+            "-m",
+            "venv",
+            "/work/.tomorrowci/venv"
+          ],
+          "cwd": "/work",
+          "network": false,
+          "phase": "fetch"
+        },
+        {
+          "argv": [
+            "/work/.tomorrowci/venv/bin/python",
+            "-m",
+            "pip",
+            "install",
+            "-q",
+            "--cache-dir",
+            "/work/.tomorrowci/cache/pip",
+            "-r",
+            "requirements.txt"
+          ],
+          "cwd": "/work",
+          "network": true,
+          "phase": "fetch"
+        },
+        {
+          "argv": [
+            "/work/.tomorrowci/venv/bin/python",
             "-m",
             "pytest",
             "-q"
@@ -123,31 +164,72 @@
       "scenario_id": "py310-locked",
       "attempt": 2,
       "verdict": "FUTURE_FAIL",
-      "exit_code": 1,
-      "duration_ms": 5,
+      "exit_code": 2,
+      "duration_ms": 702,
       "timed_out": false,
       "failure": {
         "kind": "ImportError",
-        "summary": "ImportError: cannot import name 'MutableMapping' from 'collections'",
-        "normalized_hash": "sha256:38738b4e588f86677b06b42fe99b494ec86b8800506216956594dd503b6aa77a",
+        "summary": "ImportError while importing test module '/work/tests/test_app.py'.",
+        "normalized_hash": "sha256:497fdbfe256b888b5434e458a115da03209e70bdd8bf250fecd76704e67a5ac9",
         "primary_frame": null
       },
       "environment": {
-        "image": "python:3.10",
-        "image_digest": "sha256:scripted-test-digest",
+        "image": "python@sha256:34a2c9467a0231d8c29a5ecadc219733a9393b026882b44d91616b9dae6088b6",
+        "image_digest": "python@sha256:34a2c9467a0231d8c29a5ecadc219733a9393b026882b44d91616b9dae6088b6",
         "workdir": "/work",
-        "env": {},
+        "env": {
+          "PIP_CACHE_DIR": "/work/.tomorrowci/cache/pip",
+          "VIRTUAL_ENV": "/work/.tomorrowci/venv",
+          "PATH": "/work/.tomorrowci/venv/bin:/usr/local/bin:/usr/bin:/bin"
+        },
         "network_mode": "none",
-        "memory_mb": 4096,
-        "cpus": 2.0,
-        "pids_limit": 512,
+        "memory_mb": 2048,
+        "cpus": 1.0,
+        "pids_limit": 256,
         "user": "65534:65534",
         "read_only_root": true
       },
       "commands": [
         {
           "argv": [
+            "rm",
+            "-rf",
+            "/work/.tomorrowci/venv"
+          ],
+          "cwd": "/work",
+          "network": false,
+          "phase": "fetch"
+        },
+        {
+          "argv": [
             "python",
+            "-m",
+            "venv",
+            "/work/.tomorrowci/venv"
+          ],
+          "cwd": "/work",
+          "network": false,
+          "phase": "fetch"
+        },
+        {
+          "argv": [
+            "/work/.tomorrowci/venv/bin/python",
+            "-m",
+            "pip",
+            "install",
+            "-q",
+            "--cache-dir",
+            "/work/.tomorrowci/cache/pip",
+            "-r",
+            "requirements.txt"
+          ],
+          "cwd": "/work",
+          "network": true,
+          "phase": "fetch"
+        },
+        {
+          "argv": [
+            "/work/.tomorrowci/venv/bin/python",
             "-m",
             "pytest",
             "-q"
@@ -162,31 +244,72 @@
       "scenario_id": "py311-locked",
       "attempt": 2,
       "verdict": "FUTURE_FAIL",
-      "exit_code": 1,
-      "duration_ms": 5,
+      "exit_code": 2,
+      "duration_ms": 752,
       "timed_out": false,
       "failure": {
         "kind": "ImportError",
-        "summary": "ImportError: cannot import name 'MutableMapping' from 'collections'",
-        "normalized_hash": "sha256:38738b4e588f86677b06b42fe99b494ec86b8800506216956594dd503b6aa77a",
+        "summary": "ImportError while importing test module '/work/tests/test_app.py'.",
+        "normalized_hash": "sha256:497fdbfe256b888b5434e458a115da03209e70bdd8bf250fecd76704e67a5ac9",
         "primary_frame": null
       },
       "environment": {
-        "image": "python:3.11",
-        "image_digest": "sha256:scripted-test-digest",
+        "image": "python@sha256:94c50be2dc994b873b55bc123e95e6dbade08095b3dfd790f51c34de3f08cbb7",
+        "image_digest": "python@sha256:94c50be2dc994b873b55bc123e95e6dbade08095b3dfd790f51c34de3f08cbb7",
         "workdir": "/work",
-        "env": {},
+        "env": {
+          "PIP_CACHE_DIR": "/work/.tomorrowci/cache/pip",
+          "VIRTUAL_ENV": "/work/.tomorrowci/venv",
+          "PATH": "/work/.tomorrowci/venv/bin:/usr/local/bin:/usr/bin:/bin"
+        },
         "network_mode": "none",
-        "memory_mb": 4096,
-        "cpus": 2.0,
-        "pids_limit": 512,
+        "memory_mb": 2048,
+        "cpus": 1.0,
+        "pids_limit": 256,
         "user": "65534:65534",
         "read_only_root": true
       },
       "commands": [
         {
           "argv": [
+            "rm",
+            "-rf",
+            "/work/.tomorrowci/venv"
+          ],
+          "cwd": "/work",
+          "network": false,
+          "phase": "fetch"
+        },
+        {
+          "argv": [
             "python",
+            "-m",
+            "venv",
+            "/work/.tomorrowci/venv"
+          ],
+          "cwd": "/work",
+          "network": false,
+          "phase": "fetch"
+        },
+        {
+          "argv": [
+            "/work/.tomorrowci/venv/bin/python",
+            "-m",
+            "pip",
+            "install",
+            "-q",
+            "--cache-dir",
+            "/work/.tomorrowci/cache/pip",
+            "-r",
+            "requirements.txt"
+          ],
+          "cwd": "/work",
+          "network": true,
+          "phase": "fetch"
+        },
+        {
+          "argv": [
+            "/work/.tomorrowci/venv/bin/python",
             "-m",
             "pytest",
             "-q"
@@ -201,31 +324,72 @@
       "scenario_id": "py312-locked",
       "attempt": 2,
       "verdict": "FUTURE_FAIL",
-      "exit_code": 1,
-      "duration_ms": 5,
+      "exit_code": 2,
+      "duration_ms": 802,
       "timed_out": false,
       "failure": {
         "kind": "ImportError",
-        "summary": "ImportError: cannot import name 'MutableMapping' from 'collections'",
-        "normalized_hash": "sha256:38738b4e588f86677b06b42fe99b494ec86b8800506216956594dd503b6aa77a",
+        "summary": "ImportError while importing test module '/work/tests/test_app.py'.",
+        "normalized_hash": "sha256:497fdbfe256b888b5434e458a115da03209e70bdd8bf250fecd76704e67a5ac9",
         "primary_frame": null
       },
       "environment": {
-        "image": "python:3.12",
-        "image_digest": "sha256:scripted-test-digest",
+        "image": "python@sha256:646fb0bca3dd3ea1bcc6feb72c17ed16eed6e10cffc732fcc1478bd3e7f02d7b",
+        "image_digest": "python@sha256:646fb0bca3dd3ea1bcc6feb72c17ed16eed6e10cffc732fcc1478bd3e7f02d7b",
         "workdir": "/work",
-        "env": {},
+        "env": {
+          "PIP_CACHE_DIR": "/work/.tomorrowci/cache/pip",
+          "VIRTUAL_ENV": "/work/.tomorrowci/venv",
+          "PATH": "/work/.tomorrowci/venv/bin:/usr/local/bin:/usr/bin:/bin"
+        },
         "network_mode": "none",
-        "memory_mb": 4096,
-        "cpus": 2.0,
-        "pids_limit": 512,
+        "memory_mb": 2048,
+        "cpus": 1.0,
+        "pids_limit": 256,
         "user": "65534:65534",
         "read_only_root": true
       },
       "commands": [
         {
           "argv": [
+            "rm",
+            "-rf",
+            "/work/.tomorrowci/venv"
+          ],
+          "cwd": "/work",
+          "network": false,
+          "phase": "fetch"
+        },
+        {
+          "argv": [
             "python",
+            "-m",
+            "venv",
+            "/work/.tomorrowci/venv"
+          ],
+          "cwd": "/work",
+          "network": false,
+          "phase": "fetch"
+        },
+        {
+          "argv": [
+            "/work/.tomorrowci/venv/bin/python",
+            "-m",
+            "pip",
+            "install",
+            "-q",
+            "--cache-dir",
+            "/work/.tomorrowci/cache/pip",
+            "-r",
+            "requirements.txt"
+          ],
+          "cwd": "/work",
+          "network": true,
+          "phase": "fetch"
+        },
+        {
+          "argv": [
+            "/work/.tomorrowci/venv/bin/python",
             "-m",
             "pytest",
             "-q"
@@ -247,15 +411,15 @@
     ],
     "failure_signature": {
       "kind": "ImportError",
-      "summary": "ImportError: cannot import name 'MutableMapping' from 'collections'",
-      "normalized_hash": "sha256:38738b4e588f86677b06b42fe99b494ec86b8800506216956594dd503b6aa77a",
+      "summary": "ImportError while importing test module '/work/tests/test_app.py'.",
+      "normalized_hash": "sha256:497fdbfe256b888b5434e458a115da03209e70bdd8bf250fecd76704e67a5ac9",
       "primary_frame": null
     },
     "grade": "OBSERVED",
-    "replay_command": "tomorrowci replay test0ea837f7 --scenario py310-locked",
+    "replay_command": "tomorrowci replay 77f7f5ea7b80 --scenario py310-locked",
     "notes": [
       "Breakage horizon authorized after confirmed FUTURE_FAIL."
     ]
   },
-  "evidence_root": "C:\\Users\\1\\tomorrowci\\tools\\gen-demo\\../..\\fixtures/python-runtime-break\\.tomorrowci/runs\\test0ea837f7"
+  "evidence_root": "fixtures/python-runtime-break/.tomorrowci/runs/77f7f5ea7b80"
 }
