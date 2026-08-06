@@ -273,11 +273,7 @@ pub fn python_fetch_commands(workspace: &Path, upgrade: bool) -> Result<Vec<Comm
     }
     Ok(vec![
         CommandSpec {
-            argv: vec![
-                "rm".into(),
-                "-rf".into(),
-                "/work/.tomorrowci/venv".into(),
-            ],
+            argv: vec!["rm".into(), "-rf".into(), "/work/.tomorrowci/venv".into()],
             cwd: Some("/work".into()),
             network: false,
             phase: "fetch".into(),
