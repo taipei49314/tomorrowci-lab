@@ -69,10 +69,11 @@ jobs:
           path: dist/*
 
   checksums-and-release:
-    needs: build
+    needs: [acceptance, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -92,16 +93,29 @@ jobs:
           test -s SHA256SUMS.txt
           # verify each
           sha256sum -c SHA256SUMS.txt
-      - name: Generate SBOM from Cargo.lock
+      - name: Generate SBOM from Cargo.lock (preserve multi-version pairs)
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json, re
           from pathlib import Path
           lock = Path("Cargo.lock").read_text(encoding="utf-8")
-          pkgs = re.findall(r'\[\[package\]\]\nname = "([^"]+)"\nversion = "([^"]+)"', lock)
+          pkgs = []
+          for block in lock.split("[[package]]"):
+              if not block.strip():
+                  continue
+              name = re.search(r'^name = "([^"]+)"', block, re.M)
+              ver = re.search(r'^version = "([^"]+)"', block, re.M)
+              if name and ver:
+                  pkgs.append((name.group(1), ver.group(1)))
+          assert pkgs, "no packages parsed from Cargo.lock"
+          assert all(v != "locked" for _, v in pkgs)
+          # multi-version packages must remain distinct entries
+          from collections import Counter
+          counts = Counter(n for n, _ in pkgs)
+          multi = {n: c for n, c in counts.items() if c > 1}
+          print("packages", len(pkgs), "multi-version", multi)
           components=[{"type":"library","name":n,"version":v,"purl":f"pkg:cargo/{n}@{v}"} for n,v in pkgs]
-          assert components and all(c["version"] != "locked" for c in components)
           ver="0.1.1-alpha.3"
           for line in Path("Cargo.toml").read_text(encoding="utf-8").splitlines():
             if line.strip().startswith("version ="):
@@ -112,8 +126,91 @@ jobs:
           data=json.dumps(sbom, indent=2)+"\n"
           Path("dist/sbom.cdx.json").write_text(data, encoding="utf-8")
           assert not Path("dist/sbom.cdx.json").read_bytes().startswith(b"\xef\xbb\xbf")
+          # round-trip vs lock pairs
+          locked = set(pkgs)
+          sbom_pairs = {(c["name"], c["version"]) for c in components}
+          assert locked == sbom_pairs, (locked - sbom_pairs, sbom_pairs - locked)
           print("components", len(components), "version", ver)
           PY
+      - name: Package source archive + exact-commit bundle
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME:-v0.1.1-alpha.3}"
+          mkdir -p bundle/source bundle/release bundle/live-evidence bundle/demo-report
+          git archive --format=tar.gz --prefix=tomorrowci-src/ -o "dist/tomorrowci-${VER}-source.tar.gz" HEAD
+          tar -xzf "dist/tomorrowci-${VER}-source.tar.gz" -C bundle/source --strip-components=1
+          # platform archives + SBOM into release/ (exclude the source tarball we just made)
+          shopt -s nullglob
+          for f in dist/*x86_64-unknown-linux-gnu*.tar.gz dist/*x86_64-apple-darwin*.tar.gz dist/*x86_64-pc-windows-msvc*.zip dist/SHA256SUMS.txt dist/sbom.cdx.json; do
+            cp -a "$f" bundle/release/
+          done
+          # Prefer acceptance live-evidence artifact; else produce fresh live evidence here
+          LIVE_ROOT=""
+          for cand in artifacts/tomorrowci-live-python-evidence/*; do
+            if [ -d "$cand" ] && [ -f "$cand/run.json" ]; then
+              LIVE_ROOT="$cand"
+              break
+            fi
+          done
+          if [ -z "$LIVE_ROOT" ]; then
+            RUNJ=$(find artifacts -name run.json 2>/dev/null | head -1 || true)
+            if [ -n "${RUNJ:-}" ]; then
+              LIVE_ROOT=$(dirname "$RUNJ")
+            fi
+          fi
+          if [ -z "$LIVE_ROOT" ]; then
+            echo "No acceptance evidence artifact; generating fresh live evidence for bundle"
+            cargo build -p tomorrowci-cli --release
+            FIXTURE=fixtures/python-runtime-break
+            ./target/release/tomorrowci scan "$FIXTURE" --config "$FIXTURE/.tomorrowci.yml" | tee /tmp/scan.out
+            RUN_ID=$(sed -n 's/^run_id: //p' /tmp/scan.out | tail -1)
+            test -n "$RUN_ID"
+            LIVE_ROOT="$FIXTURE/.tomorrowci/runs/$RUN_ID"
+            ./target/release/tomorrowci verify "$RUN_ID" || (cd "$FIXTURE" && ../../target/release/tomorrowci verify "$RUN_ID")
+          fi
+          LIVE_RUN_ID=$(basename "$LIVE_ROOT")
+          cp -a "$LIVE_ROOT" "bundle/live-evidence/${LIVE_RUN_ID}"
+          cp -a "$LIVE_ROOT/report.html" bundle/demo-report/
+          cp -a "$LIVE_ROOT/run.json" bundle/demo-report/
+          echo "live_run_id=${LIVE_RUN_ID}" >> "$GITHUB_ENV"
+          # Linux binary for self-verify
+          LINUX_TGZ=$(ls dist/*x86_64-unknown-linux-gnu*.tar.gz | head -1)
+          rm -rf /tmp/linux-stage
+          mkdir -p /tmp/linux-stage
+          tar -xzf "$LINUX_TGZ" -C /tmp/linux-stage
+          BIN=$(find /tmp/linux-stage -type f -name tomorrowci | head -1)
+          test -x "$BIN"
+          mkdir -p /tmp/bundle-verify/.tomorrowci/runs
+          cp -a "bundle/live-evidence/${LIVE_RUN_ID}" /tmp/bundle-verify/.tomorrowci/runs/
+          (cd /tmp/bundle-verify && "$BIN" verify "$LIVE_RUN_ID")
+          echo "bundle self-verify: PASS run_id=${LIVE_RUN_ID} binary=$($BIN --version)" | tee bundle/VERIFY.txt
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          from datetime import datetime, timezone
+          root = Path("bundle")
+          files = {}
+          for p in sorted(root.rglob("*")):
+              if p.is_file():
+                  rel = p.relative_to(root).as_posix()
+                  h = hashlib.sha256(p.read_bytes()).hexdigest()
+                  files[rel] = {"size": p.stat().st_size, "sha256": f"sha256:{h}"}
+          man = {
+            "schema_version": 1,
+            "tag": os.environ.get("GITHUB_REF_NAME", "v0.1.1-alpha.3"),
+            "git_sha": os.environ["GITHUB_SHA"],
+            "workflow_run_id": os.environ.get("GITHUB_RUN_ID"),
+            "live_run_id": os.environ.get("live_run_id") or None,
+            "tool_version": "0.1.1-alpha.3",
+            "files": files,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+          }
+          Path("bundle/BUNDLE_MANIFEST.json").write_text(json.dumps(man, indent=2)+"\n", encoding="utf-8")
+          print("bundle files", len(files), "live", man["live_run_id"])
+          PY
+          VER_SAFE="${VER}"
+          (cd bundle && zip -r "../dist/tomorrowci-${VER_SAFE}-bundle.zip" .)
+          ls -la dist/
       - name: Generate RELEASE_PROVENANCE.json
         run: |
           set -euo pipefail
@@ -127,6 +224,9 @@ jobs:
             if p.is_file() and p.name not in ('RELEASE_PROVENANCE.json',):
               h=hashlib.sha256(p.read_bytes()).hexdigest()
               arts[p.name]={"size":p.stat().st_size,"sha256":f"sha256:{h}"}
+          live=os.environ.get("live_run_id") or None
+          src_key=next((k for k in arts if k.endswith("-source.tar.gz")), None)
+          bundle_key=next((k for k in arts if k.endswith("-bundle.zip")), None)
           prov={
             "schema_version":1,
             "tag": os.environ.get("GITHUB_REF_NAME","v0.1.1-alpha.3"),
@@ -136,14 +236,15 @@ jobs:
             "repository": os.environ.get("GITHUB_REPOSITORY","taipei49314/tomorrowci-lab"),
             "tool_version":"0.1.1-alpha.3",
             "acceptance_jobs":{"status":"see_workflow_run"},
-            "live_run_id": None,
-            "evidence_artifact_sha256": None,
-            "source_archive_sha256": None,
+            "live_run_id": live,
+            "evidence_artifact_sha256": arts.get(bundle_key,{}).get("sha256") if bundle_key else None,
+            "source_archive_sha256": arts.get(src_key,{}).get("sha256") if src_key else None,
             "sbom_sha256": arts.get("sbom.cdx.json",{}).get("sha256"),
             "release_artifacts": arts,
             "generated_at": datetime.now(timezone.utc).isoformat(),
           }
           Path('dist/RELEASE_PROVENANCE.json').write_text(json.dumps(prov, indent=2)+"\n", encoding='utf-8')
+          # also embed provenance in dist for release
           print(json.dumps(prov, indent=2))
           PY
       - name: Create GitHub pre-release
