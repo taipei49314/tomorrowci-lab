@@ -1,0 +1,1020 @@
+{
+  "schema_version": 1,
+  "required_ids": 76,
+  "executed": 76,
+  "unique_ids": 76,
+  "rejected": 76,
+  "false_pass": 0,
+  "cases": [
+    {
+      "id": "tampered_scenario_stderr",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "hash_mismatch",
+        "size_mismatch"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"tampered_scenario_stderr\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:3689f2514815f5c8abcae78fc4c88cfdd945cf50137f986555f6643f0c9c2923\",\n  \"checked_files\": 108,\n  \"checked_bytes\": 130213,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"size_mismatch\",\n      \"path\": \"scenarios/py310-locked/stderr.log\",\n      \"message\": \"size 8 != indexed 0\"\n    },\n    {\n      \"code\": \"hash_mismatch\",\n      \"path\": \"scenarios/py310-locked/stderr.log\",\n      \"message\": \"content hash mismatch for scenarios/py310-locked/stderr.log\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name tampered_scenario_stderr != run.json.run_id 0564e2b72ab0\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 3 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "tampered_scenario_stdout",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "hash_mismatch",
+        "size_mismatch"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"tampered_scenario_stdout\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:3689f2514815f5c8abcae78fc4c88cfdd945cf50137f986555f6643f0c9c2923\",\n  \"checked_files\": 108,\n  \"checked_bytes\": 130244,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"size_mismatch\",\n      \"path\": \"scenarios/py310-locked/stdout.log\",\n      \"message\": \"size 2300 != indexed 2261\"\n    },\n    {\n      \"code\": \"hash_mismatch\",\n      \"path\": \"scenarios/py310-locked/stdout.log\",\n      \"message\": \"content hash mismatch for scenarios/py310-locked/stdout.log\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name tampered_scenario_stdout != run.json.run_id 0564e2b72ab0\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 3 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "scenario_checksum_entry_removed",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name scenario_checksum_entry_removed != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-scenario_che\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "run_checksum_entry_removed",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "checksum_entry_missing"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"run_checksum_entry_removed\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:3689f2514815f5c8abcae78fc4c88cfdd945cf50137f986555f6643f0c9c2923\",\n  \"checked_files\": 108,\n  \"checked_bytes\": 130205,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"checksum_entry_missing\",\n      \"path\": \"run.json\",\n      \"message\": \"required path not listed in checksums.txt: run.json\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name run_checksum_entry_removed != run.json.run_id 0564e2b72ab0\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 2 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "extra_unclassified_run_file",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "extra_unclassified"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"extra_unclassified_run_file\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:3689f2514815f5c8abcae78fc4c88cfdd945cf50137f986555f6643f0c9c2923\",\n  \"checked_files\": 108,\n  \"checked_bytes\": 130205,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"extra_unclassified\",\n      \"path\": \"forged.bin\",\n      \"message\": \"file present on disk but not in evidence-index: forged.bin\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name extra_unclassified_run_file != run.json.run_id 0564e2b72ab0\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 2 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "extra_unclassified_scenario_file",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "extra_unclassified"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"extra_unclassified_scenario_file\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:3689f2514815f5c8abcae78fc4c88cfdd945cf50137f986555f6643f0c9c2923\",\n  \"checked_files\": 108,\n  \"checked_bytes\": 130205,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"extra_unclassified\",\n      \"path\": \"scenarios/py310-locked/extra.bin\",\n      \"message\": \"file present on disk but not in evidence-index: scenarios/py310-locked/extra.bin\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name extra_unclassified_scenario_file != run.json.run_id 0564e2b72ab0\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 2 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "extra_workspace_source",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "workspace_extra"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"extra_workspace_source\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:3689f2514815f5c8abcae78fc4c88cfdd945cf50137f986555f6643f0c9c2923\",\n  \"checked_files\": 108,\n  \"checked_bytes\": 130205,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name extra_workspace_source != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"workspace_extra\",\n      \"path\": \"extra.py\",\n      \"message\": \"extra source file not in workspace-manifest\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 2 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "missing_workspace_source",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "workspace_missing"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"missing_workspace_source\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:3689f2514815f5c8abcae78fc4c88cfdd945cf50137f986555f6643f0c9c2923\",\n  \"checked_files\": 108,\n  \"checked_bytes\": 130205,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name missing_workspace_source != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"workspace_missing\",\n      \"path\": \"app.py\",\n      \"message\": \"workspace-manifest file missing on disk\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 2 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "workspace_size_mismatch",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "workspace_size_mismatch"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"workspace_size_mismatch\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:3689f2514815f5c8abcae78fc4c88cfdd945cf50137f986555f6643f0c9c2923\",\n  \"checked_files\": 108,\n  \"checked_bytes\": 130227,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"size_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"size 760 != indexed 738\"\n    },\n    {\n      \"code\": \"hash_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"content hash mismatch for workspace-manifest.json\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name workspace_size_mismatch != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"workspace_size_mismatch\",\n      \"path\": \"app.py\",\n      \"message\": \"size 216 != 1\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 4 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "malformed_double_prefix_hash",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "malformed_hash"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"malformed_double_prefix_hash\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:f6ca330a16ee3e134f220001d229495bec6bd03acde38072e2cafd2070cd3dd0\",\n  \"checked_files\": 107,\n  \"checked_bytes\": 129543,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"malformed_hash\",\n      \"path\": \"candidates.json\",\n      \"message\": \"invalid state: double-prefixed or malformed hash: sha256:sha256:b1e8d2060a883cb9e7902ff7a5e48f6f7878a7606be260c7488cbb3ce4b3a467\"\n    },\n    {\n      \"code\": \"index_hash_mismatch\",\n      \"path\": \"evidence-index.json\",\n      \"message\": \"evidence-index.json content does not match checksums.txt\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name malformed_double_prefix_hash != run.json.run_id 0564e2b72ab0\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 3 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "run_id_directory_mismatch",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "run_id_mismatch"
+      ],
+      "stdout_tail": "mpt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name run_id_directory_mismatch != run.json.run_id differentid01\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 108 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "duplicate_scenario_id",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "12-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name duplicate_scenario_id != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-duplicate_sc\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "plan_result_dir_mismatch",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "x_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name plan_result_dir_mismatch != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "missing_test_phase",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_verdict_required"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"missing_test_phase\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:3689f2514815f5c8abcae78fc4c88cfdd945cf50137f986555f6643f0c9c2923\",\n  \"checked_files\": 107,\n  \"checked_bytes\": 129681,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"missing_indexed_file\",\n      \"path\": \"scenarios/py310-locked/test-phase.json\",\n      \"message\": \"indexed file missing on disk\"\n    },\n    {\n      \"code\": \"index_missing_on_disk\",\n      \"path\": \"scenarios/py310-locked/test-phase.json\",\n      \"message\": \"indexed path missing on disk: scenarios/py310-locked/test-phase.json\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name missing_test_phase != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_verdict_required\",\n      \"path\": \"scenarios/py310-locked/test-phase.json\",\n      \"message\": \"FutureFail requires test-phase.json (indexed+on disk)\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 4 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "missing_future_failure_signature",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"missing_future_failure_signature\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:3689f2514815f5c8abcae78fc4c88cfdd945cf50137f986555f6643f0c9c2923\",\n  \"checked_files\": 107,\n  \"checked_bytes\": 129974,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"missing_indexed_file\",\n      \"path\": \"scenarios/py310-locked/failure-signature.json\",\n      \"message\": \"indexed file missing on disk\"\n    },\n    {\n      \"code\": \"index_missing_on_disk\",\n      \"path\": \"scenarios/py310-locked/failure-signature.json\",\n      \"message\": \"indexed path missing on disk: scenarios/py310-locked/failure-signature.json\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name missing_future_failure_signature != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_verdict_required\",\n      \"path\": \"scenarios/py310-locked/failure-signature.json\",\n      \"message\": \"FutureFail requires failure-signature.json (indexed+on disk)\"\n    },\n    {\n      \"code\": \"missing_failure_signature\",\n      \"path\": \"scenarios/py310-locked/failure-signature.json\",\n      \"message\": \"FUTURE_FAIL missing failure-signature.json\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 5 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "forged_replay_result",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name forged_replay_result != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "missing_replay_result",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": " \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name missing_replay_result != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "replay_scenario_digest_sig_mismatch",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "rr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name replay_scenario_digest_sig_mismatch != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-replay_scena\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "path_traversal_index",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "bad_path"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"path_traversal_index\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:1c7691245b1c4cf5773e832c14e98693dceb7bb2f53713b5dfe67f804c035b8d\",\n  \"checked_files\": 108,\n  \"checked_bytes\": 130205,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"checksum_entry_missing\",\n      \"path\": \"../escape.txt\",\n      \"message\": \"required path not listed in checksums.txt: ../escape.txt\"\n    },\n    {\n      \"code\": \"bad_path\",\n      \"path\": \"../escape.txt\",\n      \"message\": \"invalid state: path traversal: ../escape.txt\"\n    },\n    {\n      \"code\": \"index_hash_mismatch\",\n      \"path\": \"evidence-index.json\",\n      \"message\": \"evidence-index.json content does not match checksums.txt\"\n    },\n    {\n      \"code\": \"index_missing_on_disk\",\n      \"path\": \"../escape.txt\",\n      \"message\": \"indexed path missing on disk: ../escape.txt\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name path_traversal_index != run.json.run_id 0564e2b72ab0\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 5 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "symlink_escape",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "\"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name symlink_escape != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "changed_config_rejects_replay",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "d/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name changed_config_rejects_replay != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-changed_conf\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "missing_digest_rejects_replay",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "ss_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name missing_digest_rejects_replay != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "unsupported_adapter_rejects_replay",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name unsupported_adapter_rejects_replay != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "engine_version_policy_mismatch",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name engine_version_policy_mismatch != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-engine_versi\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "replay_precondition_full_verifier",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "ismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name replay_precondition_full_verifier != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "failed_checksum_finalization_blocks_replay_pass",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "     \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name failed_checksum_finalization_blocks_replay_pass != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "replay_attempt_max_plus_one",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "ked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name replay_attempt_max_plus_one != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-replay_attem\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "failed_fetch_attempt_preserved",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "s_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name failed_fetch_attempt_preserved != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "two_replay_attempts_independent",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "ass_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name two_replay_attempts_independent != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "report_links_resolve",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name report_links_resolve != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-report_links\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "image_resolution_blocked_zero_tests",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "match\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name image_resolution_blocked_zero_tests != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "fetch_failure_blocked_zero_tests",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "ss_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name fetch_failure_blocked_zero_tests != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "scenario_venv_phase_separation",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name scenario_venv_phase_separation != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-scenario_ven\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "baseline_failure_prevents_horizon",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "ismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name baseline_failure_prevents_horizon != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "only_later_versions_selected",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name only_later_versions_selected != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "first_failure_rerun_stability",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "d/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name first_failure_rerun_stability != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-first_failur\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "utf8_truncation_safe",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name utf8_truncation_safe != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "high_volume_stdio_no_deadlock",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name high_volume_stdio_no_deadlock != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "shell_metachar_injection_safe",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "d/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name shell_metachar_injection_safe != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-shell_metach\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "source_tree_immutability",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "x_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name source_tree_immutability != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "standalone_consumer_action",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "ex_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name standalone_consumer_action != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "phase_timestamp_invariants",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "cked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name phase_timestamp_invariants != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-phase_timest\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "image_tag_digest_separation",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "lass_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name image_tag_digest_separation != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "generated_workflow_no_suppression",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "s_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name generated_workflow_no_suppression != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "source_bundle_encoding_shell",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "ed/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name source_bundle_encoding_shell != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-source_bundl\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "sbom_lockfile_multiset",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "dex_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name sbom_lockfile_multiset != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "candidate_bundle_self_verify",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name candidate_bundle_self_verify != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "scenario_checksum_view_tampered",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "forbidden_scenario_checksums"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"scenario_checksum_view_tampered\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:3689f2514815f5c8abcae78fc4c88cfdd945cf50137f986555f6643f0c9c2923\",\n  \"checked_files\": 108,\n  \"checked_bytes\": 130205,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"forbidden_scenario_checksums\",\n      \"path\": \"scenarios/py310-locked/checksums.txt\",\n      \"message\": \"scenario-level checksums.txt is not an authority\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name scenario_checksum_view_tampered != run.json.run_id 0564e2b72ab0\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 2 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "attestation_content_tampered",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"attestation_content_tampered\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:3689f2514815f5c8abcae78fc4c88cfdd945cf50137f986555f6643f0c9c2923\",\n  \"checked_files\": 108,\n  \"checked_bytes\": 130205,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name attestation_content_tampered != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"attestation_hash_mismatch\",\n      \"path\": \"verification-fake.json\",\n      \"message\": \"attestation content does not match SHA256SUMS\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 2 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "attestation_write_failure_blocks_pass",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "smatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name attestation_write_failure_blocks_pass != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "identity_removed",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity"
+      ],
+      "stdout_tail": "\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name identity_removed != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "run_timestamps_reversed",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "run_time_order"
+      ],
+      "stdout_tail": "index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name run_timestamps_reversed != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "phase_timestamps_inconsistent",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name phase_timestamps_inconsistent != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "duplicate_non_baseline_scenario",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "duplicate_plan_scenario"
+      ],
+      "stdout_tail": "\"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name duplicate_non_baseline_scenario != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"duplicate_plan_scenario\",\n      \"path\": null,\n      \"message\": \"plan.scenarios contains duplicate scenario IDs\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "result_json_forged_reindexed",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "result_verdict",
+        "result_exit"
+      ],
+      "stdout_tail": "stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name result_json_forged_reindexed != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"result_verdict_mismatch\",\n      \"path\": \"scenarios/py310-locked/result.json\",\n      \"message\": \"result.json verdict \\\"FUTURE_PASS\\\" != run results FutureFail\"\n    },\n    {\n      \"code\": \"result_exit_mismatch\",\n      \"path\": \"scenarios/py310-locked/result.json\",\n      \"message\": \"result.json exit_code != run results\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 110 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "environment_digest_forged_reindexed",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "environment_mismatch"
+      ],
+      "stdout_tail": "     \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name environment_digest_forged_reindexed != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"environment_mismatch\",\n      \"path\": \"scenarios/py310-locked/environment.json\",\n      \"message\": \"environment.json tag/digest != run results.environment\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "executable_command_mirror_forged",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "test_commands_mismatch",
+        "hash_mismatch"
+      ],
+      "stdout_tail": "     \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name executable_command_mirror_forged != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"test_commands_mismatch\",\n      \"path\": \"scenarios/py310-locked/test-commands.json\",\n      \"message\": \"test-commands.json does not match run result commands\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "replay_manifest_forged_reindexed",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "hash_mismatch",
+        "extra"
+      ],
+      "stdout_tail": "og\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name replay_manifest_forged_reindexed != run.json.run_id 0564e2b72ab0\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 108 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "config_bytes_without_hash_update",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "config_hash_mismatch",
+        "hash_mismatch"
+      ],
+      "stdout_tail": "-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name config_bytes_without_hash_update != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"config_hash_mismatch\",\n      \"path\": \"config.normalized.json\",\n      \"message\": \"config.normalized.json bytes != run.json.config_hash\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "workspace_authority_removed",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_workspace_authority"
+      ],
+      "stdout_tail": "stderr.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name workspace_authority_removed != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_workspace_authority\",\n      \"path\": \"workspace\",\n      \"message\": \"both workspace/ and workspace-manifest.json are required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 108 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "frontier_horizon_forged",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "frontier_horizon"
+      ],
+      "stdout_tail": "cenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name frontier_horizon_forged != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"99.99\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "index_class_required_forged",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "invalid_index_class",
+        "index_required"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"index_class_required_forged\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:88d54341540993cf80a9294488af3ddf56a81459a746ed5066aec72c4724babf\",\n  \"checked_files\": 108,\n  \"checked_bytes\": 130205,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"invalid_index_class\",\n      \"path\": \"run.json\",\n      \"message\": \"class \\\"totally-arbitrary\\\" not in closed vocabulary\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"stored class \\\"totally-arbitrary\\\" != path-derived \\\"run-manifest\\\"\"\n    },\n    {\n      \"code\": \"index_required_false\",\n      \"path\": \"run.json\",\n      \"message\": \"index entry required=false is not allowed for payload files\"\n    },\n    {\n      \"code\": \"index_hash_mismatch\",\n      \"path\": \"evidence-index.json\",\n      \"message\": \"evidence-index.json content does not match checksums.txt\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name index_class_required_forged != run.json.run_id 0564e2b72ab0\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 5 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "unsupported_index_schema_generation",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "unsupported_index"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"unsupported_index_schema_generation\",\n  \"index_generation\": 999,\n  \"index_hash\": \"sha256:bfee2b619bd8b92341a6a21337857d1bd4f0e7eaa79158f74c445849acc7727b\",\n  \"checked_files\": 108,\n  \"checked_bytes\": 130205,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"unsupported_index_schema\",\n      \"path\": \"evidence-index.json\",\n      \"message\": \"schema_version 777 unsupported (require 1)\"\n    },\n    {\n      \"code\": \"unsupported_index_generation\",\n      \"path\": \"evidence-index.json\",\n      \"message\": \"generation 999 unsupported (require 3)\"\n    },\n    {\n      \"code\": \"index_hash_mismatch\",\n      \"path\": \"evidence-index.json\",\n      \"message\": \"evidence-index.json content does not match checksums.txt\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name unsupported_index_schema_generation != run.json.run_id 0564e2b72ab0\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 4 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "duplicate_checksum_path",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "checksums_parse",
+        "duplicate"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"duplicate_checksum_path\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:3689f2514815f5c8abcae78fc4c88cfdd945cf50137f986555f6643f0c9c2923\",\n  \"checked_files\": 0,\n  \"checked_bytes\": 0,\n  \"semantic_checks\": 1,\n  \"errors\": [\n    {\n      \"code\": \"checksums_parse\",\n      \"path\": \"checksums.txt\",\n      \"message\": \"invalid state: duplicate checksums.txt path: run.json\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 1 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "uppercase_noncanonical_hash",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "malformed_hash",
+        "noncanonical"
+      ],
+      "stdout_tail": "{\n  \"ok\": false,\n  \"run_id\": \"uppercase_noncanonical_hash\",\n  \"index_generation\": 3,\n  \"index_hash\": \"sha256:9298689b2b1c011cd54fbb8447a965def6731a909ffc27fab86c4dccce40ec11\",\n  \"checked_files\": 107,\n  \"checked_bytes\": 115736,\n  \"semantic_checks\": 11,\n  \"errors\": [\n    {\n      \"code\": \"malformed_hash\",\n      \"path\": \"run.json\",\n      \"message\": \"invalid state: non-canonical hash (require sha256:<64 lowercase hex>): SHA256:A0B0F877DA2B74B3F2C2FB9FF6A28D36DBE4A581FC7455AFC72C855A3B37686C\"\n    },\n    {\n      \"code\": \"index_hash_mismatch\",\n      \"path\": \"evidence-index.json\",\n      \"message\": \"evidence-index.json content does not match checksums.txt\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name uppercase_noncanonical_hash != run.json.run_id 0564e2b72ab0\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 3 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "invalid_replay_result_json",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "replay_result_parse",
+        "incomplete"
+      ],
+      "stdout_tail": "\"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name invalid_replay_result_json != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"replay_result_parse\",\n      \"path\": \"scenarios/py310-locked/replays/attempt-1/result.json\",\n      \"message\": \"invalid replay result JSON: key must be a string at line 1 column 2\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "replay_digest_sig_forged_same_scenario",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "ch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name replay_digest_sig_forged_same_scenario != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "baseline_phase_evidence_removed",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_verdict_required"
+      ],
+      "stdout_tail": "e missing on disk\"\n    },\n    {\n      \"code\": \"missing_indexed_file\",\n      \"path\": \"scenarios/baseline/test-phase.json\",\n      \"message\": \"indexed file missing on disk\"\n    },\n    {\n      \"code\": \"missing_indexed_file\",\n      \"path\": \"scenarios/baseline/test-result.json\",\n      \"message\": \"indexed file missing on disk\"\n    },\n    {\n      \"code\": \"index_missing_on_disk\",\n      \"path\": \"scenarios/baseline/fetch-phase.json\",\n      \"message\": \"indexed path missing on disk: scenarios/baseline/fetch-phase.json\"\n    },\n    {\n      \"code\": \"index_missing_on_disk\",\n      \"path\": \"scenarios/baseline/fetch-result.json\",\n      \"message\": \"indexed path missing on disk: scenarios/baseline/fetch-result.json\"\n    },\n    {\n      \"code\": \"index_missing_on_disk\",\n      \"path\": \"scenarios/baseline/test-phase.json\",\n      \"message\": \"indexed path missing on disk: scenarios/baseline/test-phase.json\"\n    },\n    {\n      \"code\": \"index_missing_on_disk\",\n      \"path\": \"scenarios/baseline/test-result.json\",\n      \"message\": \"indexed path missing on disk: scenarios/baseline/test-result.json\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name baseline_phase_evidence_removed != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_verdict_required\",\n      \"path\": \"scenarios/baseline/fetch-phase.json\",\n      \"message\": \"BaselinePass requires fetch-phase.json (indexed+on disk)\"\n    },\n    {\n      \"code\": \"missing_verdict_required\",\n      \"path\": \"scenarios/baseline/fetch-result.json\",\n      \"message\": \"BaselinePass requires fetch-result.json (indexed+on disk)\"\n    },\n    {\n      \"code\": \"missing_verdict_required\",\n      \"path\": \"scenarios/baseline/test-phase.json\",\n      \"message\": \"BaselinePass requires test-phase.json (indexed+on disk)\"\n    },\n    {\n      \"code\": \"missing_verdict_required\",\n      \"path\": \"scenarios/baseline/test-result.json\",\n      \"message\": \"BaselinePass requires test-result.json (indexed+on disk)\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 13 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "report_missing_local_link",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "ocked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name report_missing_local_link != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-report_missi\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "macos_arch_label_mismatch",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name macos_arch_label_mismatch != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "bundle_manifest_missing_live_run",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "ss_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name bundle_manifest_missing_live_run != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "bundle_hash_vs_detached_provenance",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "err.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name bundle_hash_vs_detached_provenance != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-bundle_hash_\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "zip_backslash_paths",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "\"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name zip_backslash_paths != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "generated_workflow_action_path_absent",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "smatch\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name generated_workflow_action_path_absent != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"run_time_order\",\n      \"path\": \"run.json\",\n      \"message\": \"run started_at > finished_at\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "verifier_after_engine_side_effect",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "derr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name verifier_after_engine_side_effect != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"frontier_horizon_mismatch\",\n      \"path\": null,\n      \"message\": \"horizon_label \\\"forged-verifier_aft\\\" does not match first-fail runtime 3.10\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    },
+    {
+      "id": "failed_replay_fetch_partial_attempt",
+      "exit_code": 1,
+      "verify_ok": null,
+      "false_pass": false,
+      "expected_code_hints": [
+        "missing_identity",
+        "run_time_order",
+        "frontier_horizon"
+      ],
+      "stdout_tail": "match\",\n      \"path\": \"scenarios/py312-locked/stderr.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stderr\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt1.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.attempt2.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout-attempt\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/stdout.log\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"stdout\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-commands.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-commands\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-phase.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-phase\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"scenarios/py312-locked/test-result.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"test-result\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"summary.txt\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"text\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"verdicts.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"json\\\"\"\n    },\n    {\n      \"code\": \"index_class_mismatch\",\n      \"path\": \"workspace-manifest.json\",\n      \"message\": \"stored class \\\"other\\\" != path-derived \\\"workspace-manifest\\\"\"\n    },\n    {\n      \"code\": \"run_id_mismatch\",\n      \"path\": \"run.json\",\n      \"message\": \"directory name failed_replay_fetch_partial_attempt != run.json.run_id 0564e2b72ab0\"\n    },\n    {\n      \"code\": \"missing_identity\",\n      \"path\": \"run.json\",\n      \"message\": \"run.json.identity is required\"\n    }\n  ]\n}\n",
+      "stderr_tail": "error: evidence verify FAILED: 109 errors\n",
+      "result": "REJECTED"
+    }
+  ]
+}
