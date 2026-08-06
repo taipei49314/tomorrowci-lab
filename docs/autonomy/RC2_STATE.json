@@ -3,25 +3,24 @@
   "kind": "operational_state_not_release_provenance",
   "branch": "repair/alpha3-semantic-authority-rc2",
   "terminal_state": "WORKING",
-  "active_gate": "G0",
-  "last_observed_head": "pending_push",
+  "active_gate": "G5_partial_G8_G12_open",
+  "last_observed_head": "6aff586100f1019efd84dd96da39a63ff74757c4",
   "last_green_local_commands": [
-    "cargo clippy --workspace --all-targets -- -D warnings",
-    "cargo test --workspace",
-    "cargo test -p tomorrowci-evidence --test adversarial_verifier"
+    "cargo test -p tomorrowci-evidence --test adversarial_verifier (30)",
+    "python scripts/run-authority-mutations.py -> 76/76 reject, false_pass=0"
   ],
   "last_ci_run": {
-    "id": "31093469107",
-    "sha": "84ddf9c98e51342c4a98181c9a705abd83dd0be6",
-    "rust": "success",
-    "live_python": "failure",
-    "note": "config_hash_mismatch fixed in follow-up"
+    "id": "31094035464",
+    "sha": "6aff00a0ebddafef205af73c6cec8d7c68a1c0dc",
+    "conclusion": "success",
+    "jobs": ["rust", "live-python", "action-dogfood", "action-consumer"]
   },
-  "completed_gates": [],
+  "completed_gates": ["G0_on_54fe8ec_and_6aff00a"],
   "open_blockers": [
-    "G0: live/action failed on config_hash_mismatch — fix pushed next",
-    "G5: 76 mutation harness partial",
-    "G3-G12 remaining"
+    "G5: many of 76 cases still use placeholder mutators; need specialized mutators for full mission fidelity",
+    "G3: full typed replay.json authority incomplete",
+    "G8-G12: clean-commit candidate bundle + dry-run not closed on latest tip",
+    "G4 tip 6aff586 CI pending"
   ],
-  "next_action": "Push config canonical write; observe exact-SHA CI green chain"
+  "next_action": "Green CI on attestation tip; trigger release dry-run for platform/bundle gates"
 }
