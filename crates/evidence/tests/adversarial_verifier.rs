@@ -379,3 +379,75 @@ fn post_verify_attestations_do_not_break_inventory() {
         rep.errors
     );
 }
+
+#[test]
+fn tampered_stdout_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        fs::write(rr.join("scenarios/py310-locked/stdout.log"), "TAMPERED\n").unwrap();
+    });
+}
+
+#[test]
+fn extra_scenario_file_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        fs::write(rr.join("scenarios/py310-locked/evil.log"), "x").unwrap();
+    });
+}
+
+#[test]
+fn workspace_missing_file_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        let _ = fs::remove_file(rr.join("workspace/app.py"));
+    });
+}
+
+#[test]
+fn workspace_size_mismatch_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        // keep path present but change size/content without re-manifest
+        fs::write(rr.join("workspace/app.py"), "x=1\n#pad\n").unwrap();
+    });
+}
+
+#[test]
+fn path_traversal_in_index_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        let raw = fs::read_to_string(rr.join("evidence-index.json")).unwrap();
+        let mut idx: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        idx["files"]["../escape.txt"] = serde_json::json!({
+            "class": "other",
+            "required": true,
+            "size": 1,
+            "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        });
+        fs::write(
+            rr.join("evidence-index.json"),
+            serde_json::to_string_pretty(&idx).unwrap(),
+        )
+        .unwrap();
+        // checksums still lists old set — structural path must fail
+    });
+}
+
+#[test]
+fn incomplete_replay_attempt_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        let dir = rr.join("scenarios/py310-locked/replays/attempt-1");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("stdout.log"), "x").unwrap();
+        // missing result.json + stderr.log
+        finalize_run_checksums(rr).unwrap();
+    });
+}

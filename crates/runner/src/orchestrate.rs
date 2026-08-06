@@ -1440,7 +1440,18 @@ pub fn replay_scenario(repo: &Path, run_id: &str, scenario_id: &str) -> Result<S
         sc_dir.join("replay-result.json"),
         serde_json::to_string_pretty(&report)?,
     )?;
+    // Atomic inventory rebuild after attempt append; never PASS without both finalize + verify.
     tomorrowci_evidence::finalize_run_checksums(&root)?;
+    let post = tomorrowci_evidence::verify_run_root(&root)?;
+    if !post.ok {
+        return Err(TcError::Blocked(format!(
+            "post-replay verify failed: {:?}",
+            post.errors
+                .iter()
+                .map(|e| format!("{}:{}", e.code, e.message))
+                .collect::<Vec<_>>()
+        )));
+    }
 
     let mut out = format!(
         "replay {scenario_id}: exit={:?} timed_out={} duration_ms={}\n",
