@@ -43,34 +43,29 @@ jobs:
         id: live
         run: |
           set -euo pipefail
+          FIXTURE=fixtures/python-runtime-break
           ./target/release/tomorrowci doctor
-          ./target/release/tomorrowci scan fixtures/python-runtime-break \
-            --config fixtures/python-runtime-break/.tomorrowci.yml | tee /tmp/scan.out
+          ./target/release/tomorrowci scan "$FIXTURE" \
+            --config "$FIXTURE/.tomorrowci.yml" | tee /tmp/scan.out
           # Must not be BLOCKED
           if grep -q "verdict: BLOCKED" /tmp/scan.out; then
             echo "Live scan BLOCKED"
             exit 2
           fi
-          RUN_DIR=$(ls -1dt .tomorrowci/runs/* | head -1)
+          # Evidence is rooted at the scan target
+          RUN_DIR=$(ls -1dt "$FIXTURE"/.tomorrowci/runs/* | head -1)
           echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
           echo "run_id=$(basename "$RUN_DIR")" >> "$GITHUB_OUTPUT"
+          echo "fixture=$FIXTURE" >> "$GITHUB_OUTPUT"
           test -f "$RUN_DIR/run.json"
           test -f "$RUN_DIR/frontier.json"
-          # Require observed horizon for this fixture
-          python3 - <<'PY'
-          import json, glob, sys
-          runs = sorted(glob.glob(".tomorrowci/runs/*/frontier.json"), key=lambda p: p, reverse=True)
-          assert runs, "no frontier"
-          f = json.load(open(runs[0]))
+          python3 - <<PY
+          import json
+          f = json.load(open("$RUN_DIR/frontier.json"))
           assert f.get("observed") is True, f
           assert f.get("first_failing_scenario"), f
           print("horizon_ok", f.get("horizon_label"), f.get("first_failing_scenario"))
-          PY
-          # Every scenario with a result must have image digest when not blocked early
-          python3 - <<'PY'
-          import json, glob
-          run = sorted(glob.glob(".tomorrowci/runs/*/run.json"))[-1]
-          m = json.load(open(run))
+          m = json.load(open("$RUN_DIR/run.json"))
           for r in m["results"]:
               dig = (r.get("environment") or {}).get("image_digest")
               assert dig, r
@@ -78,13 +73,14 @@ jobs:
           print("digests_ok", len(m["results"]))
           PY
       - name: replay equivalence twice
+        working-directory: fixtures/python-runtime-break
         run: |
           set -euo pipefail
           RUN_ID="${{ steps.live.outputs.run_id }}"
-          SC=$(python3 -c "import json; print(json.load(open('.tomorrowci/runs/'+'''$RUN_ID'''+'/frontier.json'))['first_failing_scenario'])")
+          SC=$(python3 -c "import json; print(json.load(open('.tomorrowci/runs/'+'$RUN_ID'+'/frontier.json'))['first_failing_scenario'])")
           echo "replaying $RUN_ID scenario $SC"
-          ./target/release/tomorrowci replay "$RUN_ID" --scenario "$SC" | tee /tmp/r1.out
-          ./target/release/tomorrowci replay "$RUN_ID" --scenario "$SC" | tee /tmp/r2.out
+          ../../../target/release/tomorrowci replay "$RUN_ID" --scenario "$SC" | tee /tmp/r1.out
+          ../../../target/release/tomorrowci replay "$RUN_ID" --scenario "$SC" | tee /tmp/r2.out
           S1=$(grep -E '^(original_signature|replay_signature)=' /tmp/r1.out | sort)
           S2=$(grep -E '^(original_signature|replay_signature)=' /tmp/r2.out | sort)
           test -n "$S1"
@@ -106,7 +102,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tomorrowci-live-python-evidence
-          path: .tomorrowci/runs/
+          path: fixtures/python-runtime-break/.tomorrowci/runs/
           if-no-files-found: warn
 
   action-dogfood:

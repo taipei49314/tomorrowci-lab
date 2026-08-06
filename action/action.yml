@@ -72,8 +72,9 @@ runs:
         if [[ -n "${{ inputs.config }}" ]]; then
           CFG_ARGS+=(--config "${{ inputs.config }}")
         fi
+        SCAN_PATH="${{ inputs.path }}"
         set +e
-        OUT=$("$BIN" scan "${{ inputs.path }}" "${CFG_ARGS[@]}" 2>&1)
+        OUT=$("$BIN" scan "$SCAN_PATH" "${CFG_ARGS[@]}" 2>&1)
         CODE=$?
         set -e
         echo "$OUT"
@@ -86,15 +87,20 @@ runs:
             exit 2
           fi
         fi
-        RUN_DIR=$(ls -1dt .tomorrowci/runs/* 2>/dev/null | head -1 || true)
+        # Evidence is written under the scan target path
+        RUN_DIR=$(ls -1dt "$SCAN_PATH"/.tomorrowci/runs/* 2>/dev/null | head -1 || true)
+        if [[ -z "${RUN_DIR}" || ! -d "${RUN_DIR}" ]]; then
+          RUN_DIR=$(ls -1dt .tomorrowci/runs/* 2>/dev/null | head -1 || true)
+        fi
         if [[ -z "${RUN_DIR}" || ! -d "${RUN_DIR}" ]]; then
           echo "No evidence run directory produced" >> "$GITHUB_STEP_SUMMARY"
           exit 1
         fi
         RUN_ID=$(basename "${RUN_DIR}")
         echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+        echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
         if [[ -f "${RUN_DIR}/frontier.json" ]]; then
-          FO=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('observed', False))" "$RUN_DIR/frontier.json" 2>/dev/null || echo false)
+          FO=$(python3 -c "import json,sys; print('true' if json.load(open(sys.argv[1])).get('observed') else 'false')" "$RUN_DIR/frontier.json" 2>/dev/null || echo false)
         else
           FO=false
         fi
@@ -109,8 +115,8 @@ runs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
         fi
         # Contract: expect-horizon for fixture acceptance
-        if [[ "${{ inputs.expect-horizon }}" == "true" && "$FO" != "True" && "$FO" != "true" ]]; then
-          echo "Expected breakage horizon was not observed" >> "$GITHUB_STEP_SUMMARY"
+        if [[ "${{ inputs.expect-horizon }}" == "true" && "$FO" != "true" ]]; then
+          echo "Expected breakage horizon was not observed (frontier_observed=$FO)" >> "$GITHUB_STEP_SUMMARY"
           exit 1
         fi
         # Horizon discovery is product success; do not fail solely for that.
@@ -126,7 +132,9 @@ runs:
       uses: actions/upload-artifact@v4
       with:
         name: tomorrowci-evidence-${{ steps.scan.outputs.run_id || 'unknown' }}
-        path: .tomorrowci/runs/
+        path: |
+          ${{ inputs.path }}/.tomorrowci/runs/
+          .tomorrowci/runs/
         if-no-files-found: warn
 
     - name: Compare horizons
