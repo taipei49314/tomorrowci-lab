@@ -100,10 +100,12 @@ jobs:
           set -euo pipefail
           # workspace-manifest excludes workspace/.tomorrowci/ (scenario venvs/caches).
           # Strip it so upload can include-hidden-files for .tomorrowci.yml without EACCES
-          # on container-owned pip cache paths.
-          find fixtures/python-runtime-break/.tomorrowci/runs -type d -path '*/workspace/.tomorrowci' -prune -exec rm -rf {} + 2>/dev/null || true
-          # ensure config remains
-          find fixtures/python-runtime-break/.tomorrowci/runs -name '.tomorrowci.yml' -path '*/workspace/*' | head -3
+          # on container-owned pip cache paths (often not writable by runner user).
+          while IFS= read -r -d '' d; do
+            sudo rm -rf "$d" || rm -rf "$d" || true
+          done < <(find fixtures/python-runtime-break/.tomorrowci/runs -type d -path '*/workspace/.tomorrowci' -print0 2>/dev/null || true)
+          test -z "$(find fixtures/python-runtime-break/.tomorrowci/runs -type d -path '*/workspace/.tomorrowci' 2>/dev/null | head -1)"
+          find fixtures/python-runtime-break/.tomorrowci/runs -name '.tomorrowci.yml' | head -5
       - name: Upload live evidence
         if: always()
         uses: actions/upload-artifact@v4

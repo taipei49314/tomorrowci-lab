@@ -128,7 +128,9 @@ runs:
         # Drop workspace/.tomorrowci scenario state (not in workspace-manifest); keep .tomorrowci.yml
         for base in "${{ inputs.path }}/.tomorrowci/runs" ".tomorrowci/runs"; do
           if [ -d "$base" ]; then
-            find "$base" -type d -path '*/workspace/.tomorrowci' -prune -exec rm -rf {} + 2>/dev/null || true
+            while IFS= read -r -d '' d; do
+              sudo rm -rf "$d" 2>/dev/null || rm -rf "$d" || true
+            done < <(find "$base" -type d -path '*/workspace/.tomorrowci' -print0 2>/dev/null || true)
           fi
         done
 
