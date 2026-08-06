@@ -161,30 +161,17 @@ jobs:
           for f in dist/*x86_64-unknown-linux-gnu*.tar.gz dist/*x86_64-apple-darwin*.tar.gz dist/*x86_64-pc-windows-msvc*.zip dist/SHA256SUMS.txt dist/sbom.cdx.json; do
             cp -a "$f" bundle/release/
           done
-          # Prefer acceptance live-evidence artifact; else produce fresh live evidence here
-          LIVE_ROOT=""
-          for cand in artifacts/tomorrowci-live-python-evidence/*; do
-            if [ -d "$cand" ] && [ -f "$cand/run.json" ]; then
-              LIVE_ROOT="$cand"
-              break
-            fi
-          done
-          if [ -z "$LIVE_ROOT" ]; then
-            RUNJ=$(find artifacts -name run.json 2>/dev/null | head -1 || true)
-            if [ -n "${RUNJ:-}" ]; then
-              LIVE_ROOT=$(dirname "$RUNJ")
-            fi
-          fi
-          if [ -z "$LIVE_ROOT" ]; then
-            echo "No acceptance evidence artifact; generating fresh live evidence for bundle"
-            cargo build -p tomorrowci-cli --release
-            FIXTURE=fixtures/python-runtime-break
-            ./target/release/tomorrowci scan "$FIXTURE" --config "$FIXTURE/.tomorrowci.yml" | tee /tmp/scan.out
-            RUN_ID=$(sed -n 's/^run_id: //p' /tmp/scan.out | tail -1)
-            test -n "$RUN_ID"
-            LIVE_ROOT="$FIXTURE/.tomorrowci/runs/$RUN_ID"
-            ./target/release/tomorrowci verify "$RUN_ID" || (cd "$FIXTURE" && ../../target/release/tomorrowci verify "$RUN_ID")
-          fi
+          # Always produce fresh live evidence on this runner so hidden workspace
+          # files (.tomorrowci.yml) are present (artifact upload historically strips them).
+          echo "Generating exact-commit live evidence for self-verifying bundle"
+          cargo build -p tomorrowci-cli --release
+          FIXTURE=fixtures/python-runtime-break
+          ./target/release/tomorrowci scan "$FIXTURE" --config "$FIXTURE/.tomorrowci.yml" | tee /tmp/scan.out
+          RUN_ID=$(sed -n 's/^run_id: //p' /tmp/scan.out | tail -1)
+          test -n "$RUN_ID"
+          LIVE_ROOT="$FIXTURE/.tomorrowci/runs/$RUN_ID"
+          test -f "$LIVE_ROOT/workspace/.tomorrowci.yml"
+          ./target/release/tomorrowci verify "$RUN_ID" || (cd "$FIXTURE" && ../../target/release/tomorrowci verify "$RUN_ID")
           LIVE_RUN_ID=$(basename "$LIVE_ROOT")
           cp -a "$LIVE_ROOT" "bundle/live-evidence/${LIVE_RUN_ID}"
           cp -a "$LIVE_ROOT/report.html" bundle/demo-report/

@@ -129,6 +129,7 @@ runs:
           ${{ inputs.path }}/.tomorrowci/runs/
           .tomorrowci/runs/
         if-no-files-found: warn
+        include-hidden-files: true
 
     - name: Compare horizons
       if: ${{ inputs.base-run-id != '' }}

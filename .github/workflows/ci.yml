@@ -101,6 +101,7 @@ jobs:
           name: tomorrowci-live-python-evidence
           path: fixtures/python-runtime-break/.tomorrowci/runs/
           if-no-files-found: warn
+          include-hidden-files: true
 
   action-dogfood:
     runs-on: ubuntu-latest

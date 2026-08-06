@@ -26,3 +26,4 @@ jobs:
         with:
           name: tomorrowci-evidence-${{ steps.tci.outputs.run_id }}
           path: .tomorrowci/runs/${{ steps.tci.outputs.run_id }}/
+          include-hidden-files: true
