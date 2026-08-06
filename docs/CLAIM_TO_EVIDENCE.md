@@ -1,23 +1,27 @@
-# Claim-to-evidence matrix (alpha.2 closure track)
+# Claim-to-evidence matrix (v0.1.1-alpha.2)
 
 Statuses: **PASS** / **FAIL** / **BLOCKED** / **NOT_RUN** only.
 
-Historical tags preserved:
+| Tag | Disposition |
+|-----|-------------|
+| `v0.1.0` | REJECTED product candidate |
+| `v0.1.1-alpha.1` | REJECTED acceptance candidate / live-path demonstration |
+| `v0.1.1-alpha.2` | Closure candidate — see gates below |
 
-- `v0.1.0` — REJECTED product candidate
-- `v0.1.1-alpha.1` — REJECTED acceptance candidate / live-path demonstration ([audit](audits/v0.1.1-alpha.1-rejection.md))
-
-Update this table only after the **exact final alpha.2 commit** is green. Until then, treat alpha.2 gates as **NOT_RUN**.
+**Exact commit:** `bced9c0` (package `0.1.1-alpha.2`)  
+**Public CI:** https://github.com/taipei49314/tomorrowci-lab/actions/runs/31080022232  
+**Default branch:** `master` carries truthful README + audits.
 
 | Claim | Status | Exact command / run | Exit / result | Artifact |
 |---|---|---|---|---|
-| Public truth on default branch | **NOT_RUN** | merge README + audits to `master` | pending | GitHub default branch |
-| fmt/clippy/test + encoding | **NOT_RUN** | CI on final SHA | pending | Actions |
-| Live Python scan | **NOT_RUN** | `tomorrowci scan fixtures/python-runtime-break …` | pending | run id on final SHA |
-| `tomorrowci verify` | **NOT_RUN** | `tomorrowci verify <run-id>` | pending | verify JSON |
-| Replay ×2 independent attempts | **NOT_RUN** | `replay` twice | pending | `replays/attempt-{1,2}/` |
-| Action dogfood + consumer git repo | **NOT_RUN** | CI jobs | pending | Actions |
-| Tag `v0.1.1-alpha.2` | **NOT_CREATED** | only after every gate PASS | — | — |
-| Node / Rust live / ddmin / React / remote / image | **NOT_RUN** | out of scope | — | — |
-
-Package version in source: **0.1.1-alpha.2**.
+| Default-branch truth | **PASS** | `master` merge of alpha2 docs | green | README, audits |
+| encoding / fmt / clippy / tests | **PASS** | CI rust job 31080022232 | exit 0 | Actions |
+| version identity `0.1.1-alpha.2` | **PASS** | `tomorrowci --version` | matches | CI |
+| Live Python Docker scan | **PASS** | live-python job | horizon 3.10 | evidence artifact |
+| `tomorrowci verify` | **PASS** | live + Action | verify: PASS | run checksums |
+| Replay ×2 independent attempts | **PASS** | live-python replay step | both PASS | `replays/attempt-{1,2}/` |
+| Action dogfood `uses: ./action` | **PASS** | action-dogfood | success | Actions |
+| Consumer git repository Action | **PASS** | action-consumer (`git init` + commit) | success | Actions |
+| bash -n release-dry-run.sh | **PASS** | rust job | exit 0 | CI |
+| Node / Rust live | **NOT_RUN** | out of scope | — | — |
+| Dependency / ddmin / React / remote / image | **NOT_RUN** | out of scope | — | — |
