@@ -55,7 +55,11 @@ impl Verdict {
     pub fn may_not_be_promoted_to_pass(self) -> bool {
         matches!(
             self,
-            Self::Blocked | Self::Unsupported | Self::Inconclusive | Self::BaselineInvalid | Self::Flaky
+            Self::Blocked
+                | Self::Unsupported
+                | Self::Inconclusive
+                | Self::BaselineInvalid
+                | Self::Flaky
         )
     }
 }

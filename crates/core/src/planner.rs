@@ -1,8 +1,6 @@
 //! Budget-aware scenario planner and ddmin-style axis reduction.
 
-use crate::domain::{
-    Baseline, Candidate, EnvironmentAxis, EvidenceGrade, ExecutionPlan, Scenario,
-};
+use crate::domain::{Baseline, Candidate, EnvironmentAxis, EvidenceGrade, ExecutionPlan, Scenario};
 use crate::Config;
 use serde::{Deserialize, Serialize};
 
@@ -124,7 +122,9 @@ pub fn plan_scenarios(
             reason: "pairwise combined axis within budget".into(),
         });
         used += 1;
-        notes.push(format!("combined scenarios used budget slot ({used}/{budget})"));
+        notes.push(format!(
+            "combined scenarios used budget slot ({used}/{budget})"
+        ));
     }
 
     notes.push(format!("planned {used} scenarios (budget {budget})"));
@@ -164,7 +164,7 @@ where
         return axes.to_vec();
     }
     let n = n.min(len);
-    let size = (len + n - 1) / n;
+    let size = len.div_ceil(n);
     // subsets
     for i in 0..n {
         let start = i * size;

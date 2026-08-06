@@ -8,11 +8,7 @@ use tomorrowci_core::{Config, EnvironmentAxis, Verdict};
 use tomorrowci_runner::{scan_with_executor, ScriptedExecutor};
 
 fn write_py_fixture(root: &std::path::Path) {
-    std::fs::write(
-        root.join("requirements.txt"),
-        "pytest==7.4.4\n",
-    )
-    .unwrap();
+    std::fs::write(root.join("requirements.txt"), "pytest==7.4.4\n").unwrap();
     std::fs::write(
         root.join("app.py"),
         "from collections import MutableMapping\ndef ok():\n    return True\n",
@@ -48,9 +44,8 @@ fn python_runtime_break_horizon_scripted() {
     map.insert("py310-locked".into(), vec![1, 1]);
     map.insert("py311-locked".into(), vec![1, 1]);
     map.insert("py312-locked".into(), vec![1, 1]);
-    let exec = ScriptedExecutor::new(map).with_stderr(
-        "ImportError: cannot import name 'MutableMapping' from 'collections'",
-    );
+    let exec = ScriptedExecutor::new(map)
+        .with_stderr("ImportError: cannot import name 'MutableMapping' from 'collections'");
 
     let out = scan_with_executor(d.path(), &adapter, cfg, &exec, det.detection).unwrap();
     assert!(
@@ -58,14 +53,14 @@ fn python_runtime_break_horizon_scripted() {
         "summary:\n{}",
         out.terminal_summary
     );
-    assert_eq!(
-        out.manifest.frontier.horizon_label.as_deref(),
-        Some("3.10")
-    );
+    assert_eq!(out.manifest.frontier.horizon_label.as_deref(), Some("3.10"));
     assert!(out.evidence_root.join("report.html").exists());
     assert!(out.evidence_root.join("run.json").exists());
     assert!(out.terminal_summary.contains("Observed breakage horizon"));
-    assert!(out.terminal_summary.contains("ImportError") || out.manifest.frontier.failure_signature.is_some());
+    assert!(
+        out.terminal_summary.contains("ImportError")
+            || out.manifest.frontier.failure_signature.is_some()
+    );
 }
 
 #[test]
@@ -141,11 +136,18 @@ fn dependency_axis_and_ddmin_reduction() {
     map.insert("py310-locked".into(), vec![0, 0]); // runtime alone passes
     map.insert("deps-latest-allowed".into(), vec![1, 1]); // deps alone fails
     map.insert("combo-py310-locked-deps-latest-allowed".into(), vec![1, 1]);
-    let exec = ScriptedExecutor::new(map)
-        .with_stderr("RuntimeError: simulated dependency API break");
+    let exec =
+        ScriptedExecutor::new(map).with_stderr("RuntimeError: simulated dependency API break");
 
     let out = scan_with_executor(d.path(), &adapter, cfg, &exec, det.detection).unwrap();
-    assert!(out.evidence_root.join("reduction.json").exists() || out.manifest.results.iter().any(|r| r.scenario_id.starts_with("deps-")));
+    assert!(
+        out.evidence_root.join("reduction.json").exists()
+            || out
+                .manifest
+                .results
+                .iter()
+                .any(|r| r.scenario_id.starts_with("deps-"))
+    );
     let dep = out
         .manifest
         .results

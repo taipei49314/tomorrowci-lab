@@ -23,9 +23,7 @@ impl EcosystemAdapter for NodeAdapter {
         let pnpm = path_exists(repo, "pnpm-lock.yaml");
         let mut notes = Vec::new();
         if yarn && !has_lock {
-            notes.push(
-                "yarn.lock without package-lock.json => yarn UNSUPPORTED in v0.1.".into(),
-            );
+            notes.push("yarn.lock without package-lock.json => yarn UNSUPPORTED in v0.1.".into());
         }
         if pnpm && !has_lock {
             notes.push(
@@ -126,7 +124,13 @@ impl EcosystemAdapter for NodeAdapter {
 
     fn commands(&self, _scenario: &Scenario, config: &Config) -> Result<Vec<CommandSpec>> {
         let argv = if config.project.test_command == "auto" {
-            vec!["npm".into(), "test".into(), "--".into(), "--reporter".into(), "tap".into()]
+            vec![
+                "npm".into(),
+                "test".into(),
+                "--".into(),
+                "--reporter".into(),
+                "tap".into(),
+            ]
         } else {
             config
                 .project
@@ -170,7 +174,7 @@ impl EcosystemAdapter for NodeAdapter {
                 .chars()
                 .take(200)
                 .collect(),
-            normalized_hash: tomorrowci_core::sha256_str(&format!("{kind}")),
+            normalized_hash: tomorrowci_core::sha256_str(kind),
             primary_frame: None,
         }
     }

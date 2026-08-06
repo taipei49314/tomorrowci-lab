@@ -8,8 +8,8 @@ use tomorrowci_core::{
     CommandSpec, EnvironmentSpec, RawExecutionResult, Result, Scenario, TcError,
 };
 use tomorrowci_sandbox::{
-    detect_engines, env_spec_to_map, pull_image, resolve_image_digest, run_in_container,
-    RunRequest, SandboxEngine,
+    detect_engines, env_spec_to_map, resolve_or_pull_digest, run_in_container, RunRequest,
+    SandboxEngine,
 };
 
 pub struct ExecutionContext<'a> {
@@ -24,7 +24,11 @@ pub struct ExecutionContext<'a> {
 
 pub trait ScenarioExecutor: Send + Sync {
     fn name(&self) -> &str;
-    fn ensure_image(&self, image: &str) -> Result<Option<String>>;
+    /// Resolve immutable digest; failure must surface as BLOCKED to callers.
+    fn ensure_image(&self, image: &str) -> Result<String>;
+    fn engine_label(&self) -> String {
+        self.name().to_string()
+    }
     fn execute(&self, ctx: &ExecutionContext<'_>) -> Result<RawExecutionResult>;
 }
 
@@ -36,9 +40,9 @@ pub struct ContainerExecutor {
 impl ContainerExecutor {
     pub fn detect() -> Result<Self> {
         let avail = detect_engines();
-        let engine = avail.selected.ok_or_else(|| {
-            TcError::Blocked(avail.notes.join("; "))
-        })?;
+        let engine = avail
+            .selected
+            .ok_or_else(|| TcError::Blocked(avail.notes.join("; ")))?;
         Ok(Self { engine })
     }
 }
@@ -48,19 +52,39 @@ impl ScenarioExecutor for ContainerExecutor {
         "container"
     }
 
-    fn ensure_image(&self, image: &str) -> Result<Option<String>> {
-        // Try resolve first; pull if missing
-        if let Some(d) = resolve_image_digest(self.engine, image) {
-            return Ok(Some(d));
+    fn engine_label(&self) -> String {
+        match self.engine {
+            SandboxEngine::Docker => "docker".into(),
+            SandboxEngine::Podman => "podman".into(),
         }
-        pull_image(self.engine, image)?;
-        Ok(resolve_image_digest(self.engine, image))
+    }
+
+    fn ensure_image(&self, image: &str) -> Result<String> {
+        resolve_or_pull_digest(self.engine, image)
     }
 
     fn execute(&self, ctx: &ExecutionContext<'_>) -> Result<RawExecutionResult> {
+        // Prefer digest-pinned image ref when recorded
+        let image = ctx
+            .environment
+            .image_digest
+            .clone()
+            .filter(|d| d.contains("sha256:") || d.starts_with("sha256:"))
+            .map(|d| {
+                if d.contains('@') {
+                    d
+                } else if d.starts_with("sha256:") {
+                    // Id-only: use as image id
+                    d
+                } else {
+                    d
+                }
+            })
+            .unwrap_or_else(|| ctx.environment.image.clone());
+
         let req = RunRequest {
             engine: self.engine,
-            image: ctx.environment.image.clone(),
+            image,
             workspace_host: ctx.workspace.to_path_buf(),
             workdir: ctx.environment.workdir.clone(),
             commands: ctx.commands.to_vec(),
@@ -76,6 +100,7 @@ impl ScenarioExecutor for ContainerExecutor {
             timeout: ctx.timeout,
             read_only_root: ctx.environment.read_only_root,
             user: ctx.environment.user.clone(),
+            use_shell: true, // multi-step fetch uses &&
         };
         run_in_container(&req)
     }
@@ -107,18 +132,33 @@ impl ScenarioExecutor for ScriptedExecutor {
         "scripted"
     }
 
-    fn ensure_image(&self, _image: &str) -> Result<Option<String>> {
-        Ok(Some("sha256:scripted-test-digest".into()))
+    fn ensure_image(&self, _image: &str) -> Result<String> {
+        Ok("sha256:scripted-test-digest".into())
     }
 
     fn execute(&self, ctx: &ExecutionContext<'_>) -> Result<RawExecutionResult> {
+        // Fetch phase always succeeds in scripted harness (construction is not under test)
+        if ctx.commands.iter().all(|c| c.phase == "fetch") {
+            return Ok(RawExecutionResult {
+                exit_code: Some(0),
+                signal: None,
+                duration_ms: 1,
+                timed_out: false,
+                stdout: "scripted-fetch-ok\n".into(),
+                stderr: String::new(),
+                network_used: ctx.network != "none",
+            });
+        }
         let mut guard = self.outcomes.lock().unwrap();
         let q = guard.entry(ctx.scenario.id.clone()).or_default();
         let code = if q.is_empty() { 0 } else { q.remove(0) };
         let fail = code != 0;
         let stderr = if fail {
             if self.stderr_template.is_empty() {
-                format!("ImportError: cannot import name 'MutableMapping' (scenario {})", ctx.scenario.id)
+                format!(
+                    "ImportError: cannot import name 'MutableMapping' (scenario {})",
+                    ctx.scenario.id
+                )
             } else {
                 self.stderr_template.clone()
             }
@@ -130,7 +170,11 @@ impl ScenarioExecutor for ScriptedExecutor {
             signal: None,
             duration_ms: 5,
             timed_out: false,
-            stdout: if fail { String::new() } else { "passed\n".into() },
+            stdout: if fail {
+                String::new()
+            } else {
+                "passed\n".into()
+            },
             stderr,
             network_used: ctx.network != "none",
         })

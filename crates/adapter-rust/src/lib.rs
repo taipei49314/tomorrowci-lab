@@ -97,11 +97,7 @@ impl EcosystemAdapter for RustAdapter {
 
     fn materialize(&self, scenario: &Scenario, _workspace: &Path) -> Result<EnvironmentSpec> {
         let tag = scenario.runtime.trim_start_matches("rust:");
-        let image = if tag.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
-            format!("rust:{tag}-bookworm")
-        } else {
-            format!("rust:{tag}-bookworm")
-        };
+        let image = format!("rust:{tag}-bookworm");
         Ok(EnvironmentSpec {
             image,
             image_digest: None,
@@ -118,7 +114,12 @@ impl EcosystemAdapter for RustAdapter {
 
     fn commands(&self, _scenario: &Scenario, config: &Config) -> Result<Vec<CommandSpec>> {
         let argv = if config.project.test_command == "auto" {
-            vec!["cargo".into(), "test".into(), "--".into(), "--nocapture".into()]
+            vec![
+                "cargo".into(),
+                "test".into(),
+                "--".into(),
+                "--nocapture".into(),
+            ]
         } else {
             config
                 .project

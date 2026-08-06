@@ -92,44 +92,80 @@ pub fn write_html_report(manifest: &RunManifest, out: &Path) -> Result<()> {
         let axes = sc
             .map(|s| format!("{:?}", s.axes_changed))
             .unwrap_or_else(|| "[]".into());
+        let digest = r
+            .environment
+            .image_digest
+            .as_deref()
+            .unwrap_or("(no digest)");
+        let sig = r
+            .failure
+            .as_ref()
+            .map(|f| f.normalized_hash.as_str())
+            .unwrap_or("—");
         rows.push_str(&format!(
-            "<tr tabindex=\"0\"><td><code>{}</code></td><td><span class=\"badge {}\" aria-label=\"verdict {}\">{}</span></td><td>{}</td><td>{}</td></tr>\n",
+            "<tr tabindex=\"0\"><td><code>{}</code></td><td><span class=\"badge {}\" aria-label=\"verdict {}\">{}</span></td><td>{}</td><td><code>{}</code></td><td><code>{}</code></td><td>{}</td></tr>\n",
             escape_html(&r.scenario_id),
             badge,
             label,
             label,
             axes,
+            escape_html(&r.environment.image),
+            escape_html(digest),
             r.duration_ms
         ));
+        let _ = sig; // signature listed in frontier section
     }
 
     // Simple matrix: runtime vs deps from scenarios
-    let mut matrix = String::from("<table aria-label=\"Scenario matrix\"><thead><tr><th scope=\"col\">Scenario</th><th scope=\"col\">Runtime</th><th scope=\"col\">Deps</th><th scope=\"col\">State</th></tr></thead><tbody>");
+    let mut matrix = String::from("<table aria-label=\"Scenario matrix\"><thead><tr><th scope=\"col\">Scenario</th><th scope=\"col\">Runtime</th><th scope=\"col\">Deps</th><th scope=\"col\">Image digest</th><th scope=\"col\">State</th></tr></thead><tbody>");
     for r in &manifest.results {
-        let sc = manifest.plan.scenarios.iter().find(|s| s.id == r.scenario_id);
+        let sc = manifest
+            .plan
+            .scenarios
+            .iter()
+            .find(|s| s.id == r.scenario_id);
         let (rt, deps) = sc
             .map(|s| (s.runtime.as_str(), s.dependencies.as_str()))
             .unwrap_or(("?", "?"));
         let (label, badge) = verdict_badge(r.verdict);
+        let digest = r
+            .environment
+            .image_digest
+            .as_deref()
+            .unwrap_or("(no digest)");
         matrix.push_str(&format!(
-            "<tr><th scope=\"row\"><code>{}</code></th><td>{}</td><td>{}</td><td><span class=\"badge {}\">{}</span></td></tr>",
+            "<tr><th scope=\"row\"><code>{}</code></th><td>{}</td><td>{}</td><td><code>{}</code></td><td><span class=\"badge {}\">{}</span></td></tr>",
             escape_html(&r.scenario_id),
             escape_html(rt),
             escape_html(deps),
+            escape_html(digest),
             badge,
             label
         ));
     }
     matrix.push_str("</tbody></table>");
 
+    let sig_html = manifest
+        .frontier
+        .failure_signature
+        .as_ref()
+        .map(|f| {
+            format!(
+                "<p>Failure signature: <code>{}</code> — {}</p><p>Replay: <code>{}</code></p>",
+                escape_html(&f.normalized_hash),
+                escape_html(&f.summary),
+                escape_html(manifest.frontier.replay_command.as_deref().unwrap_or("n/a"))
+            )
+        })
+        .unwrap_or_default();
     let frontier = if manifest.frontier.observed {
         format!(
-            "<strong>Observed breakage horizon:</strong> <code>{}</code> (grade {:?})",
+            "<strong>Observed breakage horizon:</strong> <code>{}</code> (grade {:?}){sig_html}",
             escape_html(manifest.frontier.horizon_label.as_deref().unwrap_or("?")),
             manifest.frontier.grade
         )
     } else {
-        "No observed breakage horizon within tested candidates.".into()
+        format!("No observed breakage horizon within tested candidates.{sig_html}")
     };
 
     let notes: String = manifest
@@ -223,6 +259,8 @@ nav a { color: #7dd3fc; margin-right: 1rem; }
           <th scope="col">Scenario</th>
           <th scope="col">Verdict</th>
           <th scope="col">Axes</th>
+          <th scope="col">Image</th>
+          <th scope="col">Digest</th>
           <th scope="col">Duration ms</th>
         </tr>
       </thead>
@@ -302,7 +340,7 @@ mod tests {
         use chrono::Utc;
         use indexmap::IndexMap;
         use tomorrowci_core::*;
-        let mut m = RunManifest {
+        let m = RunManifest {
             run_id: "r".into(),
             tool_version: "0.1.0".into(),
             started_at: Utc::now(),

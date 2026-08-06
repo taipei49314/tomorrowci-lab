@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, "repair/**"]
   pull_request:
 
 permissions:
@@ -24,23 +24,124 @@ jobs:
         run: cargo test --workspace
       - name: build release CLI
         run: cargo build -p tomorrowci-cli --release
+      - name: node report helpers
+        run: node --test packages/report-ui/test/*.test.js
       - name: trust audit
         run: ./target/release/tomorrowci trust
       - name: doctor
         run: ./target/release/tomorrowci doctor
-      - name: dogfood action path (composite scripted)
+
+  live-python:
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: build release CLI
+        run: cargo build -p tomorrowci-cli --release
+      - name: live Docker Python fixture
+        id: live
         run: |
-          ./target/release/tomorrowci trust
-          # Fixture scan may BLOCK without Docker images; must not pretend PASS
-          set +e
-          ./target/release/tomorrowci scan fixtures/python-runtime-break
-          set -e
-          ./target/release/tomorrowci init-action --out /tmp/tw.yml
-          test -f /tmp/tw.yml
-      - name: Upload any evidence
+          set -euo pipefail
+          ./target/release/tomorrowci doctor
+          ./target/release/tomorrowci scan fixtures/python-runtime-break \
+            --config fixtures/python-runtime-break/.tomorrowci.yml | tee /tmp/scan.out
+          # Must not be BLOCKED
+          if grep -q "verdict: BLOCKED" /tmp/scan.out; then
+            echo "Live scan BLOCKED"
+            exit 2
+          fi
+          RUN_DIR=$(ls -1dt .tomorrowci/runs/* | head -1)
+          echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
+          echo "run_id=$(basename "$RUN_DIR")" >> "$GITHUB_OUTPUT"
+          test -f "$RUN_DIR/run.json"
+          test -f "$RUN_DIR/frontier.json"
+          # Require observed horizon for this fixture
+          python3 - <<'PY'
+          import json, glob, sys
+          runs = sorted(glob.glob(".tomorrowci/runs/*/frontier.json"), key=lambda p: p, reverse=True)
+          assert runs, "no frontier"
+          f = json.load(open(runs[0]))
+          assert f.get("observed") is True, f
+          assert f.get("first_failing_scenario"), f
+          print("horizon_ok", f.get("horizon_label"), f.get("first_failing_scenario"))
+          PY
+          # Every scenario with a result must have image digest when not blocked early
+          python3 - <<'PY'
+          import json, glob
+          run = sorted(glob.glob(".tomorrowci/runs/*/run.json"))[-1]
+          m = json.load(open(run))
+          for r in m["results"]:
+              dig = (r.get("environment") or {}).get("image_digest")
+              assert dig, r
+              assert "scripted-test-digest" not in str(dig), dig
+          print("digests_ok", len(m["results"]))
+          PY
+      - name: replay equivalence twice
+        run: |
+          set -euo pipefail
+          RUN_ID="${{ steps.live.outputs.run_id }}"
+          SC=$(python3 -c "import json; print(json.load(open('.tomorrowci/runs/'+'''$RUN_ID'''+'/frontier.json'))['first_failing_scenario'])")
+          echo "replaying $RUN_ID scenario $SC"
+          ./target/release/tomorrowci replay "$RUN_ID" --scenario "$SC" | tee /tmp/r1.out
+          ./target/release/tomorrowci replay "$RUN_ID" --scenario "$SC" | tee /tmp/r2.out
+          S1=$(grep -E '^(original_signature|replay_signature)=' /tmp/r1.out | sort)
+          S2=$(grep -E '^(original_signature|replay_signature)=' /tmp/r2.out | sort)
+          test -n "$S1"
+          test "$S1" = "$S2"
+          grep -q "replay: PASS" /tmp/r1.out
+          grep -q "replay: PASS" /tmp/r2.out
+      - name: evidence checksums present
+        run: |
+          set -euo pipefail
+          RUN_DIR="${{ steps.live.outputs.run_dir }}"
+          test -f "$RUN_DIR/checksums.txt"
+          SC=$(python3 -c "import json; print(json.load(open('$RUN_DIR/frontier.json'))['first_failing_scenario'])")
+          test -f "$RUN_DIR/scenarios/$SC/checksums.txt"
+          test -f "$RUN_DIR/scenarios/$SC/failure-signature.json"
+          test -f "$RUN_DIR/scenarios/$SC/replay.json"
+          ! grep -R "scripted-test-digest" "$RUN_DIR" || (echo "scripted digest in live evidence" && exit 1)
+      - name: Upload live evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tomorrowci-evidence
+          name: tomorrowci-live-python-evidence
           path: .tomorrowci/runs/
-          if-no-files-found: ignore
+          if-no-files-found: warn
+
+  action-dogfood:
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Dogfood checked-in Action
+        uses: ./action
+        with:
+          path: fixtures/python-runtime-break
+          config: fixtures/python-runtime-break/.tomorrowci.yml
+          advisory: "false"
+          expect-horizon: "true"
+
+  action-consumer:
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tomorrowci-src
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Create consumer fixture repository
+        run: |
+          set -euo pipefail
+          mkdir -p consumer
+          cp -a tomorrowci-src/fixtures/python-runtime-break/. consumer/
+          # Consumer has no Cargo workspace
+          test ! -f consumer/Cargo.toml
+      - name: Invoke Action from consumer path context
+        uses: ./tomorrowci-src/action
+        with:
+          path: consumer
+          config: consumer/.tomorrowci.yml
+          advisory: "false"
+          expect-horizon: "true"

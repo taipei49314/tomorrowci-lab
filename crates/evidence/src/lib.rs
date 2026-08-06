@@ -70,7 +70,9 @@ mod tests {
         let d = tempdir().unwrap();
         let layout = EvidenceLayout::create(d.path(), "abc123").unwrap();
         assert!(layout.run_root.exists());
-        layout.write_json("verdicts.json", &serde_json::json!([])).unwrap();
+        layout
+            .write_json("verdicts.json", &serde_json::json!([]))
+            .unwrap();
         assert!(layout.run_root.join("verdicts.json").exists());
     }
 }

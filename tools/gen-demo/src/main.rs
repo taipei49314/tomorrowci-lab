@@ -29,9 +29,8 @@ fn main() -> Result<()> {
     map.insert("py310-locked".into(), vec![1, 1]);
     map.insert("py311-locked".into(), vec![1, 1]);
     map.insert("py312-locked".into(), vec![1, 1]);
-    let exec = ScriptedExecutor::new(map).with_stderr(
-        "ImportError: cannot import name 'MutableMapping' from 'collections'",
-    );
+    let exec = ScriptedExecutor::new(map)
+        .with_stderr("ImportError: cannot import name 'MutableMapping' from 'collections'");
 
     let outcome = scan_with_executor(&fixture, &adapter, cfg, &exec, det.detection)?;
     // Copy durable demo artifacts

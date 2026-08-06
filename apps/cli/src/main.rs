@@ -7,9 +7,7 @@ use tomorrowci_adapter_node::NodeAdapter;
 use tomorrowci_adapter_python::PythonAdapter;
 use tomorrowci_adapter_rust::RustAdapter;
 use tomorrowci_adapters::EcosystemAdapter;
-use tomorrowci_core::{
-    compare_horizons, evaluate_policy_gate, Config, HorizonDelta, Verdict,
-};
+use tomorrowci_core::{compare_horizons, evaluate_policy_gate, Config, HorizonDelta, Verdict};
 use tomorrowci_evidence::load_run_manifest;
 use tomorrowci_metrics::{run_trust_audit, ClaimLedger, ClaimStatus, ScanMetrics, TrustVerdict};
 use tomorrowci_report::{
@@ -37,13 +35,17 @@ enum Commands {
         #[arg(long)]
         config: Option<PathBuf>,
     },
-    Show { run_id: String },
+    Show {
+        run_id: String,
+    },
     Replay {
         run_id: String,
         #[arg(long)]
         scenario: String,
     },
-    Explain { run_id: String },
+    Explain {
+        run_id: String,
+    },
     Report {
         run_id: String,
         #[arg(long, default_value = "json")]
@@ -65,7 +67,9 @@ enum Commands {
         gate: bool,
     },
     /// Print metrics.json for a run
-    Metrics { run_id: String },
+    Metrics {
+        run_id: String,
+    },
     #[command(name = "init-action")]
     InitAction {
         #[arg(long, default_value = ".github/workflows/tomorrowci.yml")]
@@ -193,23 +197,44 @@ fn cmd_scan(target: &str, config_path: Option<&Path>) -> Result<()> {
     ) {
         Ok(out) => {
             println!("{}", out.terminal_summary);
-            println!("report: {}", out.evidence_root.join("report.html").display());
-            println!("metrics: {}", out.evidence_root.join("metrics.json").display());
-            // claim ledger fragment
+            println!(
+                "report: {}",
+                out.evidence_root.join("report.html").display()
+            );
+            println!(
+                "metrics: {}",
+                out.evidence_root.join("metrics.json").display()
+            );
             let mut claims = ClaimLedger::default();
+            let any_blocked = out
+                .manifest
+                .results
+                .iter()
+                .any(|r| matches!(r.verdict, Verdict::Blocked));
+            let status = if any_blocked {
+                ClaimStatus::Blocked
+            } else {
+                ClaimStatus::Pass
+            };
             claims.push(
                 format!("{eco} scan completed"),
-                ClaimStatus::Pass,
+                status,
                 format!("tomorrowci scan {}", root.display()),
                 out.metrics.summary_line(),
                 out.evidence_root.display().to_string(),
             );
             claims.write_json(&out.evidence_root.join("claims.json"))?;
+            // Never promote BLOCKED to success: non-zero exit for infra/construction blocks
+            if any_blocked {
+                println!("verdict: BLOCKED");
+                std::process::exit(2);
+            }
             Ok(())
         }
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("BLOCKED")
+                || msg.contains("blocked:")
                 || msg.contains("sandbox")
                 || msg.contains("Docker")
                 || msg.contains("Podman")
@@ -217,11 +242,11 @@ fn cmd_scan(target: &str, config_path: Option<&Path>) -> Result<()> {
             {
                 println!("verdict: BLOCKED");
                 println!("{msg}");
-                Ok(())
-            } else if msg.contains("UNSUPPORTED") {
+                std::process::exit(2);
+            } else if msg.contains("UNSUPPORTED") || msg.contains("unsupported:") {
                 println!("verdict: UNSUPPORTED");
                 println!("{msg}");
-                Ok(())
+                std::process::exit(3);
             } else {
                 Err(e.into())
             }

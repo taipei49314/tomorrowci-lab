@@ -21,9 +21,7 @@ pub fn compute_breakage_frontier(
             failure_signature: None,
             grade: EvidenceGrade::Inconclusive,
             replay_command: None,
-            notes: vec![
-                "No observed breakage horizon: baseline is not BASELINE_PASS.".into(),
-            ],
+            notes: vec!["No observed breakage horizon: baseline is not BASELINE_PASS.".into()],
         };
     }
 
@@ -58,8 +56,7 @@ pub fn compute_breakage_frontier(
                     grade: EvidenceGrade::Inconclusive,
                     replay_command: None,
                     notes: vec![
-                        "First failure not yet confirmed by reruns; horizon not authorized."
-                            .into(),
+                        "First failure not yet confirmed by reruns; horizon not authorized.".into(),
                     ],
                 };
             }
@@ -95,9 +92,7 @@ pub fn compute_breakage_frontier(
             failure_signature: None,
             grade: EvidenceGrade::Inconclusive,
             replay_command: None,
-            notes: vec![
-                "No observed breakage horizon within tested candidates.".into(),
-            ],
+            notes: vec!["No observed breakage horizon within tested candidates.".into()],
         },
     }
 }
@@ -204,7 +199,10 @@ mod tests {
     #[test]
     fn horizon_when_confirmed() {
         let ordered = vec![
-            (scenario("b", true, "3.9"), result("b", Verdict::BaselinePass)),
+            (
+                scenario("b", true, "3.9"),
+                result("b", Verdict::BaselinePass),
+            ),
             (
                 scenario("py310", false, "3.10"),
                 result("py310", Verdict::FutureFail),
@@ -223,14 +221,8 @@ mod tests {
 
     #[test]
     fn flaky_classification() {
-        assert_eq!(
-            classify_from_reruns(&[true, false, true]),
-            Verdict::Flaky
-        );
-        assert_eq!(
-            classify_from_reruns(&[false, false]),
-            Verdict::FutureFail
-        );
+        assert_eq!(classify_from_reruns(&[true, false, true]), Verdict::Flaky);
+        assert_eq!(classify_from_reruns(&[false, false]), Verdict::FutureFail);
     }
 
     #[test]
