@@ -9,6 +9,44 @@ use tomorrowci_core::{Result, TcError};
 pub const INDEX_NAME: &str = "evidence-index.json";
 pub const CHECKSUMS_NAME: &str = "checksums.txt";
 pub const GENERATION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// Closed class vocabulary for index entries (path-derived; stored value must match).
+pub fn is_closed_class(class: &str) -> bool {
+    matches!(
+        class,
+        "run-manifest"
+            | "workspace-manifest"
+            | "report-html"
+            | "scenario"
+            | "environment"
+            | "fetch-commands"
+            | "fetch-phase"
+            | "fetch-result"
+            | "fetch-stdout"
+            | "fetch-stderr"
+            | "test-commands"
+            | "test-phase"
+            | "test-result"
+            | "result"
+            | "stdout"
+            | "stderr"
+            | "failure-signature"
+            | "replay-manifest"
+            | "replay-script"
+            | "commands"
+            | "stdout-attempt"
+            | "stderr-attempt"
+            | "replay-attempt-result"
+            | "replay-attempt-stdout"
+            | "replay-attempt-stderr"
+            | "replay-attempt-other"
+            | "scenario-other"
+            | "json"
+            | "text"
+            | "other"
+    )
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvidenceIndex {
@@ -108,14 +146,35 @@ pub fn collect_payload_files(run_root: &Path) -> Result<BTreeMap<String, PathBuf
     walk(run_root, run_root, &mut out)?;
     out.remove(CHECKSUMS_NAME);
     out.remove(INDEX_NAME);
-    // scenario-level checksums are derived views — exclude from payload authority
+    // Forbidden: scenario-level checksums (not payload; must not exist)
     let keys: Vec<_> = out.keys().cloned().collect();
     for k in keys {
-        if k.ends_with("/checksums.txt") || k == "checksums.txt" {
+        if k != CHECKSUMS_NAME && k.ends_with("/checksums.txt") {
             out.remove(&k);
         }
     }
     Ok(out)
+}
+
+/// Detect forbidden scenario-level checksum files on disk.
+pub fn forbidden_scenario_checksums(run_root: &Path) -> Vec<String> {
+    let mut bad = Vec::new();
+    let sc = run_root.join("scenarios");
+    if let Ok(rd) = std::fs::read_dir(sc) {
+        for e in rd.flatten() {
+            if e.path().is_dir() {
+                let p = e.path().join(CHECKSUMS_NAME);
+                if p.is_file() {
+                    bad.push(format!(
+                        "scenarios/{}/{}",
+                        e.file_name().to_string_lossy(),
+                        CHECKSUMS_NAME
+                    ));
+                }
+            }
+        }
+    }
+    bad
 }
 
 fn walk(root: &Path, cur: &Path, out: &mut BTreeMap<String, PathBuf>) -> Result<()> {
@@ -173,7 +232,7 @@ pub fn build_index(run_root: &Path, run_id: &str) -> Result<EvidenceIndex> {
         );
     }
     Ok(EvidenceIndex {
-        schema_version: 1,
+        schema_version: SCHEMA_VERSION,
         run_id: run_id.to_string(),
         generation: GENERATION,
         files: map,

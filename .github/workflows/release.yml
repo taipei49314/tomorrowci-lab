@@ -27,7 +27,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
           - os: macos-latest
-            target: x86_64-apple-darwin
+            # host-matched: runners are arm64; archive name is rewritten after arch probe
+            target: apple-darwin
             archive: tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -48,9 +49,30 @@ jobs:
             VER="v0.1.1-alpha.3"
           fi
           VER="${VER//\//-}"
-          STAGE="tomorrowci-${VER}-${{ matrix.target }}"
+          BIN=target/release/tomorrowci
+          test -x "$BIN"
+          # Architecture identity: archive triple must match binary (RC2 / audit failure)
+          if [[ "$(uname -s)" == "Darwin" ]]; then
+            ARCH=$(uname -m)
+            case "$ARCH" in
+              arm64|aarch64) TARGET=aarch64-apple-darwin ;;
+              x86_64) TARGET=x86_64-apple-darwin ;;
+              *) echo "unsupported mac arch $ARCH"; exit 1 ;;
+            esac
+            file "$BIN" | tee dist-file.txt
+            if [[ "$TARGET" == aarch64-apple-darwin ]]; then
+              grep -E 'arm64|aarch64' dist-file.txt
+            else
+              grep -E 'x86_64' dist-file.txt
+            fi
+          else
+            TARGET="${{ matrix.target }}"
+            file "$BIN" | tee dist-file.txt
+            grep -E 'x86-64|x86_64|ELF 64' dist-file.txt
+          fi
+          STAGE="tomorrowci-${VER}-${TARGET}"
           mkdir -p "dist/$STAGE"
-          cp target/release/tomorrowci "dist/$STAGE/"
+          cp "$BIN" "dist/$STAGE/"
           cp README.md LICENSE CHANGELOG.md "dist/$STAGE/"
           tar -C dist -czf "dist/${STAGE}.tar.gz" "$STAGE"
           ./target/release/tomorrowci --version | tee dist/version.txt
@@ -204,9 +226,16 @@ jobs:
                   rel = p.relative_to(root).as_posix()
                   h = hashlib.sha256(p.read_bytes()).hexdigest()
                   files[rel] = {"size": p.stat().st_size, "sha256": f"sha256:{h}"}
+          ref = os.environ.get("GITHUB_REF", "")
+          ref_name = os.environ.get("GITHUB_REF_NAME", "")
+          is_tag = ref.startswith("refs/tags/")
           man = {
             "schema_version": 1,
-            "tag": os.environ.get("GITHUB_REF_NAME", "v0.1.1-alpha.3"),
+            "mode": "release" if is_tag else "dry-run",
+            "ref_type": "tag" if is_tag else "branch",
+            "ref_name": ref_name,
+            "candidate_tag": "v0.1.1-alpha.3",
+            "published_tag": ref_name if is_tag else None,
             "git_sha": os.environ["GITHUB_SHA"],
             "workflow_run_id": os.environ.get("GITHUB_RUN_ID"),
             "live_run_id": os.environ.get("live_run_id") or None,

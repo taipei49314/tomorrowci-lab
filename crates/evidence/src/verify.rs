@@ -1,7 +1,10 @@
 //! Evidence authorization kernel.
 
 use crate::hashutil::{hash_bytes, hash_file, hashes_equal, normalize_hash};
-use crate::index::{finalize_inventory, load_index, validate_rel_path, CHECKSUMS_NAME, INDEX_NAME};
+use crate::index::{
+    classify_path, finalize_inventory, forbidden_scenario_checksums, is_closed_class, load_index,
+    validate_rel_path, CHECKSUMS_NAME, GENERATION, INDEX_NAME, SCHEMA_VERSION,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -190,12 +193,41 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
         }
     };
     rep.index_generation = Some(index.generation);
+    if index.schema_version != SCHEMA_VERSION {
+        rep.err(
+            "unsupported_index_schema",
+            Some(INDEX_NAME),
+            format!(
+                "schema_version {} unsupported (require {SCHEMA_VERSION})",
+                index.schema_version
+            ),
+        );
+    }
+    if index.generation != GENERATION {
+        rep.err(
+            "unsupported_index_generation",
+            Some(INDEX_NAME),
+            format!(
+                "generation {} unsupported (require {GENERATION})",
+                index.generation
+            ),
+        );
+    }
     if let Ok(h) = hash_file(&run_root.join(INDEX_NAME)) {
         rep.index_hash = Some(h);
     }
     rep.semantic_checks += 1;
 
-    // --- parse checksums ---
+    // Forbidden scenario-level checksum authorities
+    for p in forbidden_scenario_checksums(run_root) {
+        rep.err(
+            "forbidden_scenario_checksums",
+            Some(&p),
+            "scenario-level checksums.txt is not an authority",
+        );
+    }
+
+    // --- parse checksums (reject duplicate paths) ---
     let csum_map = match parse_checksums(&run_root.join(CHECKSUMS_NAME)) {
         Ok(m) => m,
         Err(e) => {
@@ -224,15 +256,52 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
     }
     rep.semantic_checks += 1;
 
-    // verify each indexed file hash/size + checksum agreement
+    // verify each indexed file hash/size + checksum agreement + closed class
     for (rel, ent) in &index.files {
         if let Err(e) = validate_rel_path(rel) {
             rep.err("bad_path", Some(rel), e.to_string());
             continue;
         }
-        if let Err(e) = normalize_hash(&ent.sha256) {
-            rep.err("malformed_hash", Some(rel), e.to_string());
-            continue;
+        if !is_closed_class(&ent.class) {
+            rep.err(
+                "invalid_index_class",
+                Some(rel),
+                format!("class {:?} not in closed vocabulary", ent.class),
+            );
+        }
+        let expected_class = classify_path(rel);
+        if ent.class != expected_class {
+            rep.err(
+                "index_class_mismatch",
+                Some(rel),
+                format!(
+                    "stored class {:?} != path-derived {expected_class:?}",
+                    ent.class
+                ),
+            );
+        }
+        // required is policy-derived; stored false on a payload path is forgery
+        if !ent.required {
+            rep.err(
+                "index_required_false",
+                Some(rel),
+                "index entry required=false is not allowed for payload files",
+            );
+        }
+        match normalize_hash(&ent.sha256) {
+            Ok(canonical) => {
+                if ent.sha256.trim() != canonical.as_str() {
+                    rep.err(
+                        "noncanonical_hash_form",
+                        Some(rel),
+                        "index hash not in exact canonical form",
+                    );
+                }
+            }
+            Err(e) => {
+                rep.err("malformed_hash", Some(rel), e.to_string());
+                continue;
+            }
         }
         let path = run_root.join(rel);
         if !path.is_file() {
@@ -341,26 +410,121 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
                         "evidence-index.run_id != run.json.run_id",
                     );
                 }
-                if let Some(id) = &m.identity {
-                    if id.source_commit != m.repository.commit_sha {
-                        rep.err(
-                            "identity_commit_mismatch",
-                            Some("run.json"),
-                            "identity.source_commit != repository.commit_sha",
-                        );
+                // Identity is mandatory for authorization (RC2)
+                match &m.identity {
+                    None => rep.err(
+                        "missing_identity",
+                        Some("run.json"),
+                        "run.json.identity is required",
+                    ),
+                    Some(id) => {
+                        if id.source_commit.as_ref() != m.repository.commit_sha.as_ref() {
+                            rep.err(
+                                "identity_commit_mismatch",
+                                Some("run.json"),
+                                "identity.source_commit != repository.commit_sha",
+                            );
+                        }
+                        if id.source_commit.as_ref().map(|s| s.trim().is_empty()) != Some(false) {
+                            rep.err(
+                                "identity_empty_commit",
+                                Some("run.json"),
+                                "identity.source_commit must be non-empty",
+                            );
+                        }
+                        if id.tool_version.trim().is_empty()
+                            || id.adapter_name.trim().is_empty()
+                            || id.adapter_version.trim().is_empty()
+                        {
+                            rep.err(
+                                "identity_incomplete",
+                                Some("run.json"),
+                                "identity tool/adapter fields must be non-empty",
+                            );
+                        }
+                        if id.config_hash != m.config_hash {
+                            rep.err(
+                                "identity_config_hash",
+                                Some("run.json"),
+                                "identity.config_hash != config_hash",
+                            );
+                        }
+                        if normalize_hash(&id.config_hash).is_err()
+                            || normalize_hash(&m.config_hash).is_err()
+                        {
+                            rep.err(
+                                "identity_config_hash_form",
+                                Some("run.json"),
+                                "config_hash must be canonical sha256",
+                            );
+                        }
+                        if id.container_engine.as_ref().map(|s| s.trim().is_empty()) != Some(false)
+                        {
+                            rep.err(
+                                "identity_missing_engine",
+                                Some("run.json"),
+                                "identity.container_engine required",
+                            );
+                        }
+                        if let (Some(start), Some(finish)) = (Some(id.started_at), id.finished_at) {
+                            if start > finish {
+                                rep.err(
+                                    "identity_time_order",
+                                    Some("run.json"),
+                                    "identity started_at > finished_at",
+                                );
+                            }
+                        }
                     }
-                    if id.config_hash != m.config_hash {
+                }
+                // run timestamps
+                if let Some(fin) = m.finished_at {
+                    if m.started_at > fin {
                         rep.err(
-                            "identity_config_hash",
+                            "run_time_order",
                             Some("run.json"),
-                            "identity.config_hash != config_hash",
+                            "run started_at > finished_at",
                         );
                     }
                 }
-                // plan/result/directory sets
-                let plan_ids: BTreeSet<_> = m.plan.scenarios.iter().map(|s| s.id.clone()).collect();
+                // config.normalized.json must match config_hash
+                let cfg_path = run_root.join("config.normalized.json");
+                if cfg_path.is_file() {
+                    if let Ok(ch) = hash_file(&cfg_path) {
+                        if !hashes_equal(&ch, &m.config_hash) {
+                            rep.err(
+                                "config_hash_mismatch",
+                                Some("config.normalized.json"),
+                                "config.normalized.json bytes != run.json.config_hash",
+                            );
+                        }
+                    }
+                } else {
+                    rep.err(
+                        "missing_config_normalized",
+                        Some("config.normalized.json"),
+                        "config.normalized.json required",
+                    );
+                }
+                // plan/result/directory sets + uniqueness
+                let plan_ids_vec: Vec<_> = m.plan.scenarios.iter().map(|s| s.id.clone()).collect();
+                let plan_ids: BTreeSet<_> = plan_ids_vec.iter().cloned().collect();
+                if plan_ids_vec.len() != plan_ids.len() {
+                    rep.err(
+                        "duplicate_plan_scenario",
+                        None,
+                        "plan.scenarios contains duplicate scenario IDs",
+                    );
+                }
                 let result_ids: BTreeSet<_> =
                     m.results.iter().map(|r| r.scenario_id.clone()).collect();
+                if m.results.len() != result_ids.len() {
+                    rep.err(
+                        "duplicate_result_scenario",
+                        None,
+                        "results contain duplicate scenario IDs",
+                    );
+                }
                 let dir_ids = scenario_dirs(run_root);
                 if plan_ids != result_ids {
                     rep.err(
@@ -405,29 +569,180 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
                             }
                         }
                     }
-                    // verdict-aware required files
+                    // verdict-aware required files (exist + indexed)
                     let prefix = format!("scenarios/{}/", r.scenario_id);
                     let need = required_for_verdict(r.verdict);
                     for f in need {
                         let rel = format!("{prefix}{f}");
-                        if !index.files.contains_key(&rel) && !run_root.join(&rel).exists() {
-                            // allow soft for BLOCKED early exit without fetch
+                        let on_disk = run_root.join(&rel).is_file();
+                        let in_index = index.files.contains_key(&rel);
+                        if !on_disk || !in_index {
                             if matches!(r.verdict, Verdict::Blocked) && f.starts_with("test") {
                                 continue;
                             }
+                            if matches!(r.verdict, Verdict::Blocked) && f.starts_with("fetch") {
+                                continue;
+                            }
                             if matches!(r.verdict, Verdict::Blocked)
-                                && (f.starts_with("fetch") || f == "failure-signature.json")
+                                && f == "failure-signature.json"
                             {
-                                // image-resolve block may lack fetch
-                                if f.starts_with("fetch") {
-                                    continue;
-                                }
+                                continue;
                             }
                             rep.err(
                                 "missing_verdict_required",
                                 Some(&rel),
-                                format!("{:?} requires {f}", r.verdict),
+                                format!("{:?} requires {f} (indexed+on disk)", r.verdict),
                             );
+                        }
+                    }
+                    // Cross-file: scenario result.json must match run result summary
+                    let result_path = format!("{prefix}result.json");
+                    if let Ok(raw) = std::fs::read_to_string(run_root.join(&result_path)) {
+                        match serde_json::from_str::<serde_json::Value>(&raw) {
+                            Ok(file_r) => {
+                                let fv =
+                                    file_r.get("verdict").and_then(|v| v.as_str()).unwrap_or("");
+                                let expected = format!("{:?}", r.verdict).to_ascii_uppercase();
+                                // serde may use SCREAMING_SNAKE
+                                let expected2 = match r.verdict {
+                                    Verdict::BaselinePass => "BASELINE_PASS",
+                                    Verdict::BaselineInvalid => "BASELINE_INVALID",
+                                    Verdict::FuturePass => "FUTURE_PASS",
+                                    Verdict::FutureFail => "FUTURE_FAIL",
+                                    Verdict::Flaky => "FLAKY",
+                                    Verdict::Blocked => "BLOCKED",
+                                    Verdict::Unsupported => "UNSUPPORTED",
+                                    Verdict::Inconclusive => "INCONCLUSIVE",
+                                };
+                                if fv != expected2 && fv != expected {
+                                    rep.err(
+                                        "result_verdict_mismatch",
+                                        Some(&result_path),
+                                        format!(
+                                            "result.json verdict {fv:?} != run results {:?}",
+                                            r.verdict
+                                        ),
+                                    );
+                                }
+                                let fe = file_r.get("exit_code").and_then(|v| {
+                                    if v.is_null() {
+                                        None
+                                    } else {
+                                        v.as_i64().map(|x| x as i32)
+                                    }
+                                });
+                                if fe != r.exit_code {
+                                    rep.err(
+                                        "result_exit_mismatch",
+                                        Some(&result_path),
+                                        "result.json exit_code != run results",
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                rep.err("result_json_parse", Some(&result_path), e.to_string())
+                            }
+                        }
+                    }
+                    // environment.json vs run result environment
+                    let env_path = format!("{prefix}environment.json");
+                    if let Ok(raw) = std::fs::read_to_string(run_root.join(&env_path)) {
+                        if let Ok(file_env) =
+                            serde_json::from_str::<tomorrowci_core::EnvironmentSpec>(&raw)
+                        {
+                            if file_env.tag() != r.environment.tag()
+                                || file_env.image_digest != r.environment.image_digest
+                            {
+                                rep.err(
+                                    "environment_mismatch",
+                                    Some(&env_path),
+                                    "environment.json tag/digest != run results.environment",
+                                );
+                            }
+                        }
+                    }
+                    // test-commands.json must match result.commands for test phase (when present)
+                    let tc_path = format!("{prefix}test-commands.json");
+                    if let Ok(raw) = std::fs::read_to_string(run_root.join(&tc_path)) {
+                        if let Ok(file_cmds) =
+                            serde_json::from_str::<Vec<tomorrowci_core::CommandSpec>>(&raw)
+                        {
+                            let result_test: Vec<_> = r
+                                .commands
+                                .iter()
+                                .filter(|c| c.phase == "test" || c.phase.is_empty())
+                                .cloned()
+                                .collect();
+                            // If result has commands, require equality with test-commands file
+                            if !r.commands.is_empty()
+                                && !file_cmds.is_empty()
+                                && serde_json::to_value(&file_cmds).ok()
+                                    != serde_json::to_value(
+                                        &r.commands
+                                            .iter()
+                                            .filter(|c| c.phase != "fetch")
+                                            .cloned()
+                                            .collect::<Vec<_>>(),
+                                    )
+                                    .ok()
+                                && serde_json::to_value(&file_cmds).ok()
+                                    != serde_json::to_value(&result_test).ok()
+                                && serde_json::to_value(&file_cmds).ok()
+                                    != serde_json::to_value(&r.commands).ok()
+                            {
+                                // Still require file equal to something stored on result OR replay
+                                let replay_path = format!("{prefix}replay.json");
+                                let mut ok_mirror = false;
+                                if let Ok(rj) = std::fs::read_to_string(run_root.join(&replay_path))
+                                {
+                                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&rj) {
+                                        if let Some(tc) = v.get("test_commands") {
+                                            if serde_json::to_value(&file_cmds).ok()
+                                                == Some(tc.clone())
+                                            {
+                                                ok_mirror = true;
+                                            }
+                                        }
+                                        if let Some(tc) = v.get("test_argv") {
+                                            // optional shape
+                                            let _ = tc;
+                                        }
+                                    }
+                                }
+                                if !ok_mirror {
+                                    // Compare argv sequences
+                                    let fa: Vec<Vec<String>> =
+                                        file_cmds.iter().map(|c| c.argv.clone()).collect();
+                                    let ra: Vec<Vec<String>> = r
+                                        .commands
+                                        .iter()
+                                        .filter(|c| c.phase != "fetch")
+                                        .map(|c| c.argv.clone())
+                                        .collect();
+                                    if fa != ra
+                                        && fa
+                                            != r.commands
+                                                .iter()
+                                                .map(|c| c.argv.clone())
+                                                .collect::<Vec<_>>()
+                                    {
+                                        rep.err(
+                                            "test_commands_mismatch",
+                                            Some(&tc_path),
+                                            "test-commands.json does not match run result commands",
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // phase timestamp invariants
+                    for phase_name in ["fetch-phase.json", "test-phase.json"] {
+                        let pp = format!("{prefix}{phase_name}");
+                        if let Ok(raw) = std::fs::read_to_string(run_root.join(&pp)) {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                                check_phase_timestamps(&v, &pp, &mut rep);
+                            }
                         }
                     }
                     if matches!(r.verdict, Verdict::FutureFail) {
@@ -447,6 +762,15 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
                                             Some(&sig_path),
                                             "failure-signature.json != result.failure",
                                         );
+                                    }
+                                    if let Some(fsig) = &m.frontier.failure_signature {
+                                        if !hashes_equal(h, &fsig.normalized_hash) {
+                                            rep.err(
+                                                "frontier_signature_mismatch",
+                                                Some(&sig_path),
+                                                "failure-signature != frontier.failure_signature",
+                                            );
+                                        }
                                     }
                                 }
                             } else {
@@ -471,9 +795,24 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
                                 "first_failing_scenario is not FUTURE_FAIL in results",
                             );
                         }
+                        // horizon must match first-fail scenario runtime/label
+                        if let Some(hl) = &m.frontier.horizon_label {
+                            if let Some(sc) = m.plan.scenarios.iter().find(|s| s.id == *ff) {
+                                if hl != &sc.runtime && !hl.contains(&sc.runtime) {
+                                    rep.err(
+                                        "frontier_horizon_mismatch",
+                                        None,
+                                        format!(
+                                            "horizon_label {hl:?} does not match first-fail runtime {}",
+                                            sc.runtime
+                                        ),
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
-                rep.semantic_checks += 3;
+                rep.semantic_checks += 5;
             }
             Err(e) => rep.err("run_json_parse", Some("run.json"), e.to_string()),
         }
@@ -481,12 +820,25 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
         rep.err("missing_run_json", Some("run.json"), "missing run.json");
     }
 
-    // workspace-manifest exact set
+    // workspace authority is mandatory (removing both must FAIL)
     let wm_path = run_root.join("workspace-manifest.json");
     let work = run_root.join("workspace");
-    if wm_path.exists() && work.exists() {
+    if !wm_path.is_file() || !work.is_dir() {
+        rep.err(
+            "missing_workspace_authority",
+            Some("workspace"),
+            "both workspace/ and workspace-manifest.json are required",
+        );
+    } else {
         match serde_json::from_str::<WorkspaceManifest>(&std::fs::read_to_string(&wm_path)?) {
             Ok(wm) => {
+                if wm.schema_version != 1 {
+                    rep.err(
+                        "unsupported_workspace_schema",
+                        Some("workspace-manifest.json"),
+                        format!("workspace-manifest schema_version {}", wm.schema_version),
+                    );
+                }
                 let mut actual = BTreeMap::new();
                 if let Err(e) = walk_source(&work, &work, &mut actual) {
                     rep.err("workspace_walk", Some("workspace"), e.to_string());
@@ -549,16 +901,57 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
     Ok(rep)
 }
 
+fn check_phase_timestamps(v: &serde_json::Value, path: &str, rep: &mut VerifyReport) {
+    let start = v
+        .get("started_at")
+        .or_else(|| v.get("start"))
+        .and_then(|x| x.as_str());
+    let finish = v
+        .get("finished_at")
+        .or_else(|| v.get("end"))
+        .and_then(|x| x.as_str());
+    if let (Some(s), Some(f)) = (start, finish) {
+        if let (Ok(st), Ok(ft)) = (
+            chrono::DateTime::parse_from_rfc3339(s),
+            chrono::DateTime::parse_from_rfc3339(f),
+        ) {
+            if st > ft {
+                rep.err(
+                    "phase_time_order",
+                    Some(path),
+                    "phase started_at > finished_at",
+                );
+            }
+            if let Some(dur) = v.get("duration_ms").and_then(|x| x.as_u64()) {
+                let delta = (ft - st).num_milliseconds().unsigned_abs();
+                // allow 2s tolerance for rounding
+                if delta.abs_diff(dur) > 2000 {
+                    rep.err(
+                        "phase_duration_mismatch",
+                        Some(path),
+                        format!("duration_ms {dur} incompatible with timestamps (delta {delta}ms)"),
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn check_replay_attempts(run_root: &Path, rep: &mut VerifyReport) {
     let sc_root = run_root.join("scenarios");
     if !sc_root.exists() {
         return;
     }
+    // load original results for signature/digest comparison
+    let run_m = load_run_manifest_loose(run_root).ok();
     for sc in std::fs::read_dir(sc_root).into_iter().flatten().flatten() {
         if !sc.path().is_dir() {
             continue;
         }
         let sid = sc.file_name().to_string_lossy().to_string();
+        let orig = run_m
+            .as_ref()
+            .and_then(|m| m.results.iter().find(|r| r.scenario_id == sid));
         let replays = sc.path().join("replays");
         if !replays.exists() {
             continue;
@@ -583,16 +976,64 @@ fn check_replay_attempts(run_root: &Path, rep: &mut VerifyReport) {
             }
             let result_path = att.path().join("result.json");
             if result_path.exists() {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(
-                    &std::fs::read_to_string(result_path).unwrap_or_default(),
-                ) {
-                    if v.get("scenario_id").and_then(|x| x.as_str()) != Some(sid.as_str()) {
-                        rep.err(
-                            "replay_scenario_mismatch",
-                            Some(&base),
-                            "replay result scenario_id mismatch",
-                        );
+                let raw = std::fs::read_to_string(&result_path).unwrap_or_default();
+                match serde_json::from_str::<serde_json::Value>(&raw) {
+                    Ok(v) => {
+                        if v.get("scenario_id").and_then(|x| x.as_str()) != Some(sid.as_str()) {
+                            rep.err(
+                                "replay_scenario_mismatch",
+                                Some(&base),
+                                "replay result scenario_id mismatch",
+                            );
+                        }
+                        if let Some(o) = orig {
+                            if let Some(rd) = v.get("recorded_digest").and_then(|x| x.as_str()) {
+                                if let Some(od) = &o.environment.image_digest {
+                                    let norm = |d: &str| {
+                                        d.split("sha256:")
+                                            .nth(1)
+                                            .unwrap_or(d)
+                                            .chars()
+                                            .take(64)
+                                            .collect::<String>()
+                                    };
+                                    if norm(rd) != norm(od) && rd != od.as_str() {
+                                        rep.err(
+                                            "replay_digest_mismatch",
+                                            Some(&base),
+                                            "replay recorded_digest != original environment digest",
+                                        );
+                                    }
+                                }
+                            }
+                            if let (Some(osig), Some(rsig)) = (
+                                o.failure.as_ref().map(|f| f.normalized_hash.as_str()),
+                                v.get("original_signature").and_then(|x| x.as_str()),
+                            ) {
+                                if !hashes_equal(osig, rsig) {
+                                    rep.err(
+                                        "replay_signature_mismatch",
+                                        Some(&base),
+                                        "replay original_signature != scenario failure signature",
+                                    );
+                                }
+                            }
+                            if let Some(oe) = v.get("original_exit").and_then(|x| x.as_i64()) {
+                                if Some(oe as i32) != o.exit_code {
+                                    rep.err(
+                                        "replay_original_exit_mismatch",
+                                        Some(&base),
+                                        "replay original_exit != scenario exit",
+                                    );
+                                }
+                            }
+                        }
                     }
+                    Err(e) => rep.err(
+                        "replay_result_parse",
+                        Some(&format!("{base}/result.json")),
+                        format!("invalid replay result JSON: {e}"),
+                    ),
                 }
             }
         }
@@ -602,11 +1043,18 @@ fn check_replay_attempts(run_root: &Path, rep: &mut VerifyReport) {
 
 fn required_for_verdict(v: Verdict) -> Vec<&'static str> {
     match v {
+        // RC2: completed PASS requires full fetch+test phase evidence
         Verdict::BaselinePass | Verdict::FuturePass => vec![
             "scenario.json",
             "environment.json",
             "fetch-commands.json",
+            "fetch-phase.json",
+            "fetch-result.json",
+            "fetch-stdout.log",
+            "fetch-stderr.log",
             "test-commands.json",
+            "test-phase.json",
+            "test-result.json",
             "result.json",
             "stdout.log",
             "stderr.log",
@@ -618,6 +1066,8 @@ fn required_for_verdict(v: Verdict) -> Vec<&'static str> {
             "fetch-commands.json",
             "fetch-phase.json",
             "fetch-result.json",
+            "fetch-stdout.log",
+            "fetch-stderr.log",
             "test-commands.json",
             "test-phase.json",
             "test-result.json",
@@ -670,6 +1120,11 @@ fn parse_checksums(path: &Path) -> Result<BTreeMap<String, String>> {
         }
         let nh = normalize_hash(hash)?;
         validate_rel_path(name)?;
+        if m.contains_key(name) {
+            return Err(TcError::InvalidState(format!(
+                "duplicate checksums.txt path: {name}"
+            )));
+        }
         m.insert(name.to_string(), nh);
     }
     Ok(m)

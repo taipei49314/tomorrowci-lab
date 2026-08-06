@@ -152,14 +152,15 @@ fn write_min_run(root: &Path) -> String {
         selection_notes: vec![],
         budget_max: 8,
     };
+    let cfg_body = "{\n  \"version\": 1\n}\n";
+    let config_hash = tomorrowci_evidence::hash_bytes(cfg_body.as_bytes());
     let identity = RunIdentity {
         source_commit: Some("deadbeef".into()),
         dirty_tree: false,
         tool_version: "0.1.1-alpha.3".into(),
         adapter_name: "python".into(),
         adapter_version: "0.1.1-alpha.3".into(),
-        config_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            .into(),
+        config_hash: config_hash.clone(),
         manifest_hashes: IndexMap::new(),
         container_engine: Some("docker".into()),
         container_engine_version: Some("24".into()),
@@ -177,7 +178,7 @@ fn write_min_run(root: &Path) -> String {
             commit_sha: Some("deadbeef".into()),
             is_disposable_copy: true,
         },
-        config_hash: identity.config_hash.clone(),
+        config_hash: config_hash.clone(),
         detection: ProjectDetection {
             ecosystem: Ecosystem::Python,
             manifests: vec!["requirements.txt".into()],
@@ -227,6 +228,8 @@ fn write_min_run(root: &Path) -> String {
             serde_json::to_string_pretty(&manifest.results).unwrap()
         } else if name == "plan.json" {
             serde_json::to_string_pretty(&manifest.plan).unwrap()
+        } else if name == "config.normalized.json" {
+            cfg_body.to_string()
         } else if name.ends_with(".json") {
             "{}".into()
         } else {
@@ -448,6 +451,254 @@ fn incomplete_replay_attempt_rejected() {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("stdout.log"), "x").unwrap();
         // missing result.json + stderr.log
+        finalize_run_checksums(rr).unwrap();
+    });
+}
+
+#[test]
+fn remove_identity_rejected_even_after_reindex() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        let raw = fs::read_to_string(rr.join("run.json")).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        v.as_object_mut().unwrap().remove("identity");
+        fs::write(
+            rr.join("run.json"),
+            serde_json::to_string_pretty(&v).unwrap(),
+        )
+        .unwrap();
+        finalize_run_checksums(rr).unwrap();
+    });
+}
+
+#[test]
+fn forge_result_verdict_rejected_after_reindex() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        let p = rr.join("scenarios/py310-locked/result.json");
+        let raw = fs::read_to_string(&p).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        v["verdict"] = serde_json::json!("FUTURE_PASS");
+        v["exit_code"] = serde_json::json!(0);
+        v["failure"] = serde_json::Value::Null;
+        fs::write(&p, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+        finalize_run_checksums(rr).unwrap();
+    });
+}
+
+#[test]
+fn remove_workspace_authority_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        let _ = fs::remove_dir_all(rr.join("workspace"));
+        let _ = fs::remove_file(rr.join("workspace-manifest.json"));
+        finalize_run_checksums(rr).unwrap();
+    });
+}
+
+#[test]
+fn unsupported_index_generation_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        let raw = fs::read_to_string(rr.join("evidence-index.json")).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        v["schema_version"] = serde_json::json!(777);
+        v["generation"] = serde_json::json!(999);
+        fs::write(
+            rr.join("evidence-index.json"),
+            serde_json::to_string_pretty(&v).unwrap(),
+        )
+        .unwrap();
+        // rehash index into checksums only (semantic forgery)
+        let h = tomorrowci_evidence::hash_file(&rr.join("evidence-index.json")).unwrap();
+        let mut lines = String::new();
+        for line in fs::read_to_string(rr.join("checksums.txt"))
+            .unwrap()
+            .lines()
+        {
+            if line.contains("evidence-index.json") {
+                lines.push_str(&format!("{h}  evidence-index.json\n"));
+            } else {
+                lines.push_str(line);
+                lines.push('\n');
+            }
+        }
+        fs::write(rr.join("checksums.txt"), lines).unwrap();
+    });
+}
+
+#[test]
+fn arbitrary_index_class_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        let raw = fs::read_to_string(rr.join("evidence-index.json")).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        v["files"]["run.json"]["class"] = serde_json::json!("totally-arbitrary");
+        v["files"]["run.json"]["required"] = serde_json::json!(false);
+        fs::write(
+            rr.join("evidence-index.json"),
+            serde_json::to_string_pretty(&v).unwrap(),
+        )
+        .unwrap();
+        let h = tomorrowci_evidence::hash_file(&rr.join("evidence-index.json")).unwrap();
+        let mut lines = String::new();
+        for line in fs::read_to_string(rr.join("checksums.txt"))
+            .unwrap()
+            .lines()
+        {
+            if line.contains("evidence-index.json") {
+                lines.push_str(&format!("{h}  evidence-index.json\n"));
+            } else {
+                lines.push_str(line);
+                lines.push('\n');
+            }
+        }
+        fs::write(rr.join("checksums.txt"), lines).unwrap();
+    });
+}
+
+#[test]
+fn config_content_forge_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        fs::write(
+            rr.join("config.normalized.json"),
+            "{\n  \"forged\": true\n}\n",
+        )
+        .unwrap();
+        finalize_run_checksums(rr).unwrap();
+    });
+}
+
+#[test]
+fn forbidden_scenario_checksums_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        fs::write(
+            rr.join("scenarios/py310-locked/checksums.txt"),
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  result.json\n",
+        )
+        .unwrap();
+        // do not reindex — scenario checksums are forbidden regardless
+    });
+}
+
+#[test]
+fn duplicate_checksum_path_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        let c = fs::read_to_string(rr.join("checksums.txt")).unwrap();
+        let dup = c
+            .lines()
+            .find(|l| l.contains("run.json"))
+            .unwrap_or("")
+            .to_string();
+        let mut out = c;
+        out.push_str(&dup);
+        out.push('\n');
+        fs::write(rr.join("checksums.txt"), out).unwrap();
+    });
+}
+
+#[test]
+fn uppercase_hash_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        let raw = fs::read_to_string(rr.join("evidence-index.json")).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let h = v["files"]["run.json"]["sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let upper = h
+            .replace("sha256:", "SHA256:")
+            .to_ascii_uppercase()
+            .replacen("SHA256:", "SHA256:", 1);
+        // force SHA256: + uppercase hex
+        let hex = h.trim_start_matches("sha256:");
+        v["files"]["run.json"]["sha256"] =
+            serde_json::json!(format!("SHA256:{}", hex.to_ascii_uppercase()));
+        fs::write(
+            rr.join("evidence-index.json"),
+            serde_json::to_string_pretty(&v).unwrap(),
+        )
+        .unwrap();
+        let _ = upper;
+    });
+}
+
+#[test]
+fn run_time_order_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        let raw = fs::read_to_string(rr.join("run.json")).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        v["started_at"] = serde_json::json!("2026-08-06T12:00:00Z");
+        v["finished_at"] = serde_json::json!("2026-08-06T11:00:00Z");
+        fs::write(
+            rr.join("run.json"),
+            serde_json::to_string_pretty(&v).unwrap(),
+        )
+        .unwrap();
+        finalize_run_checksums(rr).unwrap();
+    });
+}
+
+#[test]
+fn forge_frontier_horizon_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        let raw = fs::read_to_string(rr.join("run.json")).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        v["frontier"]["horizon_label"] = serde_json::json!("99.99");
+        fs::write(
+            rr.join("run.json"),
+            serde_json::to_string_pretty(&v).unwrap(),
+        )
+        .unwrap();
+        finalize_run_checksums(rr).unwrap();
+    });
+}
+
+#[test]
+fn forge_environment_digest_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        let p = rr.join("scenarios/py310-locked/environment.json");
+        let raw = fs::read_to_string(&p).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        v["image_tag"] = serde_json::json!("python:9.9-slim");
+        v["image"] = serde_json::json!("python:9.9-slim");
+        v["image_digest"] = serde_json::json!(
+            "python@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        );
+        fs::write(&p, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+        finalize_run_checksums(rr).unwrap();
+    });
+}
+
+#[test]
+fn invalid_replay_result_json_rejected() {
+    let d = tempdir().unwrap();
+    let id = write_min_run(d.path());
+    mutate_and_expect_fail(d.path(), &id, |rr| {
+        let dir = rr.join("scenarios/py310-locked/replays/attempt-1");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("result.json"), "{not json").unwrap();
+        fs::write(dir.join("stdout.log"), "x").unwrap();
+        fs::write(dir.join("stderr.log"), "y").unwrap();
         finalize_run_checksums(rr).unwrap();
     });
 }

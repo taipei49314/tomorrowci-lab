@@ -17,9 +17,7 @@ use tomorrowci_core::{
     ExecutionResult, FailureSignature, ProjectDetection, RawExecutionResult, RepositorySnapshot,
     Result, RunIdentity, RunManifest, Scenario, TcError, Verdict,
 };
-use tomorrowci_evidence::{
-    write_checksums, write_run_manifest, write_workspace_manifest, EvidenceLayout,
-};
+use tomorrowci_evidence::{write_run_manifest, write_workspace_manifest, EvidenceLayout};
 use tomorrowci_metrics::ScanMetrics;
 use tomorrowci_report::{write_github_job_summary, write_html_report, write_json_report};
 use tomorrowci_sandbox::{
@@ -1061,34 +1059,14 @@ fn persist_scenario_artifacts(
     )?;
     write_replay_scripts(sc_dir, env, fetch_cmds, test_cmds, &scenario.id, &engine)?;
 
-    let mut checksums = Vec::new();
-    for name in [
-        "scenario.json",
-        "environment.json",
-        "fetch-commands.json",
-        "test-commands.json",
-        "commands.json",
-        "result.json",
-        "stdout.log",
-        "stderr.log",
-        "failure-signature.json",
-        "replay.json",
-        "replay.sh",
-        "replay.ps1",
-        "fetch-result.json",
-        "test-result.json",
-    ] {
-        let p = sc_dir.join(name);
-        if p.exists() {
-            if let Ok(h) = tomorrowci_evidence::file_checksum(&p) {
-                checksums.push((name.into(), h));
-            }
-        }
-    }
+    // RC2: no scenario-level checksums.txt — sole inventory authority is run-root evidence-index.
     if let Some(raw) = fetch_raw {
         let _ = raw; // already on disk if written
     }
-    write_checksums(sc_dir, &checksums)?;
+    let stale = sc_dir.join("checksums.txt");
+    if stale.exists() {
+        let _ = std::fs::remove_file(stale);
+    }
     Ok(())
 }
 
@@ -1288,6 +1266,32 @@ pub fn replay_scenario(repo: &Path, run_id: &str, scenario_id: &str) -> Result<S
         ));
     }
 
+    // RC2 authorization order: full verifier BEFORE engine detect / image / attempt dir
+    let vr = tomorrowci_evidence::verify_run_root(&root)?;
+    if !vr.ok {
+        return Err(TcError::Blocked(format!(
+            "pre-replay verify failed: {:?}",
+            vr.errors
+                .iter()
+                .map(|e| format!("{}:{}", e.code, e.message))
+                .collect::<Vec<_>>()
+        )));
+    }
+
+    // Adapter from recorded identity — no default Python fallback
+    let adapter_name = m
+        .identity
+        .as_ref()
+        .map(|i| i.adapter_name.as_str())
+        .ok_or_else(|| {
+            TcError::Blocked("missing run identity.adapter_name; cannot replay".into())
+        })?;
+    if adapter_name != "python" && adapter_name != "node" && adapter_name != "rust" {
+        return Err(TcError::Blocked(format!(
+            "unsupported recorded adapter: {adapter_name}"
+        )));
+    }
+
     let executor = ContainerExecutor::detect()?;
     // Resolve and require same digest
     let resolved = executor.ensure_image(
@@ -1316,30 +1320,6 @@ pub fn replay_scenario(repo: &Path, run_id: &str, scenario_id: &str) -> Result<S
     env_run.image_digest = Some(recorded_digest.clone());
     env_run.image = env.tag().to_string();
     env_run.image_tag = env.tag().to_string();
-
-    // Full verifier required before any attempt directory is created
-    let vr = tomorrowci_evidence::verify_run_root(&root)?;
-    if !vr.ok {
-        return Err(TcError::Blocked(format!(
-            "pre-replay verify failed: {:?}",
-            vr.errors
-                .iter()
-                .map(|e| format!("{}:{}", e.code, e.message))
-                .collect::<Vec<_>>()
-        )));
-    }
-
-    // Adapter from recorded identity (not unconditional Python)
-    let adapter_name = m
-        .identity
-        .as_ref()
-        .map(|i| i.adapter_name.as_str())
-        .unwrap_or("python");
-    if adapter_name != "python" && adapter_name != "node" && adapter_name != "rust" {
-        return Err(TcError::Blocked(format!(
-            "unsupported recorded adapter: {adapter_name}"
-        )));
-    }
 
     let fetch_to = Duration::from_secs(env.fetch_timeout_seconds.unwrap_or(600));
     let test_to = Duration::from_secs(env.test_timeout_seconds.unwrap_or(900));

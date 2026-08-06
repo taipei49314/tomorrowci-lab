@@ -28,7 +28,7 @@ No breakage claim without replayable evidence.
 | `v0.1.0` | REJECTED product candidate |
 | `v0.1.1-alpha.1` | REJECTED acceptance / live-path demonstration |
 | `v0.1.1-alpha.2` | REJECTED evidence-closure / successful release-pipeline demonstration ([audit](docs/audits/v0.1.1-alpha.2-rejection.md)) |
-| `v0.1.1-alpha.3` | **NOT_CREATED** until mutation suite + self-verifying bundle pass |
+| `v0.1.1-alpha.3` | **NOT_CREATED** — RC1 rejected (semantic false-PASS); RC2 track `repair/alpha3-semantic-authority-rc2` |
 
 Exact release facts (workflow run IDs, evidence hashes) are **not** hard-coded into source commits. They are emitted as `RELEASE_PROVENANCE.json` by the tag workflow.
 

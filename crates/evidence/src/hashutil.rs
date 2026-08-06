@@ -1,32 +1,31 @@
-//! Canonical SHA-256 string format: `sha256:` + 64 lowercase hex digits.
+//! Canonical SHA-256 string format: `sha256:` + 64 lowercase hex digits only.
 
 use tomorrowci_core::{sha256_bytes, Result, TcError};
 
-/// Normalize any hash string to `sha256:<64hex>` or error.
+/// Require exact canonical form `sha256:<64 lowercase hex>`.
+/// Rejects uppercase prefix/hex, bare hex, and double prefixes.
 pub fn normalize_hash(s: &str) -> Result<String> {
     let t = s.trim();
-    let hex = t
-        .strip_prefix("sha256:")
-        .or_else(|| t.strip_prefix("SHA256:"))
-        .unwrap_or(t);
-    // strip accidental double prefix
-    let hex = hex.strip_prefix("sha256:").unwrap_or(hex);
-    let hex = hex.to_ascii_lowercase();
-    if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(TcError::InvalidState(format!(
-            "malformed sha256 hash (expected 64 hex): {s}"
-        )));
-    }
-    if s.contains("sha256:sha256:") || s.matches("sha256:").count() > 1 {
+    if t.contains("sha256:sha256:") || t.matches("sha256:").count() > 1 {
         return Err(TcError::InvalidState(format!(
             "double-prefixed or malformed hash: {s}"
+        )));
+    }
+    let Some(hex) = t.strip_prefix("sha256:") else {
+        return Err(TcError::InvalidState(format!(
+            "non-canonical hash (require sha256:<64 lowercase hex>): {s}"
+        )));
+    };
+    // Lowercase hex only — uppercase A-F is non-canonical.
+    if hex.len() != 64 || !hex.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')) {
+        return Err(TcError::InvalidState(format!(
+            "malformed sha256 hash (expected 64 lowercase hex): {s}"
         )));
     }
     Ok(format!("sha256:{hex}"))
 }
 
 pub fn hash_bytes(data: &[u8]) -> String {
-    // sha256_bytes already returns sha256:<hex>
     let h = sha256_bytes(data);
     normalize_hash(&h).unwrap_or(h)
 }
@@ -51,6 +50,18 @@ mod tests {
     fn rejects_double_prefix() {
         assert!(normalize_hash(
             "sha256:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_uppercase_prefix_and_hex() {
+        assert!(normalize_hash(
+            "SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
+        .is_err());
+        assert!(normalize_hash(
+            "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         )
         .is_err());
     }
