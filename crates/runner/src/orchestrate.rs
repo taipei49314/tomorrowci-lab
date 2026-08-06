@@ -1257,7 +1257,9 @@ pub fn replay_scenario(repo: &Path, run_id: &str, scenario_id: &str) -> Result<S
         env_run.image = recorded_digest.clone();
     }
 
-    // Re-prepare venv paths (fetch will recreate)
+    // Re-prepare writable scenario state; fetch must recreate venv from recorded argv.
+    prepare_scenario_state(&work)?;
+    let _ = std::fs::remove_dir_all(work.join(".tomorrowci").join("venv"));
     prepare_scenario_state(&work)?;
 
     if !fetch_cmds.is_empty() {
@@ -1271,8 +1273,9 @@ pub fn replay_scenario(repo: &Path, run_id: &str, scenario_id: &str) -> Result<S
         })?;
         if fr.exit_code != Some(0) || fr.timed_out {
             return Err(TcError::Blocked(format!(
-                "replay fetch failed exit={:?}",
-                fr.exit_code
+                "replay fetch failed exit={:?} stderr={}",
+                fr.exit_code,
+                fr.stderr.chars().take(400).collect::<String>()
             )));
         }
     }

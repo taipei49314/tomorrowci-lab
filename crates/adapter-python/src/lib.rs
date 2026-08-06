@@ -255,8 +255,12 @@ pub fn python_fetch_commands(workspace: &Path, upgrade: bool) -> Result<Vec<Comm
             "Python install path requires requirements.txt in this repair milestone (pip only); pyproject-only is UNSUPPORTED".into(),
         ));
     }
+    // Always recreate venv so replay / multi-scenario runs cannot reuse a stale
+    // interpreter from a previous candidate.
     let mut install = vec![
-        "/work/.tomorrowci/venv/bin/pip".into(),
+        "/work/.tomorrowci/venv/bin/python".into(),
+        "-m".into(),
+        "pip".into(),
         "install".into(),
         "-q".into(),
         "--cache-dir".into(),
@@ -268,6 +272,16 @@ pub fn python_fetch_commands(workspace: &Path, upgrade: bool) -> Result<Vec<Comm
         install.push("--upgrade".into());
     }
     Ok(vec![
+        CommandSpec {
+            argv: vec![
+                "rm".into(),
+                "-rf".into(),
+                "/work/.tomorrowci/venv".into(),
+            ],
+            cwd: Some("/work".into()),
+            network: false,
+            phase: "fetch".into(),
+        },
         CommandSpec {
             argv: vec![
                 "python".into(),
