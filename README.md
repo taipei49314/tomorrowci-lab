@@ -2,7 +2,11 @@
 
 > **Continuous Integration Against the Future.**
 
-TomorrowCI finds the earliest **concrete** future environment in which a repository stops building or passing tests, isolates the smallest breakage-inducing change, and emits **replayable evidence**.
+TomorrowCI aims to find the earliest **concrete** future environment in which a
+repository stops building or passing tests, isolate the smallest
+breakage-inducing change, and emit **replayable evidence**. The currently
+demonstrated public slice is the Python runtime path described below; wider
+product surfaces remain explicit qualification work.
 
 ```text
 No forecast without an executable scenario.
@@ -14,6 +18,15 @@ No breakage claim without replayable evidence.
 **TomorrowCI is an experimental pre-alpha architecture. The measured
 `v0.1.1-alpha.2` lab release is published; broader product qualification is
 still in progress.**
+
+Current source is the unreleased `0.2.0-alpha.1` trust-core development line.
+That source version is not a release, support, or external-qualification claim.
+
+The current live baseline, historical tag identities, clean-download checks,
+and honest blockers are recorded in
+[`docs/qualification/BASELINE.md`](docs/qualification/BASELINE.md). Open
+qualification work is machine-readable in
+[`docs/qualification/backlog.json`](docs/qualification/backlog.json).
 
 | Area | Status | Notes |
 |------|--------|--------|
@@ -33,10 +46,14 @@ still in progress.**
 | Tag | Disposition |
 |-----|-------------|
 | `v0.1.0` | **REJECTED** product candidate — scripted acceptance; red CI |
+| `v0.1.0-grok-session` | **REJECTED** historical parallel candidate — same peeled commit as `v0.1.0`; GitHub release metadata corrected without moving the tag or assets |
 | `v0.1.1-alpha.1` | **REJECTED acceptance candidate** / live-path demonstration — Python slice real; evidence envelope + release gate incomplete ([audit note](docs/audits/v0.1.1-alpha.1-rejection.md)) |
 | `v0.1.1-alpha.2` | **PUBLISHED MEASURED LAB RELEASE** — Python live path, verify, replay ×2, Action dogfood, and release assets passed; Node/Rust live and the other `NOT_RUN` rows remain unclaimed |
 
-Full matrix: [docs/CLAIM_TO_EVIDENCE.md](docs/CLAIM_TO_EVIDENCE.md).
+Full matrix: [docs/CLAIM_TO_EVIDENCE.md](docs/CLAIM_TO_EVIDENCE.md). GitHub
+currently selects the rejected `v0.1.0-grok-session` as “Latest” because it is
+the newest historical non-prerelease; the title and notes now lead with its
+rejected disposition so this metadata behavior is not an acceptance claim.
 
 ## Quick start
 

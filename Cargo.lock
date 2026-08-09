@@ -647,7 +647,7 @@ checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "tomorrowci-adapter-node"
-version = "0.1.1-alpha.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "indexmap",
  "serde",
@@ -659,7 +659,7 @@ dependencies = [
 
 [[package]]
 name = "tomorrowci-adapter-python"
-version = "0.1.1-alpha.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "indexmap",
  "serde",
@@ -672,7 +672,7 @@ dependencies = [
 
 [[package]]
 name = "tomorrowci-adapter-rust"
-version = "0.1.1-alpha.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "indexmap",
  "serde",
@@ -685,7 +685,7 @@ dependencies = [
 
 [[package]]
 name = "tomorrowci-adapters"
-version = "0.1.1-alpha.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -694,7 +694,7 @@ dependencies = [
 
 [[package]]
 name = "tomorrowci-cli"
-version = "0.1.1-alpha.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -716,7 +716,7 @@ dependencies = [
 
 [[package]]
 name = "tomorrowci-core"
-version = "0.1.1-alpha.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "chrono",
  "hex",
@@ -732,7 +732,7 @@ dependencies = [
 
 [[package]]
 name = "tomorrowci-evidence"
-version = "0.1.1-alpha.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "chrono",
  "serde",
@@ -743,7 +743,7 @@ dependencies = [
 
 [[package]]
 name = "tomorrowci-gen-demo"
-version = "0.1.1-alpha.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "anyhow",
  "tomorrowci-adapter-python",
@@ -754,7 +754,7 @@ dependencies = [
 
 [[package]]
 name = "tomorrowci-metrics"
-version = "0.1.1-alpha.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "chrono",
  "indexmap",
@@ -767,7 +767,7 @@ dependencies = [
 
 [[package]]
 name = "tomorrowci-report"
-version = "0.1.1-alpha.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "chrono",
  "indexmap",
@@ -779,7 +779,7 @@ dependencies = [
 
 [[package]]
 name = "tomorrowci-runner"
-version = "0.1.1-alpha.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "chrono",
  "indexmap",
@@ -800,13 +800,14 @@ dependencies = [
 
 [[package]]
 name = "tomorrowci-sandbox"
-version = "0.1.1-alpha.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
  "tomorrowci-core",
+ "uuid",
 ]
 
 [[package]]

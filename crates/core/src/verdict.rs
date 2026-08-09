@@ -79,7 +79,11 @@ pub fn compute_breakage_frontier(
                 .map(|(s, _)| s.axes_changed.clone())
                 .unwrap_or_default(),
             failure_signature: sig,
-            grade: EvidenceGrade::Observed,
+            grade: ordered_results
+                .iter()
+                .find(|(scenario, _)| scenario.id == sid)
+                .map(|(scenario, _)| scenario.grade)
+                .unwrap_or(EvidenceGrade::Inconclusive),
             replay_command,
             notes: vec!["Breakage horizon authorized after confirmed FUTURE_FAIL.".into()],
         },

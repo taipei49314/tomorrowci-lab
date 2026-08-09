@@ -4,11 +4,32 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
-use tomorrowci_core::{CommandSpec, EnvironmentSpec, RawExecutionResult, Result, TcError};
+use tomorrowci_core::{
+    validate_image_digest, CommandSpec, EnvironmentSpec, RawExecutionResult, Result, TcError,
+};
+use uuid::Uuid;
+
+/// Maximum stdout bytes retained in memory for one container invocation.
+///
+/// The pipe is still drained after this limit; excess bytes are counted and
+/// represented by a deterministic truncation marker in persisted output.
+pub const MAX_CONTAINER_STDOUT_BYTES: usize = 512 * 1024;
+
+/// Maximum stderr bytes retained in memory for one container invocation.
+///
+/// The pipe is still drained after this limit; excess bytes are counted and
+/// represented by a deterministic truncation marker in persisted output.
+pub const MAX_CONTAINER_STDERR_BYTES: usize = 512 * 1024;
+
+/// A stuck engine cleanup command must not hold the runner indefinitely.
+pub const CONTAINER_CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
+
+const PIPE_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+const STREAM_READ_CHUNK_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,7 +66,7 @@ pub fn detect_engines() -> SandboxAvailability {
         }
         None
     };
-    let engine_version = selected.and_then(engine_version_string);
+    let engine_version = selected.and_then(engine_version);
     SandboxAvailability {
         docker,
         podman,
@@ -74,7 +95,8 @@ fn engine_alive(bin: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn engine_version_string(engine: SandboxEngine) -> Option<String> {
+/// Query the exact selected engine's server/build version.
+pub fn engine_version(engine: SandboxEngine) -> Option<String> {
     let bin = engine_bin(engine);
     let out = Command::new(bin)
         .args(["version", "--format", "{{.Server.Version}}"])
@@ -143,22 +165,87 @@ fn copy_dir_filtered(src: &Path, dest: &Path) -> Result<()> {
         let name_s = name.to_string_lossy();
         if matches!(
             name_s.as_ref(),
-            "target" | "node_modules" | ".git" | ".tomorrowci" | "__pycache__" | ".venv" | "venv"
+            "target"
+                | "node_modules"
+                | ".git"
+                | ".tomorrowci"
+                | "__pycache__"
+                | ".venv"
+                | "venv"
+                | ".pytest_cache"
+                | ".mypy_cache"
+                | ".ruff_cache"
+                | ".tox"
+                | ".nox"
         ) {
             continue;
         }
         let from = entry.path();
         let to = dest.join(&name);
-        if from.is_symlink() {
-            continue;
+        let metadata = std::fs::symlink_metadata(&from)?;
+        if metadata_is_alias(&metadata) {
+            return Err(TcError::InvalidState(format!(
+                "refusing source symlink/reparse point while copying workspace: {}",
+                from.display()
+            )));
         }
-        if from.is_dir() {
+        if metadata.is_dir() {
             copy_dir_filtered(&from, &to)?;
-        } else {
+        } else if metadata.is_file() {
             std::fs::copy(&from, &to)?;
+        } else {
+            return Err(TcError::InvalidState(format!(
+                "unsupported source filesystem entry while copying workspace: {}",
+                from.display()
+            )));
         }
     }
     Ok(())
+}
+
+/// Detect the configured engine without silently falling back to a different
+/// engine. `auto` retains Docker-first auto-detection for compatibility.
+pub fn detect_requested_engine(requested: &str) -> Result<SandboxEngine> {
+    let availability = detect_engines();
+    select_requested_engine(requested, &availability)
+}
+
+fn select_requested_engine(
+    requested: &str,
+    availability: &SandboxAvailability,
+) -> Result<SandboxEngine> {
+    match requested {
+        "auto" => availability
+            .selected
+            .ok_or_else(|| TcError::Blocked(availability.notes.join("; "))),
+        "docker" if availability.docker => Ok(SandboxEngine::Docker),
+        "podman" if availability.podman => Ok(SandboxEngine::Podman),
+        "docker" => Err(TcError::Blocked(
+            "sandbox.engine requested docker, but the Docker daemon is unavailable; refusing to fall back to Podman"
+                .into(),
+        )),
+        "podman" => Err(TcError::Blocked(
+            "sandbox.engine requested podman, but the Podman daemon is unavailable; refusing to fall back to Docker"
+                .into(),
+        )),
+        other => Err(TcError::Config(format!(
+            "sandbox.engine must be auto|docker|podman, got {other}"
+        ))),
+    }
+}
+
+fn metadata_is_alias(metadata: &std::fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    false
 }
 
 /// Prepare scenario-local writable state under the disposable workspace.
@@ -218,7 +305,9 @@ pub fn resolve_image_digest(engine: SandboxEngine, image: &str) -> Option<String
     let bin = engine_bin(engine);
     // Already a digest-pinned ref
     if image.contains("@sha256:") {
-        return Some(image.to_string());
+        return validate_image_digest(image)
+            .is_ok()
+            .then(|| image.to_string());
     }
     let out = Command::new(bin)
         .args([
@@ -239,11 +328,14 @@ pub fn resolve_image_digest(engine: SandboxEngine, image: &str) -> Option<String
     }
     // Normalize Id-only to sha256:...
     if s.starts_with("sha256:") || s.contains("@sha256:") {
-        Some(s)
+        validate_image_digest(&s).is_ok().then_some(s)
     } else if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-        Some(format!("sha256:{s}"))
+        let normalized = format!("sha256:{}", s.to_ascii_lowercase());
+        validate_image_digest(&normalized)
+            .is_ok()
+            .then_some(normalized)
     } else {
-        Some(s)
+        None
     }
 }
 
@@ -266,17 +358,171 @@ fn engine_bin(engine: SandboxEngine) -> &'static str {
     }
 }
 
+fn mount_source(path: &Path) -> String {
+    let rendered = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        if let Some(rest) = rendered.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{rest}");
+        }
+        if let Some(rest) = rendered.strip_prefix(r"\\?\") {
+            return rest.to_string();
+        }
+    }
+    rendered.into_owned()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct BoundedStreamCapture {
+    retained: Vec<u8>,
+    discarded_bytes: u64,
+}
+
+impl BoundedStreamCapture {
+    fn render(&self, limit: usize) -> String {
+        let mut rendered = String::from_utf8_lossy(&self.retained).into_owned();
+        if self.discarded_bytes > 0 {
+            rendered.push_str(&format!(
+                "\n...[truncated after {limit} bytes; discarded {} bytes]...\n",
+                self.discarded_bytes
+            ));
+        }
+        rendered
+    }
+}
+
+/// Retain at most `limit` bytes while continuing to read until EOF. Continuing
+/// to drain is required because stopping at the retention limit can deadlock a
+/// child whose pipe buffer becomes full.
+fn drain_stream_bounded<R: Read>(
+    mut reader: R,
+    limit: usize,
+) -> std::io::Result<BoundedStreamCapture> {
+    let mut retained = Vec::with_capacity(limit.min(STREAM_READ_CHUNK_BYTES));
+    let mut discarded_bytes = 0_u64;
+    let mut chunk = [0_u8; STREAM_READ_CHUNK_BYTES];
+    loop {
+        let read = reader.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        let remaining = limit.saturating_sub(retained.len());
+        let keep = remaining.min(read);
+        retained.extend_from_slice(&chunk[..keep]);
+        discarded_bytes = discarded_bytes.saturating_add((read - keep) as u64);
+    }
+    Ok(BoundedStreamCapture {
+        retained,
+        discarded_bytes,
+    })
+}
+
+fn spawn_bounded_drain<R>(
+    reader: R,
+    limit: usize,
+) -> mpsc::Receiver<std::io::Result<BoundedStreamCapture>>
+where
+    R: Read + Send + 'static,
+{
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(drain_stream_bounded(reader, limit));
+    });
+    receiver
+}
+
+fn receive_bounded_capture(
+    receiver: mpsc::Receiver<std::io::Result<BoundedStreamCapture>>,
+    stream_name: &str,
+) -> Result<BoundedStreamCapture> {
+    receiver
+        .recv_timeout(PIPE_DRAIN_TIMEOUT)
+        .map_err(|error| {
+            TcError::Blocked(format!(
+                "timed out draining container {stream_name} after process exit: {error}"
+            ))
+        })?
+        .map_err(|error| {
+            TcError::Blocked(format!("failed draining container {stream_name}: {error}"))
+        })
+}
+
+#[derive(Debug)]
+struct CleanupProcessOutput {
+    status: ExitStatus,
+    timed_out: bool,
+    stdout: BoundedStreamCapture,
+    stderr: BoundedStreamCapture,
+}
+
+/// Execute the exact-container cleanup process with an independent deadline.
+/// The child is killed and reaped when it exceeds the deadline.
+fn run_cleanup_process(mut command: Command, timeout: Duration) -> Result<CleanupProcessOutput> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| TcError::Blocked(format!("container cleanup spawn failed: {error}")))?;
+    let stdout = child
+        .stdout
+        .take()
+        .expect("cleanup stdout must be piped before spawn");
+    let stderr = child
+        .stderr
+        .take()
+        .expect("cleanup stderr must be piped before spawn");
+    let stdout_receiver = spawn_bounded_drain(stdout, MAX_CONTAINER_STDOUT_BYTES);
+    let stderr_receiver = spawn_bounded_drain(stderr, MAX_CONTAINER_STDERR_BYTES);
+
+    let timed_out = wait_with_timeout(&mut child, timeout)?;
+    let status = child_status_with_timeout(&mut child, PIPE_DRAIN_TIMEOUT, "cleanup process")?;
+    let stdout = receive_bounded_capture(stdout_receiver, "cleanup stdout")?;
+    let stderr = receive_bounded_capture(stderr_receiver, "cleanup stderr")?;
+    Ok(CleanupProcessOutput {
+        status,
+        timed_out,
+        stdout,
+        stderr,
+    })
+}
+
+fn cleanup_exact_container(engine: SandboxEngine, container_name: &str) -> Result<()> {
+    let bin = engine_bin(engine);
+    let mut command = Command::new(bin);
+    command.args(["rm", "-f", container_name]);
+    let output = run_cleanup_process(command, CONTAINER_CLEANUP_TIMEOUT)?;
+    let stderr = redact_secrets(&output.stderr.render(MAX_CONTAINER_STDERR_BYTES));
+    let stdout = redact_secrets(&output.stdout.render(MAX_CONTAINER_STDOUT_BYTES));
+    if output.timed_out {
+        return Err(TcError::Blocked(format!(
+            "timed-out container cleanup command exceeded {} seconds and was killed; container {container_name} may still be running",
+            CONTAINER_CLEANUP_TIMEOUT.as_secs()
+        )));
+    }
+    if !output.status.success() {
+        return Err(TcError::Blocked(format!(
+            "timed-out container cleanup failed for {container_name}: status={}; stderr={}; stdout={}",
+            output.status,
+            stderr.trim().chars().take(400).collect::<String>(),
+            stdout.trim().chars().take(400).collect::<String>()
+        )));
+    }
+    Ok(())
+}
+
 /// Run commands inside a container. Network should be "none" for test phase.
 pub fn run_in_container(req: &RunRequest) -> Result<RawExecutionResult> {
     SecurityPolicy::default().validate_safe_defaults()?;
     let bin = engine_bin(req.engine);
     let workspace =
         std::fs::canonicalize(&req.workspace_host).unwrap_or_else(|_| req.workspace_host.clone());
-    let mount = format!("{}:{}:rw", workspace.display(), req.workdir);
+    let mount = format!("{}:{}:rw", mount_source(&workspace), req.workdir);
+    let container_name = format!("tomorrowci-{}", Uuid::new_v4().simple());
 
     let mut docker_args: Vec<String> = vec![
         "run".into(),
         "--rm".into(),
+        "--name".into(),
+        container_name.clone(),
         "--network".into(),
         req.network.clone(),
         "--memory".into(),
@@ -346,46 +592,39 @@ pub fn run_in_container(req: &RunRequest) -> Result<RawExecutionResult> {
         .spawn()
         .map_err(|e| TcError::Blocked(format!("container spawn failed: {e}")))?;
 
-    let stdout_pipe = child.stdout.take();
-    let stderr_pipe = child.stderr.take();
-    let (tx_out, rx_out) = mpsc::channel::<Vec<u8>>();
-    let (tx_err, rx_err) = mpsc::channel::<Vec<u8>>();
-    if let Some(mut out) = stdout_pipe {
-        thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = out.read_to_end(&mut buf);
-            let _ = tx_out.send(buf);
-        });
-    }
-    if let Some(mut err) = stderr_pipe {
-        thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = err.read_to_end(&mut buf);
-            let _ = tx_err.send(buf);
-        });
-    }
+    let stdout_pipe = child
+        .stdout
+        .take()
+        .expect("container stdout must be piped before spawn");
+    let stderr_pipe = child
+        .stderr
+        .take()
+        .expect("container stderr must be piped before spawn");
+    let stdout_receiver = spawn_bounded_drain(stdout_pipe, MAX_CONTAINER_STDOUT_BYTES);
+    let stderr_receiver = spawn_bounded_drain(stderr_pipe, MAX_CONTAINER_STDERR_BYTES);
 
     let timed_out = wait_with_timeout(&mut child, req.timeout)?;
-    let status = child
-        .wait()
-        .map_err(|e| TcError::Blocked(format!("wait failed: {e}")))?;
+    let cleanup_error = if timed_out {
+        cleanup_exact_container(req.engine, &container_name)
+            .err()
+            .map(|error| error.to_string())
+    } else {
+        None
+    };
+    let status = child_status_with_timeout(&mut child, PIPE_DRAIN_TIMEOUT, "container client")?;
 
-    let stdout_bytes = rx_out
-        .recv_timeout(Duration::from_secs(5))
-        .unwrap_or_default();
-    let stderr_bytes = rx_err
-        .recv_timeout(Duration::from_secs(5))
-        .unwrap_or_default();
+    let stdout_capture = receive_bounded_capture(stdout_receiver, "stdout")?;
+    let stderr_capture = receive_bounded_capture(stderr_receiver, "stderr")?;
 
     let duration_ms = start.elapsed().as_millis() as u64;
-    let stdout = redact_secrets(&truncate_log(
-        &String::from_utf8_lossy(&stdout_bytes),
-        512 * 1024,
-    ));
-    let stderr = redact_secrets(&truncate_log(
-        &String::from_utf8_lossy(&stderr_bytes),
-        512 * 1024,
-    ));
+    let stdout = redact_secrets(&stdout_capture.render(MAX_CONTAINER_STDOUT_BYTES));
+    let stderr = redact_secrets(&stderr_capture.render(MAX_CONTAINER_STDERR_BYTES));
+    if let Some(error) = cleanup_error {
+        return Err(TcError::Blocked(format!(
+            "{error}; timed-out container may still be running; stderr={}",
+            stderr.chars().take(400).collect::<String>()
+        )));
+    }
 
     Ok(RawExecutionResult {
         exit_code: if timed_out { None } else { status.code() },
@@ -412,12 +651,37 @@ fn wait_with_timeout(child: &mut std::process::Child, timeout: Duration) -> Resu
             Ok(None) => {
                 if start.elapsed() > timeout {
                     let _ = child.kill();
-                    let _ = child.wait();
                     return Ok(true);
                 }
                 thread::sleep(Duration::from_millis(50));
             }
             Err(e) => return Err(TcError::Blocked(format!("try_wait: {e}"))),
+        }
+    }
+}
+
+fn child_status_with_timeout(
+    child: &mut std::process::Child,
+    timeout: Duration,
+    process_name: &str,
+) -> Result<ExitStatus> {
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) if start.elapsed() >= timeout => {
+                let _ = child.kill();
+                return Err(TcError::Blocked(format!(
+                    "{process_name} did not exit within {} seconds after termination",
+                    timeout.as_secs()
+                )));
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(25)),
+            Err(error) => {
+                return Err(TcError::Blocked(format!(
+                    "failed checking {process_name} status: {error}"
+                )))
+            }
         }
     }
 }
@@ -518,10 +782,108 @@ mod tests {
         std::fs::create_dir_all(src.join(".git")).unwrap();
         std::fs::write(src.join("a.py"), "x").unwrap();
         std::fs::write(src.join(".git/x"), "no").unwrap();
+        for ignored in [
+            ".pytest_cache",
+            ".mypy_cache",
+            ".ruff_cache",
+            ".tox",
+            ".nox",
+        ] {
+            std::fs::create_dir_all(src.join(ignored)).unwrap();
+            std::fs::write(src.join(ignored).join("unbound"), "no").unwrap();
+        }
         let dest = d.path().join("dest");
         make_disposable_copy(&src, &dest).unwrap();
         assert!(dest.join("a.py").exists());
         assert!(!dest.join(".git").exists());
+        for ignored in [
+            ".pytest_cache",
+            ".mypy_cache",
+            ".ruff_cache",
+            ".tox",
+            ".nox",
+        ] {
+            assert!(!dest.join(ignored).exists(), "copied ignored {ignored}");
+        }
+    }
+
+    #[test]
+    fn requested_engine_never_falls_back_to_another_available_engine() {
+        let podman_only = SandboxAvailability {
+            docker: false,
+            podman: true,
+            selected: Some(SandboxEngine::Podman),
+            engine_version: Some("podman-test".into()),
+            notes: vec!["Podman responsive.".into()],
+        };
+        assert_eq!(
+            select_requested_engine("podman", &podman_only).unwrap(),
+            SandboxEngine::Podman
+        );
+        assert_eq!(
+            select_requested_engine("auto", &podman_only).unwrap(),
+            SandboxEngine::Podman
+        );
+        let error = select_requested_engine("docker", &podman_only).unwrap_err();
+        assert!(error.to_string().contains("refusing to fall back"));
+
+        let both = SandboxAvailability {
+            docker: true,
+            podman: true,
+            selected: Some(SandboxEngine::Docker),
+            engine_version: Some("docker-test".into()),
+            notes: vec![],
+        };
+        assert_eq!(
+            select_requested_engine("podman", &both).unwrap(),
+            SandboxEngine::Podman
+        );
+    }
+
+    #[test]
+    fn oversized_streams_are_fully_drained_but_retained_memory_is_bounded() {
+        for limit in [MAX_CONTAINER_STDOUT_BYTES, MAX_CONTAINER_STDERR_BYTES] {
+            let excess = 31_337;
+            let input = vec![b'x'; limit + excess];
+            let capture = drain_stream_bounded(std::io::Cursor::new(input), limit).unwrap();
+            assert_eq!(capture.retained.len(), limit);
+            assert_eq!(capture.discarded_bytes, excess as u64);
+            let rendered = capture.render(limit);
+            assert!(rendered.ends_with(&format!(
+                "\n...[truncated after {limit} bytes; discarded {excess} bytes]...\n"
+            )));
+        }
+    }
+
+    #[cfg(unix)]
+    fn deliberately_slow_cleanup_command() -> Command {
+        let mut command = Command::new("sleep");
+        command.arg("5");
+        command
+    }
+
+    #[cfg(windows)]
+    fn deliberately_slow_cleanup_command() -> Command {
+        let mut command = Command::new("ping");
+        command.args(["-n", "6", "127.0.0.1"]);
+        command
+    }
+
+    #[test]
+    fn cleanup_process_timeout_kills_and_returns_within_a_bound() {
+        let started = Instant::now();
+        let output = run_cleanup_process(
+            deliberately_slow_cleanup_command(),
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        assert!(output.timed_out);
+        assert!(!output.status.success());
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "cleanup timeout path took {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]
@@ -551,5 +913,18 @@ mod tests {
         let s = redact_secrets("export password=supersecret rest");
         assert!(s.contains("***REDACTED***"));
         assert!(!s.contains("supersecret"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn docker_mount_source_strips_windows_verbatim_prefixes() {
+        assert_eq!(
+            mount_source(Path::new(r"\\?\C:\work\repo")),
+            r"C:\work\repo"
+        );
+        assert_eq!(
+            mount_source(Path::new(r"\\?\UNC\server\share\repo")),
+            r"\\server\share\repo"
+        );
     }
 }

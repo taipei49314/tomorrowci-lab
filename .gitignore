@@ -9,3 +9,5 @@ dist
 *.pdb
 .idea/
 .vscode/
+__pycache__/
+*.pyc

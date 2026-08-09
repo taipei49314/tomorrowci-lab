@@ -114,6 +114,7 @@ mod tests {
 
     fn empty_manifest() -> RunManifest {
         RunManifest {
+            evidence_schema_version: 2,
             run_id: "t1".into(),
             tool_version: "0.1.0".into(),
             started_at: Utc::now(),

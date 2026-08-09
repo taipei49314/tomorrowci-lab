@@ -353,6 +353,7 @@ mod tests {
         use indexmap::IndexMap;
         use tomorrowci_core::*;
         let m = RunManifest {
+            evidence_schema_version: 2,
             run_id: "r".into(),
             tool_version: "0.1.0".into(),
             started_at: Utc::now(),

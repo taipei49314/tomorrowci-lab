@@ -1,10 +1,21 @@
 //! Evidence integrity verification.
 
-use crate::{file_checksum, write_checksums};
+use crate::{
+    file_checksum, metadata_is_alias, safe_join, validate_existing_ancestors, validate_identifier,
+    validate_manifest_path, validate_sha256, write_checksums, CHECKSUM_FORMAT_V2,
+};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use tomorrowci_core::{sha256_bytes, Result, RunManifest, TcError};
+use tomorrowci_core::{
+    canonical_image_digest_value, classify_from_reruns, compute_breakage_frontier, plan_scenarios,
+    sha256_bytes, validate_image_digest, BreakageFrontier, Candidate, CommandSpec, Config,
+    Ecosystem, EnvironmentAxis, EnvironmentSpec, EvidenceGrade, ExecutionPlan, ExecutionResult,
+    FailureSignature, PlanDecision, RepositorySnapshot, Result, RunManifest, Scenario, TcError,
+    TestAttemptsSummary, TestExecutionStatus, Verdict,
+};
 
 pub const RUN_REQUIRED: &[&str] = &[
     "run.json",
@@ -39,155 +50,361 @@ pub const SCENARIO_REQUIRED: &[&str] = &[
     "checksums.txt",
 ];
 
+const RUN_OPTIONAL: &[&str] = &["reduction.json", "report.sarif.json"];
+const SCENARIO_OPTIONAL: &[&str] = &[
+    "commands.json",
+    "test-attempts.json",
+    "image-resolve-phase.json",
+    "fetch-phase.json",
+    "test-phase.json",
+    "fetch-result.json",
+    "test-result.json",
+    "failure-signature.json",
+    "fetch-stdout.log",
+    "fetch-stderr.log",
+    "replay-result.json",
+];
+const REPLAY_REQUIRED: &[&str] = &["result.json", "stdout.log", "stderr.log"];
+const LEGACY_TOOL_VERSION: &str = "0.1.1-alpha.2";
+
+// v0.1.1-alpha.2 wrote these files but omitted them from checksum inventories.
+// Headerless v1 manifests remain readable only for these exact omissions. Unknown
+// or newly added files are rejected in both formats.
+const LEGACY_RUN_UNLISTED: &[&str] = &["reduction.json"];
+const LEGACY_SCENARIO_UNLISTED: &[&str] = &["commands.json", "image-resolve-phase.json"];
+
+const WORKSPACE_IGNORED: &[&str] = &[
+    ".tomorrowci",
+    "target",
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    ".nox",
+];
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChecksumCompatibility {
+    CurrentV2,
+    LegacyV1ReadCompatible,
+    #[default]
+    Unknown,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerifyReport {
     pub ok: bool,
     pub run_id: String,
     pub errors: Vec<String>,
     pub checked_files: usize,
+    #[serde(default)]
+    pub checksum_compatibility: ChecksumCompatibility,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceManifest {
     pub files: BTreeMap<String, WorkspaceFileMeta>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceFileMeta {
     pub size: u64,
     pub sha256: String,
 }
 
-pub fn write_workspace_manifest(work: &Path, out: &Path) -> Result<WorkspaceManifest> {
-    let mut files = BTreeMap::new();
-    walk_source(work, work, &mut files)?;
-    let m = WorkspaceManifest { files };
-    std::fs::write(out, serde_json::to_string_pretty(&m)?)?;
-    Ok(m)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PhaseEvidence {
+    phase: String,
+    ok: bool,
+    exit_code: Option<i32>,
+    timed_out: bool,
+    duration_ms: u64,
+    network: String,
+    image: String,
+    image_digest: Option<String>,
+    argv: Vec<Vec<String>>,
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
+    detail: String,
 }
 
-fn walk_source(
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawResultSummary {
+    exit_code: Option<i32>,
+    timed_out: bool,
+    duration_ms: u64,
+    network_used: bool,
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplayDescriptor {
+    scenario_id: String,
+    engine: Option<String>,
+    engine_version: Option<String>,
+    image: String,
+    image_digest: Option<String>,
+    workdir: String,
+    user: Option<String>,
+    memory_mb: u32,
+    cpus: f32,
+    pids_limit: u32,
+    read_only_root: bool,
+    fetch_network: String,
+    test_network: String,
+    fetch_timeout_seconds: Option<u64>,
+    test_timeout_seconds: Option<u64>,
+    fetch_argv: Vec<Vec<String>>,
+    test_argv: Vec<Vec<String>>,
+    expected_exit_code: Option<i32>,
+    expected_timed_out: bool,
+    expected_failure_signature: Option<FailureSignature>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ReplayAttemptEvidence {
+    scenario_id: String,
+    attempt: usize,
+    phase: String,
+    ok: bool,
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
+    original_exit: Option<i32>,
+    fetch_exit: Option<i32>,
+    replay_exit: Option<i32>,
+    timed_out: bool,
+    duration_ms: u64,
+    original_signature: Option<String>,
+    replay_signature: Option<String>,
+    exit_match: Option<bool>,
+    signature_match: Option<bool>,
+    recorded_digest: String,
+    resolved_digest: String,
+    engine: String,
+    engine_version: String,
+    image_tag: String,
+    fetch_timeout_seconds: u64,
+    test_timeout_seconds: u64,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum SemanticClaimStatus {
+    Pass,
+    Fail,
+    Blocked,
+    NotRun,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SemanticClaimRow {
+    claim: String,
+    status: SemanticClaimStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SemanticClaimLedger {
+    rows: Vec<SemanticClaimRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SemanticMetrics {
+    run_id: String,
+    scenarios_total: u32,
+    scenarios_pass: u32,
+    scenarios_fail: u32,
+    scenarios_flaky: u32,
+    scenarios_blocked: u32,
+    scenarios_unsupported: u32,
+    scenarios_inconclusive: u32,
+    baseline_ok: bool,
+    frontier_observed: bool,
+    total_duration_ms: u64,
+    verdict_histogram: BTreeMap<String, u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChecksumFormat {
+    CurrentV2,
+    LegacyV1,
+}
+
+impl From<ChecksumFormat> for ChecksumCompatibility {
+    fn from(value: ChecksumFormat) -> Self {
+        match value {
+            ChecksumFormat::CurrentV2 => Self::CurrentV2,
+            ChecksumFormat::LegacyV1 => Self::LegacyV1ReadCompatible,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ChecksumManifest {
+    format: ChecksumFormat,
+    entries: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum InventoryScope {
+    Run,
+    Scenario,
+}
+
+pub fn write_workspace_manifest(work: &Path, out: &Path) -> Result<WorkspaceManifest> {
+    ensure_directory_no_alias(work)?;
+    validate_existing_ancestors(out)?;
+    if let Ok(metadata) = std::fs::symlink_metadata(out) {
+        if metadata_is_alias(&metadata) || !metadata.is_file() {
+            return Err(TcError::InvalidState(format!(
+                "refusing unsafe workspace-manifest output path: {}",
+                out.display()
+            )));
+        }
+    }
+    let mut files = BTreeMap::new();
+    walk_workspace(work, work, &mut files)?;
+    let manifest = WorkspaceManifest { files };
+    std::fs::write(out, serde_json::to_string_pretty(&manifest)?)?;
+    validate_existing_ancestors(out)?;
+    Ok(manifest)
+}
+
+fn walk_workspace(
     root: &Path,
-    cur: &Path,
-    out: &mut BTreeMap<String, WorkspaceFileMeta>,
+    current: &Path,
+    output: &mut BTreeMap<String, WorkspaceFileMeta>,
 ) -> Result<()> {
-    for entry in std::fs::read_dir(cur)? {
+    for entry in std::fs::read_dir(current)? {
         let entry = entry?;
-        let p = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if matches!(
-            name.as_str(),
-            ".tomorrowci" | "target" | "node_modules" | ".git" | "__pycache__" | ".venv" | "venv"
-        ) {
+        let path = entry.path();
+        let name = utf8_file_name(&entry)?;
+        let metadata = safe_metadata(&path)?;
+        if WORKSPACE_IGNORED.contains(&name.as_str()) {
             continue;
         }
-        if p.is_dir() {
-            walk_source(root, &p, out)?;
-        } else if p.is_file() {
-            let rel = p
-                .strip_prefix(root)
-                .unwrap_or(&p)
-                .to_string_lossy()
-                .replace('\\', "/");
-            let data = std::fs::read(&p)?;
-            out.insert(
-                rel,
+
+        if metadata.is_dir() {
+            walk_workspace(root, &path, output)?;
+        } else if metadata.is_file() {
+            let relative = relative_path(root, &path)?;
+            validate_manifest_path(&relative).map_err(TcError::InvalidState)?;
+            let data = std::fs::read(&path)?;
+            let previous = output.insert(
+                relative.clone(),
                 WorkspaceFileMeta {
                     size: data.len() as u64,
-                    sha256: format!("sha256:{}", sha256_bytes(&data)),
+                    sha256: sha256_bytes(&data),
                 },
             );
+            if previous.is_some() {
+                return Err(TcError::InvalidState(format!(
+                    "duplicate workspace path: {relative}"
+                )));
+            }
+        } else {
+            return Err(TcError::InvalidState(format!(
+                "unsupported workspace filesystem entry: {}",
+                path.display()
+            )));
         }
     }
     Ok(())
 }
 
-/// Recompute checksums for all present required files after every writer finished.
+/// Recompute versioned, exact inventories after every evidence writer has finished.
 pub fn finalize_run_checksums(run_root: &Path) -> Result<()> {
-    let mut pairs = Vec::new();
-    for name in RUN_REQUIRED {
-        if *name == "checksums.txt" {
-            continue;
-        }
-        let p = run_root.join(name);
-        if p.exists() {
-            pairs.push(((*name).to_string(), file_checksum(&p)?));
-        }
-    }
-    // scenario checksums
-    let sc_root = run_root.join("scenarios");
-    if sc_root.exists() {
-        for entry in std::fs::read_dir(&sc_root)? {
+    ensure_directory_no_alias(run_root)?;
+
+    let scenarios_root = safe_join(run_root, "scenarios")?;
+    if scenarios_root.exists() {
+        ensure_directory_no_alias(&scenarios_root)?;
+        let mut scenarios = Vec::new();
+        for entry in std::fs::read_dir(&scenarios_root)? {
             let entry = entry?;
-            if entry.path().is_dir() {
-                finalize_scenario_checksums(&entry.path())?;
+            let path = entry.path();
+            let name = utf8_file_name(&entry)?;
+            validate_single_component(&name)?;
+            let metadata = safe_metadata(&path)?;
+            if !metadata.is_dir() {
+                return Err(TcError::InvalidState(format!(
+                    "scenario entry is not a directory: {}",
+                    path.display()
+                )));
             }
+            scenarios.push(path);
+        }
+        scenarios.sort();
+        for scenario in scenarios {
+            finalize_scenario_checksums(&scenario)?;
         }
     }
-    write_checksums(run_root, &pairs)?;
-    Ok(())
+
+    let inventory = collect_inventory(run_root, InventoryScope::Run)?;
+    require_current_inventory(InventoryScope::Run, &inventory)?;
+    let mut pairs = Vec::with_capacity(inventory.len());
+    for relative in inventory {
+        let path = safe_join(run_root, &relative)?;
+        pairs.push((relative.clone(), file_checksum(&path)?));
+    }
+    write_checksums(run_root, &pairs)
 }
 
-fn finalize_scenario_checksums(sc_dir: &Path) -> Result<()> {
-    let mut pairs = Vec::new();
-    for name in SCENARIO_REQUIRED {
-        if *name == "checksums.txt" {
-            continue;
-        }
-        let p = sc_dir.join(name);
-        if p.exists() {
-            pairs.push(((*name).to_string(), file_checksum(&p)?));
+fn finalize_scenario_checksums(scenario_root: &Path) -> Result<()> {
+    let inventory = collect_inventory(scenario_root, InventoryScope::Scenario)?;
+    require_current_inventory(InventoryScope::Scenario, &inventory)?;
+    let mut pairs = Vec::with_capacity(inventory.len());
+    for relative in inventory {
+        let path = safe_join(scenario_root, &relative)?;
+        pairs.push((relative.clone(), file_checksum(&path)?));
+    }
+    write_checksums(scenario_root, &pairs)
+}
+
+fn require_current_inventory(scope: InventoryScope, inventory: &BTreeSet<String>) -> Result<()> {
+    let required: Vec<&str> = match scope {
+        InventoryScope::Run => RUN_REQUIRED
+            .iter()
+            .copied()
+            .filter(|name| *name != "checksums.txt")
+            .collect(),
+        InventoryScope::Scenario => SCENARIO_REQUIRED
+            .iter()
+            .copied()
+            .filter(|name| *name != "checksums.txt")
+            .chain([
+                "commands.json",
+                "test-attempts.json",
+                "image-resolve-phase.json",
+            ])
+            .collect(),
+    };
+    for relative in required {
+        if !inventory.contains(relative) {
+            return Err(TcError::InvalidState(format!(
+                "cannot finalize current-v2 {} inventory without required file: {relative}",
+                scope_name(scope)
+            )));
         }
     }
-    // optional phase files
-    for name in [
-        "fetch-phase.json",
-        "test-phase.json",
-        "fetch-result.json",
-        "test-result.json",
-        "failure-signature.json",
-        "fetch-stdout.log",
-        "fetch-stderr.log",
-    ] {
-        let p = sc_dir.join(name);
-        if p.exists() {
-            pairs.push((name.to_string(), file_checksum(&p)?));
-        }
-    }
-    // attempt logs + replay attempts
-    if let Ok(rd) = std::fs::read_dir(sc_dir) {
-        for e in rd.flatten() {
-            let n = e.file_name().to_string_lossy().to_string();
-            if n.starts_with("stdout.attempt")
-                || n.starts_with("stderr.attempt")
-                || n == "replay-result.json"
-            {
-                pairs.push((n, file_checksum(&e.path())?));
-            }
-        }
-    }
-    let replays = sc_dir.join("replays");
-    if replays.exists() {
-        for entry in std::fs::read_dir(&replays)?.flatten() {
-            if entry.path().is_dir() {
-                for f in ["result.json", "stdout.log", "stderr.log"] {
-                    let p = entry.path().join(f);
-                    if p.exists() {
-                        let rel = format!("replays/{}/{}", entry.file_name().to_string_lossy(), f);
-                        pairs.push((rel, file_checksum(&p)?));
-                    }
-                }
-            }
-        }
-    }
-    write_checksums(sc_dir, &pairs)?;
     Ok(())
 }
 
 pub fn verify_run(repo: &Path, run_id: &str) -> Result<VerifyReport> {
-    let run_root = repo.join(".tomorrowci/runs").join(run_id);
+    validate_identifier(run_id, "run_id").map_err(TcError::InvalidState)?;
+    let run_root = safe_join(repo, &format!(".tomorrowci/runs/{run_id}"))?;
     if !run_root.exists() {
-        // also search one level of fixture paths is caller's job
         return Err(TcError::Blocked(format!(
             "run directory missing: {}",
             run_root.display()
@@ -201,134 +418,82 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
     let mut checked = 0usize;
     let run_id = run_root
         .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string();
+    if let Err(error) = validate_identifier(&run_id, "run_id") {
+        errors.push(error);
+    }
+
+    match ensure_directory_no_alias(run_root) {
+        Ok(()) => {}
+        Err(error) => errors.push(error.to_string()),
+    }
+    if !errors.is_empty() {
+        return Ok(VerifyReport {
+            ok: false,
+            run_id,
+            errors,
+            checked_files: checked,
+            checksum_compatibility: ChecksumCompatibility::Unknown,
+        });
+    }
 
     for name in RUN_REQUIRED {
-        let p = run_root.join(name);
-        if !p.exists() {
-            errors.push(format!("missing required run file: {name}"));
-        } else {
-            checked += 1;
-        }
+        let path = safe_join(run_root, name)?;
+        require_regular_file(&path, &format!("required run file {name}"), &mut errors)?;
     }
 
-    // Verify checksums.txt entries
-    let sums = run_root.join("checksums.txt");
-    if sums.exists() {
-        for line in std::fs::read_to_string(&sums)?.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let mut parts = line.split_whitespace();
-            let hash = parts.next().unwrap_or("");
-            let name = parts.next().unwrap_or("");
-            if name.is_empty() {
-                continue;
-            }
-            let p = run_root.join(name);
-            if !p.exists() {
-                errors.push(format!("checksum lists missing file: {name}"));
-                continue;
-            }
-            let actual = file_checksum(&p)?;
-            if actual != hash && format!("sha256:{hash}") != actual && hash != actual {
-                // file_checksum returns bare hex
-                let bare = actual.trim_start_matches("sha256:");
-                if bare != hash.trim_start_matches("sha256:") {
-                    errors.push(format!("checksum mismatch: {name}"));
-                }
-            }
-            checked += 1;
+    let run_manifest = read_run_manifest_for_verification(run_root, &mut errors)?;
+    let legacy_eligible = run_manifest.as_ref().is_some_and(legacy_schema_eligible);
+    let root_checksums = parse_checksum_manifest(
+        &safe_join(run_root, "checksums.txt")?,
+        "run checksums",
+        &mut errors,
+    )?;
+    let root_format = root_checksums.as_ref().map(|manifest| manifest.format);
+    if let Some(manifest) = &root_checksums {
+        if manifest.format == ChecksumFormat::LegacyV1 && !legacy_eligible {
+            errors.push(format!(
+                "legacy-v1 checksum format is not permitted for tool/schema; only {LEGACY_TOOL_VERSION} evidence is read-compatible"
+            ));
         }
+        verify_checksum_inventory(
+            run_root,
+            InventoryScope::Run,
+            manifest,
+            &mut errors,
+            &mut checked,
+        )?;
     }
 
-    // claims.json must be checksummed
-    if run_root.join("claims.json").exists() {
-        let listed = std::fs::read_to_string(&sums).unwrap_or_default();
-        if !listed.contains("claims.json") {
-            errors.push("claims.json present but not listed in checksums.txt".into());
+    let current_v2 = root_format == Some(ChecksumFormat::CurrentV2)
+        && run_manifest
+            .as_ref()
+            .is_some_and(|manifest| manifest.evidence_schema_version == 2);
+    if root_format == Some(ChecksumFormat::CurrentV2) {
+        match run_manifest
+            .as_ref()
+            .map(|manifest| manifest.evidence_schema_version)
+        {
+            Some(2) => {}
+            Some(0) => errors.push(
+                "current checksum bundle is pre-schema evidence; migration to evidence_schema_version=2 is required"
+                    .into(),
+            ),
+            Some(version) => errors.push(format!(
+                "unsupported evidence_schema_version {version}; supported strict schema is 2"
+            )),
+            None => {}
         }
     }
-
-    // workspace manifest
-    let wm_path = run_root.join("workspace-manifest.json");
-    if wm_path.exists() {
-        let wm: WorkspaceManifest = serde_json::from_str(&std::fs::read_to_string(&wm_path)?)?;
-        let work = run_root.join("workspace");
-        for (rel, meta) in &wm.files {
-            let p = work.join(rel);
-            if !p.exists() {
-                errors.push(format!("workspace-manifest file missing: {rel}"));
-                continue;
-            }
-            let data = std::fs::read(&p)?;
-            let h = format!("sha256:{}", sha256_bytes(&data));
-            if h != meta.sha256 && sha256_bytes(&data) != meta.sha256.trim_start_matches("sha256:")
-            {
-                errors.push(format!("workspace-manifest hash mismatch: {rel}"));
-            }
-        }
+    verify_workspace(run_root, current_v2, &mut errors, &mut checked)?;
+    if let Some(manifest) = &run_manifest {
+        verify_identity(run_root, manifest, &run_id, current_v2, &mut errors)?;
     }
-
-    // identity consistency if present
-    if run_root.join("run.json").exists() {
-        let m: RunManifest =
-            serde_json::from_str(&std::fs::read_to_string(run_root.join("run.json"))?)?;
-        if let Some(id) = &m.identity {
-            if id.source_commit != m.repository.commit_sha {
-                errors.push("identity.source_commit != repository.commit_sha".into());
-            }
-            if id.config_hash != m.config_hash {
-                errors.push("identity.config_hash != manifest.config_hash".into());
-            }
-        }
-        for r in &m.results {
-            let tag = r.environment.tag();
-            if let Some(d) = &r.environment.image_digest {
-                if tag.contains("sha256:") {
-                    errors.push(format!(
-                        "scenario {} image_tag must not be a digest",
-                        r.scenario_id
-                    ));
-                }
-                if d.is_empty() {
-                    errors.push(format!("scenario {} empty digest", r.scenario_id));
-                }
-            }
-        }
-    }
-
-    // scenarios
-    let sc_root = run_root.join("scenarios");
-    if sc_root.exists() {
-        for entry in std::fs::read_dir(sc_root)?.flatten() {
-            if !entry.path().is_dir() {
-                continue;
-            }
-            for name in SCENARIO_REQUIRED {
-                if !entry.path().join(name).exists() {
-                    // fetch-commands optional for non-python? require for acceptance path
-                    if *name == "fetch-commands.json"
-                        && !entry.path().join("fetch-commands.json").exists()
-                    {
-                        // allow missing only if no fetch phase file either
-                        if entry.path().join("fetch-phase.json").exists() {
-                            errors.push(format!(
-                                "scenario {} missing {name}",
-                                entry.file_name().to_string_lossy()
-                            ));
-                        }
-                    } else if !matches!(*name, "fetch-commands.json") {
-                        errors.push(format!(
-                            "scenario {} missing {name}",
-                            entry.file_name().to_string_lossy()
-                        ));
-                    }
-                }
-            }
-        }
+    verify_scenarios(run_root, root_format, &mut errors, &mut checked)?;
+    if let Some(manifest) = &run_manifest {
+        verify_cross_file_closure(run_root, manifest, current_v2, &mut errors)?;
     }
 
     Ok(VerifyReport {
@@ -336,30 +501,2514 @@ pub fn verify_run_root(run_root: &Path) -> Result<VerifyReport> {
         run_id,
         errors,
         checked_files: checked,
+        checksum_compatibility: root_format
+            .map(ChecksumCompatibility::from)
+            .unwrap_or_default(),
     })
 }
 
+fn read_run_manifest_for_verification(
+    run_root: &Path,
+    errors: &mut Vec<String>,
+) -> Result<Option<RunManifest>> {
+    let run_path = safe_join(run_root, "run.json")?;
+    if regular_file_metadata(&run_path, "run.json", errors)?.is_none() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&run_path)?;
+    match serde_json::from_str(&raw) {
+        Ok(manifest) => Ok(Some(manifest)),
+        Err(error) => {
+            errors.push(format!("run.json is malformed: {error}"));
+            Ok(None)
+        }
+    }
+}
+
+fn legacy_schema_eligible(manifest: &RunManifest) -> bool {
+    manifest.evidence_schema_version == 0
+        && manifest.tool_version == LEGACY_TOOL_VERSION
+        && !manifest
+            .identity
+            .as_ref()
+            .is_some_and(|identity| identity.tool_version != LEGACY_TOOL_VERSION)
+}
+
+fn verify_workspace(
+    run_root: &Path,
+    current_v2: bool,
+    errors: &mut Vec<String>,
+    checked: &mut usize,
+) -> Result<()> {
+    let manifest_path = safe_join(run_root, "workspace-manifest.json")?;
+    if !manifest_path.exists() {
+        return Ok(());
+    }
+    if regular_file_metadata(&manifest_path, "workspace-manifest", errors)?.is_none() {
+        return Ok(());
+    }
+    let manifest: WorkspaceManifest =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path)?)?;
+    let workspace = safe_join(run_root, "workspace")?;
+    match ensure_directory_no_alias(&workspace) {
+        Ok(()) => {}
+        Err(error) => {
+            errors.push(error.to_string());
+            return Ok(());
+        }
+    }
+
+    let actual = match collect_workspace_inventory(&workspace) {
+        Ok(actual) => actual,
+        Err(error) => {
+            errors.push(error.to_string());
+            BTreeSet::new()
+        }
+    };
+    let mut listed = BTreeSet::new();
+
+    for (relative, expected) in &manifest.files {
+        if let Err(error) = validate_manifest_path(relative) {
+            errors.push(format!(
+                "invalid workspace-manifest path {relative:?}: {error}"
+            ));
+            continue;
+        }
+        if !listed.insert(relative.clone()) {
+            errors.push(format!("duplicate workspace-manifest path: {relative}"));
+            continue;
+        }
+
+        let path = safe_join(&workspace, relative)?;
+        let metadata = match regular_file_metadata(&path, "workspace-manifest", errors)? {
+            Some(metadata) => metadata,
+            None => continue,
+        };
+        if metadata.len() != expected.size {
+            errors.push(format!("workspace-manifest size mismatch: {relative}"));
+        }
+
+        let expected_hash = if current_v2 {
+            crate::validate_sha256(&expected.sha256)
+                .ok()
+                .map(|()| expected.sha256.clone())
+        } else {
+            normalize_workspace_hash(&expected.sha256)
+        };
+        match expected_hash {
+            Some(expected_hash) => {
+                let actual_hash = file_checksum(&path)?;
+                if actual_hash != expected_hash {
+                    errors.push(format!("workspace-manifest hash mismatch: {relative}"));
+                } else {
+                    *checked += 1;
+                }
+            }
+            None => errors.push(format!(
+                "workspace-manifest invalid sha256 for {relative}: {:?}",
+                expected.sha256
+            )),
+        }
+    }
+
+    for relative in actual.difference(&listed) {
+        errors.push(format!(
+            "workspace contains unlisted source file: {relative}"
+        ));
+    }
+    for relative in listed.difference(&actual) {
+        errors.push(format!("workspace-manifest lists missing file: {relative}"));
+    }
+    Ok(())
+}
+
+fn verify_identity(
+    run_root: &Path,
+    manifest: &RunManifest,
+    run_id: &str,
+    current_v2: bool,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    if let Err(error) = validate_identifier(&manifest.run_id, "run.json run_id") {
+        errors.push(error);
+    }
+    if manifest.run_id != run_id {
+        errors.push(format!(
+            "run.json run_id {:?} does not match directory {run_id:?}",
+            manifest.run_id
+        ));
+    }
+    if current_v2 && manifest.identity.is_none() {
+        errors.push("current-v2 run.json requires a non-null identity".into());
+    }
+    if manifest.finished_at.is_none() {
+        errors.push("run.json finished_at must be present".into());
+    }
+    if let Some(finished) = manifest.finished_at {
+        if finished < manifest.started_at {
+            errors.push("run.json finished_at precedes started_at".into());
+        }
+    }
+
+    if current_v2 && !is_valid_semver(&manifest.tool_version) {
+        errors.push(format!(
+            "current-v2 run tool_version is not valid SemVer: {:?}",
+            manifest.tool_version
+        ));
+    }
+
+    let config_path = safe_join(run_root, "config.normalized.json")?;
+    if let Some(config) = read_json_file::<Config>(&config_path, "config.normalized.json", errors)?
+    {
+        if let Err(error) = config.validate() {
+            errors.push(format!("config.normalized.json is invalid: {error}"));
+        }
+        match config.content_hash() {
+            Ok(hash) if hash != manifest.config_hash => errors.push(format!(
+                "config.normalized.json content_hash {hash} != run.json config_hash {}",
+                manifest.config_hash
+            )),
+            Err(error) => errors.push(format!(
+                "config.normalized.json content_hash could not be computed: {error}"
+            )),
+            _ => {}
+        }
+    }
+
+    if let Some(identity) = &manifest.identity {
+        if identity.source_commit != manifest.repository.commit_sha {
+            errors.push("identity.source_commit != repository.commit_sha".into());
+        }
+        if identity.config_hash != manifest.config_hash {
+            errors.push("identity.config_hash != manifest.config_hash".into());
+        }
+        if current_v2 {
+            if identity.tool_version != manifest.tool_version {
+                errors.push("identity.tool_version must equal run.tool_version".into());
+            }
+            let expected_adapter = match manifest.detection.ecosystem {
+                Ecosystem::Python => Some("python"),
+                Ecosystem::Node => Some("node"),
+                Ecosystem::Rust => Some("rust"),
+                Ecosystem::Unknown => None,
+            };
+            match expected_adapter {
+                Some(expected) if identity.adapter_name != expected => errors.push(format!(
+                    "identity.adapter_name {:?} does not match detected ecosystem adapter {expected:?}",
+                    identity.adapter_name
+                )),
+                None => errors.push(
+                    "current-v2 identity cannot claim a concrete adapter for unknown ecosystem"
+                        .into(),
+                ),
+                _ => {}
+            }
+            if identity.adapter_version != manifest.tool_version {
+                errors.push("identity.adapter_version does not equal writer tool version".into());
+            }
+            if identity.started_at != manifest.started_at
+                || identity.finished_at != manifest.finished_at
+            {
+                errors.push("identity timestamps do not exactly match run timestamps".into());
+            }
+            if identity.dirty_tree.is_none() && manifest.repository.commit_sha.is_some() {
+                errors.push(
+                    "identity dirty_tree is unknown despite a claimed Git commit; source status was not established"
+                        .into(),
+                );
+            }
+            verify_manifest_hashes(run_root, manifest, identity, errors)?;
+            for result in manifest.results.iter().filter(|result| result.attempt > 0) {
+                if result.environment.engine != identity.container_engine
+                    || result.environment.engine_version != identity.container_engine_version
+                {
+                    errors.push(format!(
+                        "scenario {} engine identity does not match run identity",
+                        result.scenario_id
+                    ));
+                }
+            }
+        }
+    }
+
+    if let Some(commit) = &manifest.repository.commit_sha {
+        if !is_canonical_git_object_id(commit) {
+            errors.push(format!(
+                "repository commit_sha is not canonical: {commit:?}"
+            ));
+        }
+    }
+    if manifest.repository.source.trim().is_empty() {
+        errors.push("repository source identity is empty".into());
+    }
+    if current_v2 && !manifest.repository.is_disposable_copy {
+        errors.push("current-v2 execution evidence must use a disposable workspace copy".into());
+    }
+    for scenario in &manifest.plan.scenarios {
+        if let Err(error) = validate_identifier(&scenario.id, "planned scenario_id") {
+            errors.push(error);
+        }
+    }
+    for result in &manifest.results {
+        if let Err(error) = validate_identifier(&result.scenario_id, "result scenario_id") {
+            errors.push(error);
+        }
+        let tag = result.environment.tag();
+        if let Some(digest) = &result.environment.image_digest {
+            if tag.contains("sha256:") {
+                errors.push(format!(
+                    "scenario {} image_tag must not be a digest",
+                    result.scenario_id
+                ));
+            }
+            if let Err(error) = validate_image_digest(digest) {
+                errors.push(format!(
+                    "scenario {} invalid image digest: {error}",
+                    result.scenario_id
+                ));
+            }
+        }
+        if current_v2 && result.attempt > 0 {
+            if result.environment.image_digest.is_none() {
+                errors.push(format!(
+                    "scenario {} executed without an immutable image digest",
+                    result.scenario_id
+                ));
+            }
+            if !matches!(
+                result.environment.engine.as_deref(),
+                Some("docker" | "podman")
+            ) || result
+                .environment
+                .engine_version
+                .as_deref()
+                .is_none_or(str::is_empty)
+            {
+                errors.push(format!(
+                    "scenario {} executed without exact engine name/version",
+                    result.scenario_id
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_canonical_git_object_id(raw: &str) -> bool {
+    matches!(raw.len(), 40 | 64)
+        && raw.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && !raw.bytes().any(|byte| byte.is_ascii_uppercase())
+}
+
+fn is_valid_semver(raw: &str) -> bool {
+    let (core_and_pre, build) = raw
+        .split_once('+')
+        .map(|(left, right)| (left, Some(right)))
+        .unwrap_or((raw, None));
+    if build.is_some_and(|value| !valid_semver_identifiers(value, false)) {
+        return false;
+    }
+    let (core, prerelease) = core_and_pre
+        .split_once('-')
+        .map(|(left, right)| (left, Some(right)))
+        .unwrap_or((core_and_pre, None));
+    let parts: Vec<_> = core.split('.').collect();
+    if parts.len() != 3
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || !part.bytes().all(|byte| byte.is_ascii_digit())
+                || (part.len() > 1 && part.starts_with('0'))
+        })
+    {
+        return false;
+    }
+    !prerelease.is_some_and(|value| !valid_semver_identifiers(value, true))
+}
+
+fn valid_semver_identifiers(raw: &str, reject_numeric_leading_zero: bool) -> bool {
+    !raw.is_empty()
+        && raw.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                && !(reject_numeric_leading_zero
+                    && part.len() > 1
+                    && part.starts_with('0')
+                    && part.bytes().all(|byte| byte.is_ascii_digit()))
+        })
+}
+
+fn verify_manifest_hashes(
+    run_root: &Path,
+    manifest: &RunManifest,
+    identity: &tomorrowci_core::RunIdentity,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    let workspace_manifest_path = safe_join(run_root, "workspace-manifest.json")?;
+    let workspace_manifest: Option<WorkspaceManifest> =
+        read_json_file(&workspace_manifest_path, "workspace-manifest.json", errors)?;
+    let mut expected = BTreeSet::new();
+    for relative in &manifest.detection.manifests {
+        if let Err(error) = validate_manifest_path(relative) {
+            errors.push(format!("invalid detection manifest {relative:?}: {error}"));
+            continue;
+        }
+        if !expected.insert(relative.clone()) {
+            errors.push(format!("duplicate detection manifest: {relative}"));
+        }
+    }
+    let actual: BTreeSet<String> = identity.manifest_hashes.keys().cloned().collect();
+    for missing in expected.difference(&actual) {
+        errors.push(format!(
+            "identity manifest_hashes missing detection manifest: {missing}"
+        ));
+    }
+    for extra in actual.difference(&expected) {
+        errors.push(format!(
+            "identity manifest_hashes contains extra manifest: {extra}"
+        ));
+    }
+
+    if let Some(workspace_manifest) = workspace_manifest {
+        for relative in expected.intersection(&actual) {
+            let Some(recorded_hash) = identity.manifest_hashes.get(relative) else {
+                continue;
+            };
+            if crate::validate_sha256(recorded_hash).is_err() {
+                errors.push(format!(
+                    "identity manifest_hashes has noncanonical hash for {relative}"
+                ));
+                continue;
+            }
+            match workspace_manifest.files.get(relative) {
+                Some(meta) => match normalize_workspace_hash(&meta.sha256) {
+                    Some(hash) if &hash != recorded_hash => errors.push(format!(
+                        "identity manifest hash does not match workspace-manifest for {relative}"
+                    )),
+                    None => errors.push(format!(
+                        "workspace-manifest has invalid manifest hash for {relative}"
+                    )),
+                    _ => {}
+                },
+                None => errors.push(format!(
+                    "workspace-manifest missing detected manifest: {relative}"
+                )),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_cross_file_closure(
+    run_root: &Path,
+    manifest: &RunManifest,
+    current_v2: bool,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    if current_v2 {
+        verify_run_level_duplicates(run_root, manifest, errors)?;
+    }
+    let planned = index_scenarios(&manifest.plan.scenarios, "run.json plan", errors);
+    let run_results = index_results(&manifest.results, "run.json results", errors);
+    let config = if current_v2 {
+        let parsed = read_json_file::<Config>(
+            &safe_join(run_root, "config.normalized.json")?,
+            "config.normalized.json",
+            errors,
+        )?;
+        if let Some(config) = &parsed {
+            if let Err(error) = config.validate() {
+                errors.push(format!("config.normalized.json is not executable: {error}"));
+            }
+        }
+        parsed
+    } else {
+        None
+    };
+
+    let verdicts_path = safe_join(run_root, "verdicts.json")?;
+    let verdicts: Vec<ExecutionResult> =
+        read_json_file(&verdicts_path, "verdicts.json", errors)?.unwrap_or_default();
+    let verdict_results = index_results(&verdicts, "verdicts.json", errors);
+
+    let scenarios_root = safe_join(run_root, "scenarios")?;
+    let scenario_directories = collect_scenario_directories(&scenarios_root, errors)?;
+
+    compare_scenario_ids(
+        "run.json results",
+        run_results.keys(),
+        "verdicts.json",
+        verdict_results.keys(),
+        errors,
+    );
+    compare_scenario_ids(
+        "run.json results",
+        run_results.keys(),
+        "scenario directories",
+        scenario_directories.iter(),
+        errors,
+    );
+
+    for scenario_id in run_results.keys() {
+        if !planned.contains_key(scenario_id) {
+            errors.push(format!(
+                "run.json result references scenario absent from plan: {scenario_id}"
+            ));
+        }
+    }
+
+    if current_v2 && !(planned.is_empty() && run_results.is_empty()) {
+        let baseline_ids: Vec<_> = planned
+            .values()
+            .filter(|scenario| scenario.is_baseline)
+            .map(|scenario| scenario.id.as_str())
+            .collect();
+        if baseline_ids.len() != 1 {
+            errors.push(format!(
+                "current-v2 plan must contain exactly one baseline scenario; found {}",
+                baseline_ids.len()
+            ));
+        } else {
+            let baseline_id = baseline_ids[0];
+            match run_results.get(baseline_id) {
+                None => errors.push(format!(
+                    "current-v2 results are missing planned baseline scenario: {baseline_id}"
+                )),
+                Some(result) if result.verdict == Verdict::BaselinePass => {
+                    for scenario_id in planned.keys() {
+                        if !run_results.contains_key(scenario_id) {
+                            errors.push(format!(
+                                "baseline passed but run.json results are missing planned scenario: {scenario_id}"
+                            ));
+                        }
+                    }
+                }
+                Some(_) => {
+                    for scenario_id in run_results.keys() {
+                        if scenario_id != baseline_id {
+                            errors.push(format!(
+                                "baseline did not pass but run.json results contain a later scenario: {scenario_id}"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for scenario_id in &scenario_directories {
+        let scenario_root = safe_join(&scenarios_root, scenario_id)?;
+        let scenario_path = safe_join(&scenario_root, "scenario.json")?;
+        if let Some(scenario) = read_json_file::<Scenario>(
+            &scenario_path,
+            &format!("scenario {scenario_id} scenario.json"),
+            errors,
+        )? {
+            if scenario.id != *scenario_id {
+                errors.push(format!(
+                    "scenario.json id {:?} does not match directory {scenario_id:?}",
+                    scenario.id
+                ));
+            }
+            match planned.get(scenario_id) {
+                Some(expected) if !json_equivalent(expected, &scenario)? => errors.push(format!(
+                    "scenario {scenario_id} scenario.json does not match run.json plan"
+                )),
+                None => errors.push(format!(
+                    "scenario {scenario_id} scenario.json has no matching run.json plan entry"
+                )),
+                _ => {}
+            }
+        }
+
+        let result_path = safe_join(&scenario_root, "result.json")?;
+        if let Some(result) = read_json_file::<ExecutionResult>(
+            &result_path,
+            &format!("scenario {scenario_id} result.json"),
+            errors,
+        )? {
+            if result.scenario_id != *scenario_id {
+                errors.push(format!(
+                    "scenario result.json scenario_id {:?} does not match directory {scenario_id:?}",
+                    result.scenario_id
+                ));
+            }
+            match run_results.get(scenario_id) {
+                Some(expected) if !json_equivalent(expected, &result)? => errors.push(format!(
+                    "scenario {scenario_id} result.json does not match run.json results"
+                )),
+                None => errors.push(format!(
+                    "scenario {scenario_id} result.json has no matching run.json result"
+                )),
+                _ => {}
+            }
+            match verdict_results.get(scenario_id) {
+                Some(expected) if !json_equivalent(expected, &result)? => errors.push(format!(
+                    "scenario {scenario_id} result.json does not match verdicts.json"
+                )),
+                None => errors.push(format!(
+                    "scenario {scenario_id} result.json has no matching verdicts.json entry"
+                )),
+                _ => {}
+            }
+            if current_v2 {
+                verify_current_scenario_semantics(
+                    &scenario_root,
+                    scenario_id,
+                    planned.get(scenario_id),
+                    &result,
+                    manifest,
+                    config.as_ref(),
+                    errors,
+                )?;
+            }
+        }
+    }
+
+    if current_v2 {
+        if let Some(config) = &config {
+            verify_plan_semantics(run_root, manifest, config, errors)?;
+        }
+        verify_frontier_semantics(run_root, manifest, &planned, &run_results, errors)?;
+    }
+
+    Ok(())
+}
+
+fn verify_run_level_duplicates(
+    run_root: &Path,
+    manifest: &RunManifest,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    if let Some(repository) = read_json_file::<RepositorySnapshot>(
+        &safe_join(run_root, "repository.json")?,
+        "repository.json",
+        errors,
+    )? {
+        if !json_equivalent(&repository, &manifest.repository)? {
+            errors.push("repository.json does not exactly match run.json repository".into());
+        }
+    }
+    if let Some(plan) =
+        read_json_file::<ExecutionPlan>(&safe_join(run_root, "plan.json")?, "plan.json", errors)?
+    {
+        if !json_equivalent(&plan, &manifest.plan)? {
+            errors.push("plan.json does not exactly match run.json plan".into());
+        }
+    }
+    if let Some(frontier) = read_json_file::<BreakageFrontier>(
+        &safe_join(run_root, "frontier.json")?,
+        "frontier.json",
+        errors,
+    )? {
+        if !json_equivalent(&frontier, &manifest.frontier)? {
+            errors.push("frontier.json does not exactly match run.json frontier".into());
+        }
+    }
+    if let Some(report) =
+        read_json_file::<RunManifest>(&safe_join(run_root, "report.json")?, "report.json", errors)?
+    {
+        if !json_equivalent(&report, manifest)? {
+            errors.push("report.json does not exactly match verified run.json".into());
+        }
+    }
+    verify_metrics_semantics(run_root, manifest, errors)?;
+    verify_claim_semantics(run_root, manifest, errors)?;
+    Ok(())
+}
+
+fn verify_plan_semantics(
+    run_root: &Path,
+    manifest: &RunManifest,
+    config: &Config,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    let candidates = read_json_file::<Vec<Candidate>>(
+        &safe_join(run_root, "candidates.json")?,
+        "candidates.json",
+        errors,
+    )?
+    .unwrap_or_default();
+    let decisions = read_json_file::<Vec<PlanDecision>>(
+        &safe_join(run_root, "plan-decisions.json")?,
+        "plan-decisions.json",
+        errors,
+    )?
+    .unwrap_or_default();
+
+    // A schema-2 bundle may represent a completed no-op inspection. It carries
+    // no execution authority, but its empty planning mirrors must still agree.
+    if manifest.plan.scenarios.is_empty() && manifest.results.is_empty() {
+        if !candidates.is_empty() || !decisions.is_empty() {
+            errors.push("empty run plan has nonempty candidates or plan decisions".into());
+        }
+        return Ok(());
+    }
+
+    let mut candidate_ids = BTreeSet::new();
+    for candidate in &candidates {
+        if let Err(error) = validate_identifier(&candidate.id, "candidate_id") {
+            errors.push(error);
+        }
+        if !candidate_ids.insert(candidate.id.clone()) {
+            errors.push(format!(
+                "candidates.json contains duplicate candidate id: {}",
+                candidate.id
+            ));
+        }
+    }
+
+    let dependency_candidates = expected_dependency_candidates(&manifest.baseline, config);
+    let (expected_plan, expected_decisions) = plan_scenarios(
+        &manifest.baseline,
+        &candidates,
+        &dependency_candidates,
+        config,
+    );
+    if !json_equivalent(&expected_plan, &manifest.plan)? {
+        errors.push("run plan cannot be derived from candidates.json and normalized config".into());
+    }
+    if !json_equivalent(&expected_decisions, &decisions)? {
+        errors.push(
+            "plan-decisions.json cannot be derived from candidates.json and normalized config"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+fn expected_dependency_candidates(
+    baseline: &tomorrowci_core::Baseline,
+    config: &Config,
+) -> Vec<Candidate> {
+    let mut candidates = Vec::new();
+    if config.candidates.dependencies.latest_allowed {
+        candidates.push(Candidate {
+            id: "deps-latest-allowed".into(),
+            axis: EnvironmentAxis::Dependencies,
+            label: format!("{} + latest allowed dependencies", baseline.runtime),
+            version: "latest-allowed".into(),
+            channel: "stable".into(),
+            grade_if_executed: EvidenceGrade::Simulated,
+            order_key: "0001".into(),
+        });
+    }
+    if config.candidates.dependencies.prerelease {
+        candidates.push(Candidate {
+            id: "deps-prerelease".into(),
+            axis: EnvironmentAxis::Dependencies,
+            label: "prerelease dependencies".into(),
+            version: "prerelease".into(),
+            channel: "preview".into(),
+            grade_if_executed: EvidenceGrade::Simulated,
+            order_key: "0002".into(),
+        });
+    }
+    candidates
+}
+
+fn verify_frontier_semantics(
+    run_root: &Path,
+    manifest: &RunManifest,
+    planned: &BTreeMap<String, Scenario>,
+    results: &BTreeMap<String, ExecutionResult>,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    let mut ordered = Vec::new();
+    for scenario in &manifest.plan.scenarios {
+        if let Some(result) = results.get(&scenario.id) {
+            ordered.push((scenario.clone(), result.clone()));
+        }
+    }
+    let baseline_ok = ordered
+        .iter()
+        .any(|(scenario, result)| scenario.is_baseline && result.verdict == Verdict::BaselinePass);
+    let first_future_fail = ordered
+        .iter()
+        .find(|(scenario, result)| !scenario.is_baseline && result.verdict == Verdict::FutureFail);
+    let mut confirmed = false;
+    let mut replay_command = None;
+    if let Some((scenario, _)) = first_future_fail {
+        let summary = read_json_file::<TestAttemptsSummary>(
+            &safe_join(
+                &safe_join(&safe_join(run_root, "scenarios")?, &scenario.id)?,
+                "test-attempts.json",
+            )?,
+            &format!("scenario {} test-attempts.json", scenario.id),
+            errors,
+        )?;
+        confirmed = summary.as_ref().is_some_and(|summary| {
+            summary.status == TestExecutionStatus::Completed
+                && summary.attempts.len() >= 2
+                && summary
+                    .attempts
+                    .iter()
+                    .all(|attempt| attempt.exit_code != Some(0) || attempt.timed_out)
+        });
+        if confirmed {
+            replay_command = Some(format!(
+                "tomorrowci replay {} --scenario {}",
+                manifest.run_id, scenario.id
+            ));
+        }
+    }
+    let expected = compute_breakage_frontier(baseline_ok, &ordered, confirmed, replay_command);
+    if !json_equivalent(&expected, &manifest.frontier)? {
+        errors.push(
+            "run/frontier.json breakage frontier cannot be derived from verified results and rerun confirmation"
+                .into(),
+        );
+    }
+    for scenario_id in results.keys() {
+        if !planned.contains_key(scenario_id) {
+            errors.push(format!(
+                "frontier input result is absent from the verified plan: {scenario_id}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn verify_metrics_semantics(
+    run_root: &Path,
+    manifest: &RunManifest,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    let Some(metrics) = read_json_file::<SemanticMetrics>(
+        &safe_join(run_root, "metrics.json")?,
+        "metrics.json",
+        errors,
+    )?
+    else {
+        return Ok(());
+    };
+    let mut pass = 0;
+    let mut fail = 0;
+    let mut flaky = 0;
+    let mut blocked = 0;
+    let mut unsupported = 0;
+    let mut inconclusive = 0;
+    let mut total_duration = 0;
+    let mut histogram = BTreeMap::new();
+    for result in &manifest.results {
+        *histogram
+            .entry(format!("{:?}", result.verdict))
+            .or_insert(0) += 1;
+        total_duration += result.duration_ms;
+        match result.verdict {
+            Verdict::BaselinePass | Verdict::FuturePass => pass += 1,
+            Verdict::BaselineInvalid | Verdict::FutureFail => fail += 1,
+            Verdict::Flaky => flaky += 1,
+            Verdict::Blocked => blocked += 1,
+            Verdict::Unsupported => unsupported += 1,
+            Verdict::Inconclusive => inconclusive += 1,
+        }
+    }
+    let mismatch = metrics.run_id != manifest.run_id
+        || metrics.scenarios_total != manifest.results.len() as u32
+        || metrics.scenarios_pass != pass
+        || metrics.scenarios_fail != fail
+        || metrics.scenarios_flaky != flaky
+        || metrics.scenarios_blocked != blocked
+        || metrics.scenarios_unsupported != unsupported
+        || metrics.scenarios_inconclusive != inconclusive
+        || metrics.baseline_ok
+            != manifest
+                .results
+                .iter()
+                .any(|result| result.verdict == Verdict::BaselinePass)
+        || metrics.frontier_observed != manifest.frontier.observed
+        || metrics.total_duration_ms != total_duration
+        || metrics.verdict_histogram != histogram;
+    if mismatch {
+        errors.push("metrics.json contradicts verified run results".into());
+    }
+    Ok(())
+}
+
+fn verify_claim_semantics(
+    run_root: &Path,
+    manifest: &RunManifest,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    let Some(ledger) = read_json_file::<SemanticClaimLedger>(
+        &safe_join(run_root, "claims.json")?,
+        "claims.json",
+        errors,
+    )?
+    else {
+        return Ok(());
+    };
+    let scan_completed_authoritatively = !manifest.results.is_empty()
+        && manifest.results.iter().all(|result| {
+            !matches!(
+                result.verdict,
+                Verdict::Blocked
+                    | Verdict::Unsupported
+                    | Verdict::Inconclusive
+                    | Verdict::BaselineInvalid
+                    | Verdict::Flaky
+            )
+        });
+    if !scan_completed_authoritatively
+        && ledger
+            .rows
+            .iter()
+            .any(|row| row.status == SemanticClaimStatus::Pass && !row.claim.trim().is_empty())
+    {
+        errors.push("claims.json contains PASS stronger than verified run results".into());
+    }
+    Ok(())
+}
+
+fn verify_current_scenario_semantics(
+    scenario_root: &Path,
+    scenario_id: &str,
+    scenario: Option<&Scenario>,
+    result: &ExecutionResult,
+    manifest: &RunManifest,
+    config: Option<&Config>,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    let Some(scenario) = scenario else {
+        return Ok(());
+    };
+
+    let environment = read_json_file::<EnvironmentSpec>(
+        &safe_join(scenario_root, "environment.json")?,
+        &format!("scenario {scenario_id} environment.json"),
+        errors,
+    )?;
+    if let Some(environment) = &environment {
+        if !json_equivalent(environment, &result.environment)? {
+            errors.push(format!(
+                "scenario {scenario_id} environment.json does not match result environment"
+            ));
+        }
+        if let Some(config) = config {
+            let requested_engine_matches = match config.sandbox.engine.as_str() {
+                "auto" => matches!(environment.engine.as_deref(), Some("docker" | "podman")),
+                requested => environment.engine.as_deref() == Some(requested),
+            };
+            if environment.memory_mb != config.sandbox.memory_mb
+                || environment.cpus != config.sandbox.cpus
+                || environment.pids_limit != config.sandbox.pids_limit
+                || environment.fetch_timeout_seconds
+                    != Some(config.execution.timeout_seconds.min(600))
+                || environment.test_timeout_seconds != Some(config.execution.timeout_seconds)
+                || environment.network_mode != "none"
+                || (result.attempt > 0 && !requested_engine_matches)
+            {
+                errors.push(format!(
+                    "scenario {scenario_id} environment contradicts normalized sandbox/execution config"
+                ));
+            }
+        }
+    }
+
+    let fetch_commands = read_json_file::<Vec<CommandSpec>>(
+        &safe_join(scenario_root, "fetch-commands.json")?,
+        &format!("scenario {scenario_id} fetch-commands.json"),
+        errors,
+    )?
+    .unwrap_or_default();
+    let test_commands = read_json_file::<Vec<CommandSpec>>(
+        &safe_join(scenario_root, "test-commands.json")?,
+        &format!("scenario {scenario_id} test-commands.json"),
+        errors,
+    )?
+    .unwrap_or_default();
+    let commands = read_json_file::<Vec<CommandSpec>>(
+        &safe_join(scenario_root, "commands.json")?,
+        &format!("scenario {scenario_id} commands.json"),
+        errors,
+    )?
+    .unwrap_or_default();
+    let mut combined = fetch_commands.clone();
+    combined.extend(test_commands.clone());
+    if !json_equivalent(&combined, &commands)? || !json_equivalent(&combined, &result.commands)? {
+        errors.push(format!(
+            "scenario {scenario_id} fetch/test/commands.json do not exactly bind result commands"
+        ));
+    }
+    if let Some(environment) = &environment {
+        if combined
+            .iter()
+            .any(|command| command.cwd.as_deref() != Some(environment.workdir.as_str()))
+        {
+            errors.push(format!(
+                "scenario {scenario_id} command cwd does not exactly match the recorded container workdir"
+            ));
+        }
+    }
+    if fetch_commands
+        .iter()
+        .any(|command| command.phase != "fetch")
+    {
+        errors.push(format!(
+            "scenario {scenario_id} fetch commands contain non-fetch/offline semantics"
+        ));
+    }
+    if test_commands
+        .iter()
+        .any(|command| command.phase != "test" || command.network)
+    {
+        errors.push(format!(
+            "scenario {scenario_id} test commands contain non-test/networked semantics"
+        ));
+    }
+
+    let replay = read_json_file::<ReplayDescriptor>(
+        &safe_join(scenario_root, "replay.json")?,
+        &format!("scenario {scenario_id} replay.json"),
+        errors,
+    )?;
+    if let (Some(replay), Some(environment)) = (&replay, &environment) {
+        verify_replay_descriptor(
+            scenario_id,
+            replay,
+            environment,
+            result,
+            &fetch_commands,
+            &test_commands,
+            errors,
+        )?;
+    }
+
+    let image_phase = read_json_file::<PhaseEvidence>(
+        &safe_join(scenario_root, "image-resolve-phase.json")?,
+        &format!("scenario {scenario_id} image-resolve-phase.json"),
+        errors,
+    )?;
+    if let Some(phase) = &image_phase {
+        verify_phase_time(phase, manifest, scenario_id, errors);
+        if phase.phase != "image-resolve"
+            || phase.network != "n/a"
+            || !phase.argv.is_empty()
+            || phase.image != result.environment.tag()
+            || phase.image_digest != result.environment.image_digest
+            || phase.ok != result.environment.image_digest.is_some()
+        {
+            errors.push(format!(
+                "scenario {scenario_id} image-resolve phase does not bind the recorded image identity"
+            ));
+        }
+    }
+
+    let fetch_phase = verify_fetch_semantics(
+        scenario_root,
+        scenario_id,
+        &fetch_commands,
+        result,
+        manifest,
+        image_phase.as_ref(),
+        errors,
+    )?;
+
+    let summary = read_json_file::<TestAttemptsSummary>(
+        &safe_join(scenario_root, "test-attempts.json")?,
+        &format!("scenario {scenario_id} test-attempts.json"),
+        errors,
+    )?;
+    if let Some(summary) = &summary {
+        verify_test_attempts(
+            scenario_root,
+            scenario_id,
+            scenario,
+            result,
+            summary,
+            manifest,
+            fetch_phase.as_ref().or(image_phase.as_ref()),
+            &test_commands,
+            config,
+            errors,
+        )?;
+    }
+
+    verify_failure_signature_file(scenario_root, scenario_id, result, errors)?;
+    verify_replay_attempt_semantics(scenario_root, scenario_id, result, errors)?;
+    Ok(())
+}
+
+fn verify_replay_descriptor(
+    scenario_id: &str,
+    replay: &ReplayDescriptor,
+    environment: &EnvironmentSpec,
+    result: &ExecutionResult,
+    fetch_commands: &[CommandSpec],
+    test_commands: &[CommandSpec],
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    let fetch_argv: Vec<_> = fetch_commands
+        .iter()
+        .map(|command| command.argv.clone())
+        .collect();
+    let test_argv: Vec<_> = test_commands
+        .iter()
+        .map(|command| command.argv.clone())
+        .collect();
+    let mismatch = replay.scenario_id != scenario_id
+        || replay.engine != environment.engine
+        || replay.engine_version != environment.engine_version
+        || replay.image != environment.tag()
+        || replay.image_digest != environment.image_digest
+        || replay.workdir != environment.workdir
+        || replay.user != environment.user
+        || replay.memory_mb != environment.memory_mb
+        || replay.cpus != environment.cpus
+        || replay.pids_limit != environment.pids_limit
+        || replay.read_only_root != environment.read_only_root
+        || replay.fetch_network != "bridge"
+        || replay.test_network != "none"
+        || replay.fetch_timeout_seconds != environment.fetch_timeout_seconds
+        || replay.test_timeout_seconds != environment.test_timeout_seconds
+        || replay.fetch_argv != fetch_argv
+        || replay.test_argv != test_argv
+        || replay.expected_exit_code != result.exit_code
+        || replay.expected_timed_out != result.timed_out
+        || !json_equivalent(&replay.expected_failure_signature, &result.failure)?;
+    if mismatch {
+        errors.push(format!(
+            "scenario {scenario_id} replay.json does not exactly bind environment, commands, and expected result"
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_test_attempts(
+    scenario_root: &Path,
+    scenario_id: &str,
+    scenario: &Scenario,
+    result: &ExecutionResult,
+    summary: &TestAttemptsSummary,
+    manifest: &RunManifest,
+    image_phase: Option<&PhaseEvidence>,
+    test_commands: &[CommandSpec],
+    config: Option<&Config>,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    if summary.scenario_id != scenario_id {
+        errors.push(format!(
+            "scenario {scenario_id} test-attempts scenario_id mismatch"
+        ));
+    }
+    let mut previous_finished = None;
+    for (index, attempt) in summary.attempts.iter().enumerate() {
+        let expected = (index + 1) as u32;
+        if attempt.attempt != expected {
+            errors.push(format!(
+                "scenario {scenario_id} test attempts are not contiguous at {expected}"
+            ));
+        }
+        if attempt.finished_at < attempt.started_at {
+            errors.push(format!(
+                "scenario {scenario_id} attempt {expected} finished before it started"
+            ));
+        }
+        if previous_finished.is_some_and(|finished| attempt.started_at < finished) {
+            errors.push(format!(
+                "scenario {scenario_id} attempt {expected} overlaps or precedes its predecessor"
+            ));
+        }
+        previous_finished = Some(attempt.finished_at);
+        let passed = attempt.exit_code == Some(0) && !attempt.timed_out;
+        if passed != attempt.failure.is_none() {
+            errors.push(format!(
+                "scenario {scenario_id} attempt {expected} failure signature contradicts raw exit/timeout"
+            ));
+        }
+        if let Some(failure) = &attempt.failure {
+            if crate::validate_sha256(&failure.normalized_hash).is_err() {
+                errors.push(format!(
+                    "scenario {scenario_id} attempt {expected} has invalid failure hash"
+                ));
+            }
+        }
+        for prefix in ["stdout", "stderr"] {
+            let path = safe_join(
+                scenario_root,
+                &format!("{prefix}.attempt{}.log", attempt.attempt),
+            )?;
+            require_regular_file(
+                &path,
+                &format!(
+                    "scenario {scenario_id} attempt {} {prefix} log",
+                    attempt.attempt
+                ),
+                errors,
+            )?;
+        }
+    }
+
+    match summary.status {
+        TestExecutionStatus::Completed => {
+            if summary.attempts.is_empty() || summary.error.is_some() {
+                errors.push(format!(
+                    "scenario {scenario_id} completed test summary must contain attempts and no execution error"
+                ));
+                return Ok(());
+            }
+            let passes: Vec<_> = summary
+                .attempts
+                .iter()
+                .map(|attempt| attempt.exit_code == Some(0) && !attempt.timed_out)
+                .collect();
+            if scenario.is_baseline && summary.attempts.len() != 1 {
+                errors.push(format!(
+                    "scenario {scenario_id} baseline must have exactly one test attempt"
+                ));
+            }
+            if !scenario.is_baseline {
+                if let Some(config) = config {
+                    if summary.attempts.len() > config.execution.reruns_on_failure as usize {
+                        errors.push(format!(
+                            "scenario {scenario_id} exceeds the normalized rerun budget"
+                        ));
+                    }
+                }
+                if passes
+                    .iter()
+                    .position(|passed| *passed)
+                    .is_some_and(|position| position + 1 != passes.len())
+                {
+                    errors.push(format!(
+                        "scenario {scenario_id} contains attempts after the first passing rerun"
+                    ));
+                }
+            }
+            let expected_verdict = if scenario.is_baseline {
+                if passes.iter().any(|passed| *passed) {
+                    Verdict::BaselinePass
+                } else {
+                    Verdict::BaselineInvalid
+                }
+            } else if passes.len() < 2 && passes.iter().all(|passed| !*passed) {
+                Verdict::Inconclusive
+            } else {
+                classify_from_reruns(&passes)
+            };
+            if result.verdict != expected_verdict {
+                errors.push(format!(
+                    "scenario {scenario_id} verdict {:?} contradicts attempt-derived verdict {:?}",
+                    result.verdict, expected_verdict
+                ));
+            }
+            let last = summary.attempts.last().expect("checked non-empty");
+            let expected_failure = if expected_verdict == Verdict::Flaky {
+                summary
+                    .attempts
+                    .iter()
+                    .rev()
+                    .find_map(|attempt| attempt.failure.clone())
+            } else {
+                last.failure.clone()
+            };
+            if result.attempt != summary.attempts.len() as u32
+                || result.exit_code != last.exit_code
+                || result.timed_out != last.timed_out
+                || result.duration_ms != last.duration_ms
+                || !json_equivalent(&result.failure, &expected_failure)?
+            {
+                errors.push(format!(
+                    "scenario {scenario_id} result does not match final test attempt"
+                ));
+            }
+            verify_test_phase_and_result(
+                scenario_root,
+                scenario_id,
+                last,
+                summary,
+                result,
+                test_commands,
+                manifest,
+                image_phase,
+                errors,
+            )?;
+            let final_attempt = summary.attempts.len() as u32;
+            for prefix in ["stdout", "stderr"] {
+                let canonical = std::fs::read(safe_join(scenario_root, &format!("{prefix}.log"))?)?;
+                let attempt = std::fs::read(safe_join(
+                    scenario_root,
+                    &format!("{prefix}.attempt{final_attempt}.log"),
+                )?)?;
+                if canonical != attempt {
+                    errors.push(format!(
+                        "scenario {scenario_id} {prefix}.log does not match final attempt log"
+                    ));
+                }
+            }
+        }
+        TestExecutionStatus::NotRun => {
+            if !summary.attempts.is_empty()
+                || summary.error.as_deref().is_none_or(str::is_empty)
+                || !matches!(result.verdict, Verdict::Blocked | Verdict::Unsupported)
+                || result.attempt != 0
+            {
+                errors.push(format!(
+                    "scenario {scenario_id} not-run summary cannot authorize verdict {:?}",
+                    result.verdict
+                ));
+            }
+        }
+        TestExecutionStatus::ExecutionError => {
+            if summary.error.as_deref().is_none_or(str::is_empty)
+                || result.verdict != Verdict::Blocked
+                || result.attempt != summary.attempts.len() as u32
+            {
+                errors.push(format!(
+                    "scenario {scenario_id} execution-error summary must remain BLOCKED"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_test_phase_and_result(
+    scenario_root: &Path,
+    scenario_id: &str,
+    last: &tomorrowci_core::TestAttemptRecord,
+    summary: &TestAttemptsSummary,
+    result: &ExecutionResult,
+    test_commands: &[CommandSpec],
+    manifest: &RunManifest,
+    previous_phase: Option<&PhaseEvidence>,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    let phase = read_json_file::<PhaseEvidence>(
+        &safe_join(scenario_root, "test-phase.json")?,
+        &format!("scenario {scenario_id} test-phase.json"),
+        errors,
+    )?;
+    let raw = read_json_file::<RawResultSummary>(
+        &safe_join(scenario_root, "test-result.json")?,
+        &format!("scenario {scenario_id} test-result.json"),
+        errors,
+    )?;
+    if let Some(phase) = &phase {
+        verify_phase_time(phase, manifest, scenario_id, errors);
+        let argv: Vec<_> = test_commands
+            .iter()
+            .map(|command| command.argv.clone())
+            .collect();
+        let expected_duration = elapsed_ms_between(phase.started_at, phase.finished_at);
+        let first = summary
+            .attempts
+            .first()
+            .expect("completed summary is non-empty");
+        if phase.phase != "test"
+            || phase.network != "none"
+            || phase.argv != argv
+            || phase.image != result.environment.tag()
+            || phase.image_digest != result.environment.image_digest
+            || phase.exit_code != last.exit_code
+            || phase.timed_out != last.timed_out
+            || phase.duration_ms != expected_duration
+            || phase.ok != (last.exit_code == Some(0) && !last.timed_out)
+            || phase.started_at != first.started_at
+            || phase.finished_at != last.finished_at
+        {
+            errors.push(format!(
+                "scenario {scenario_id} test-phase contradicts its commands, environment, or complete attempt span"
+            ));
+        }
+        if let Some(previous) = previous_phase {
+            if phase.started_at < previous.finished_at {
+                errors.push(format!(
+                    "scenario {scenario_id} test phase begins before image resolution finished"
+                ));
+            }
+        }
+    }
+    if let Some(raw) = &raw {
+        if raw.exit_code != last.exit_code
+            || raw.timed_out != last.timed_out
+            || raw.duration_ms != last.duration_ms
+            || raw.network_used
+            || raw.started_at != last.started_at
+            || raw.finished_at != last.finished_at
+        {
+            errors.push(format!(
+                "scenario {scenario_id} test-result contradicts final attempt"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn elapsed_ms_between(started_at: DateTime<Utc>, finished_at: DateTime<Utc>) -> u64 {
+    finished_at
+        .signed_duration_since(started_at)
+        .num_milliseconds()
+        .max(0) as u64
+}
+
+fn verify_failure_signature_file(
+    scenario_root: &Path,
+    scenario_id: &str,
+    result: &ExecutionResult,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    let path = safe_join(scenario_root, "failure-signature.json")?;
+    if path.exists() {
+        let failure = read_json_file::<FailureSignature>(
+            &path,
+            &format!("scenario {scenario_id} failure-signature.json"),
+            errors,
+        )?;
+        if !json_equivalent(&failure, &result.failure)? {
+            errors.push(format!(
+                "scenario {scenario_id} failure-signature.json does not match result"
+            ));
+        }
+    } else if result.failure.is_some() {
+        errors.push(format!(
+            "scenario {scenario_id} result failure is missing failure-signature.json"
+        ));
+    }
+    if result.verdict.is_pass_like() && result.failure.is_some() {
+        errors.push(format!(
+            "scenario {scenario_id} pass-like verdict carries a failure signature"
+        ));
+    }
+    Ok(())
+}
+
+fn verify_fetch_semantics(
+    scenario_root: &Path,
+    scenario_id: &str,
+    fetch_commands: &[CommandSpec],
+    result: &ExecutionResult,
+    manifest: &RunManifest,
+    image_phase: Option<&PhaseEvidence>,
+    errors: &mut Vec<String>,
+) -> Result<Option<PhaseEvidence>> {
+    let phase_path = safe_join(scenario_root, "fetch-phase.json")?;
+    let raw_path = safe_join(scenario_root, "fetch-result.json")?;
+    let phase = if phase_path.exists() {
+        read_json_file::<PhaseEvidence>(
+            &phase_path,
+            &format!("scenario {scenario_id} fetch-phase.json"),
+            errors,
+        )?
+    } else {
+        None
+    };
+    let raw = if raw_path.exists() {
+        read_json_file::<RawResultSummary>(
+            &raw_path,
+            &format!("scenario {scenario_id} fetch-result.json"),
+            errors,
+        )?
+    } else {
+        None
+    };
+    if !fetch_commands.is_empty() && result.environment.image_digest.is_some() && phase.is_none() {
+        errors.push(format!(
+            "scenario {scenario_id} has fetch commands after image resolution but no fetch phase"
+        ));
+    }
+    if let Some(phase) = &phase {
+        verify_phase_time(phase, manifest, scenario_id, errors);
+        let argv: Vec<_> = fetch_commands
+            .iter()
+            .map(|command| command.argv.clone())
+            .collect();
+        if phase.phase != "fetch"
+            || phase.network != "bridge"
+            || phase.argv != argv
+            || phase.image != result.environment.tag()
+            || phase.image_digest != result.environment.image_digest
+        {
+            errors.push(format!(
+                "scenario {scenario_id} fetch phase does not bind commands/environment"
+            ));
+        }
+        if let Some(previous) = image_phase {
+            if phase.started_at < previous.finished_at {
+                errors.push(format!(
+                    "scenario {scenario_id} fetch begins before image resolution finished"
+                ));
+            }
+        }
+    }
+    if let Some(raw) = &raw {
+        if !raw.network_used || raw.finished_at < raw.started_at {
+            errors.push(format!(
+                "scenario {scenario_id} fetch-result has invalid network/time semantics"
+            ));
+        }
+        match &phase {
+            Some(phase)
+                if raw.exit_code == phase.exit_code
+                    && raw.timed_out == phase.timed_out
+                    && raw.duration_ms == phase.duration_ms
+                    && raw.started_at == phase.started_at
+                    && raw.finished_at == phase.finished_at => {}
+            _ => errors.push(format!(
+                "scenario {scenario_id} fetch-result does not match fetch phase"
+            )),
+        }
+    }
+    Ok(phase)
+}
+
+fn verify_phase_time(
+    phase: &PhaseEvidence,
+    manifest: &RunManifest,
+    scenario_id: &str,
+    errors: &mut Vec<String>,
+) {
+    if phase.finished_at < phase.started_at {
+        errors.push(format!(
+            "scenario {scenario_id} {} phase finished before it started",
+            phase.phase
+        ));
+    }
+    if phase.started_at < manifest.started_at
+        || manifest
+            .finished_at
+            .is_some_and(|finished| phase.finished_at > finished)
+    {
+        errors.push(format!(
+            "scenario {scenario_id} {} phase lies outside run timestamps",
+            phase.phase
+        ));
+    }
+}
+
+fn index_scenarios(
+    scenarios: &[Scenario],
+    label: &str,
+    errors: &mut Vec<String>,
+) -> BTreeMap<String, Scenario> {
+    let mut indexed = BTreeMap::new();
+    for scenario in scenarios {
+        if let Err(error) = validate_identifier(&scenario.id, "scenario_id") {
+            errors.push(format!("{label}: {error}"));
+            continue;
+        }
+        if indexed
+            .insert(scenario.id.clone(), scenario.clone())
+            .is_some()
+        {
+            errors.push(format!(
+                "{label} contains duplicate scenario_id: {}",
+                scenario.id
+            ));
+        }
+    }
+    indexed
+}
+
+fn index_results(
+    results: &[ExecutionResult],
+    label: &str,
+    errors: &mut Vec<String>,
+) -> BTreeMap<String, ExecutionResult> {
+    let mut indexed = BTreeMap::new();
+    for result in results {
+        if let Err(error) = validate_identifier(&result.scenario_id, "scenario_id") {
+            errors.push(format!("{label}: {error}"));
+            continue;
+        }
+        if indexed
+            .insert(result.scenario_id.clone(), result.clone())
+            .is_some()
+        {
+            errors.push(format!(
+                "{label} contains duplicate scenario_id: {}",
+                result.scenario_id
+            ));
+        }
+    }
+    indexed
+}
+
+fn collect_scenario_directories(
+    scenarios_root: &Path,
+    errors: &mut Vec<String>,
+) -> Result<BTreeSet<String>> {
+    let mut directories = BTreeSet::new();
+    let metadata = match safe_metadata_report(scenarios_root, errors)? {
+        Some(metadata) => metadata,
+        None => return Ok(directories),
+    };
+    if !metadata.is_dir() {
+        errors.push(format!(
+            "scenarios root is not a directory: {}",
+            scenarios_root.display()
+        ));
+        return Ok(directories);
+    }
+
+    for entry in std::fs::read_dir(scenarios_root)? {
+        let entry = entry?;
+        let scenario_id = match utf8_file_name(&entry) {
+            Ok(scenario_id) => scenario_id,
+            Err(error) => {
+                errors.push(error.to_string());
+                continue;
+            }
+        };
+        if let Err(error) = validate_identifier(&scenario_id, "scenario directory") {
+            errors.push(error);
+            continue;
+        }
+        let metadata = match safe_metadata_report(&entry.path(), errors)? {
+            Some(metadata) => metadata,
+            None => continue,
+        };
+        if !metadata.is_dir() {
+            errors.push(format!(
+                "scenario entry is not a directory: {}",
+                entry.path().display()
+            ));
+            continue;
+        }
+        directories.insert(scenario_id);
+    }
+    Ok(directories)
+}
+
+fn compare_scenario_ids<'a>(
+    left_label: &str,
+    left: impl Iterator<Item = &'a String>,
+    right_label: &str,
+    right: impl Iterator<Item = &'a String>,
+    errors: &mut Vec<String>,
+) {
+    let left: BTreeSet<&String> = left.collect();
+    let right: BTreeSet<&String> = right.collect();
+    for scenario_id in left.difference(&right) {
+        errors.push(format!(
+            "{right_label} missing scenario present in {left_label}: {scenario_id}"
+        ));
+    }
+    for scenario_id in right.difference(&left) {
+        errors.push(format!(
+            "{right_label} contains orphan scenario absent from {left_label}: {scenario_id}"
+        ));
+    }
+}
+
+fn read_json_file<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    label: &str,
+    errors: &mut Vec<String>,
+) -> Result<Option<T>> {
+    if regular_file_metadata(path, label, errors)?.is_none() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(path)?;
+    match serde_json::from_str(&raw) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) => {
+            errors.push(format!("{label} is malformed: {error}"));
+            Ok(None)
+        }
+    }
+}
+
+fn json_equivalent<T: Serialize>(left: &T, right: &T) -> Result<bool> {
+    Ok(serde_json::to_value(left)? == serde_json::to_value(right)?)
+}
+
+fn verify_scenarios(
+    run_root: &Path,
+    expected_format: Option<ChecksumFormat>,
+    errors: &mut Vec<String>,
+    checked: &mut usize,
+) -> Result<()> {
+    let scenarios_root = safe_join(run_root, "scenarios")?;
+    let metadata = match std::fs::symlink_metadata(&scenarios_root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            errors.push("missing scenarios directory".into());
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if metadata_is_alias(&metadata) {
+        errors.push(format!(
+            "refusing scenario symlink/reparse point: {}",
+            scenarios_root.display()
+        ));
+        return Ok(());
+    }
+    if !metadata.is_dir() {
+        errors.push("scenarios entry is not a directory".into());
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(&scenarios_root)? {
+        let entry = entry?;
+        let scenario_root = entry.path();
+        let scenario_name = match entry.file_name().to_str() {
+            Some(name) => name.to_string(),
+            None => {
+                errors.push("scenario directory name is not UTF-8".into());
+                continue;
+            }
+        };
+        if let Err(error) = validate_single_component(&scenario_name) {
+            errors.push(error.to_string());
+            continue;
+        }
+        let scenario_metadata = safe_metadata_report(&scenario_root, errors)?;
+        if !scenario_metadata
+            .as_ref()
+            .is_some_and(std::fs::Metadata::is_dir)
+        {
+            if scenario_metadata.is_some() {
+                errors.push(format!(
+                    "scenario entry is not a directory: {}",
+                    scenario_root.display()
+                ));
+            }
+            continue;
+        }
+
+        let checksums_path = safe_join(&scenario_root, "checksums.txt")?;
+        let checksums = parse_checksum_manifest(
+            &checksums_path,
+            &format!("scenario {scenario_name} checksums"),
+            errors,
+        )?;
+        let legacy_fetch_optional = checksums
+            .as_ref()
+            .is_some_and(|manifest| manifest.format == ChecksumFormat::LegacyV1);
+        for name in SCENARIO_REQUIRED {
+            if *name == "fetch-commands.json"
+                && legacy_fetch_optional
+                && !safe_join(&scenario_root, name)?.exists()
+                && !safe_join(&scenario_root, "fetch-phase.json")?.exists()
+            {
+                continue;
+            }
+            let path = safe_join(&scenario_root, name)?;
+            require_regular_file(
+                &path,
+                &format!("scenario {scenario_name} required file {name}"),
+                errors,
+            )?;
+        }
+
+        if let Some(manifest) = &checksums {
+            if let Some(expected) = expected_format {
+                if manifest.format != expected {
+                    errors.push(format!(
+                        "scenario {scenario_name} checksum format does not match run checksum format"
+                    ));
+                }
+            }
+            if manifest.format == ChecksumFormat::CurrentV2 {
+                for current_name in [
+                    "commands.json",
+                    "test-attempts.json",
+                    "image-resolve-phase.json",
+                ] {
+                    let path = safe_join(&scenario_root, current_name)?;
+                    require_regular_file(
+                        &path,
+                        &format!("scenario {scenario_name} current-v2 file {current_name}"),
+                        errors,
+                    )?;
+                }
+            }
+            verify_checksum_inventory(
+                &scenario_root,
+                InventoryScope::Scenario,
+                manifest,
+                errors,
+                checked,
+            )?;
+        }
+        verify_replay_attempts(&scenario_root, &scenario_name, errors)?;
+    }
+    Ok(())
+}
+
+fn verify_replay_attempts(
+    scenario_root: &Path,
+    scenario_name: &str,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    let replays = safe_join(scenario_root, "replays")?;
+    let metadata = match std::fs::symlink_metadata(&replays) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata_is_alias(&metadata) {
+        errors.push(format!(
+            "scenario {scenario_name} replays is a symlink/reparse point"
+        ));
+        return Ok(());
+    }
+    if !metadata.is_dir() {
+        errors.push(format!(
+            "scenario {scenario_name} replays is not a directory"
+        ));
+        return Ok(());
+    }
+
+    let mut attempts = BTreeSet::new();
+    for entry in std::fs::read_dir(&replays)? {
+        let entry = entry?;
+        let name = match entry.file_name().to_str() {
+            Some(name) => name.to_string(),
+            None => {
+                errors.push(format!(
+                    "scenario {scenario_name} replay directory name is not UTF-8"
+                ));
+                continue;
+            }
+        };
+        let number = match replay_attempt_number(&name) {
+            Some(number) => number,
+            None => {
+                errors.push(format!(
+                    "scenario {scenario_name} invalid replay attempt directory: {name}"
+                ));
+                continue;
+            }
+        };
+        let path = entry.path();
+        let metadata = safe_metadata_report(&path, errors)?;
+        if !metadata.as_ref().is_some_and(std::fs::Metadata::is_dir) {
+            if metadata.is_some() {
+                errors.push(format!(
+                    "scenario {scenario_name} replay attempt is not a directory: {name}"
+                ));
+            }
+            continue;
+        }
+        attempts.insert(number);
+        for required in REPLAY_REQUIRED {
+            let required_path = safe_join(&path, required)?;
+            require_regular_file(
+                &required_path,
+                &format!("scenario {scenario_name} replay {name} required file {required}"),
+                errors,
+            )?;
+        }
+    }
+
+    for expected in 1..=attempts.len() as u32 {
+        if !attempts.contains(&expected) {
+            errors.push(format!(
+                "scenario {scenario_name} replay attempts are not contiguous at attempt-{expected}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn verify_replay_attempt_semantics(
+    scenario_root: &Path,
+    scenario_id: &str,
+    result: &ExecutionResult,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    let replays = safe_join(scenario_root, "replays")?;
+    let mut reports = Vec::new();
+    if replays.exists() {
+        let mut entries: Vec<_> = std::fs::read_dir(&replays)?.collect::<std::io::Result<_>>()?;
+        entries.sort_by_key(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .and_then(replay_attempt_number)
+                .unwrap_or(u32::MAX)
+        });
+        for entry in entries {
+            let name = utf8_file_name(&entry)?;
+            let Some(number) = replay_attempt_number(&name) else {
+                continue;
+            };
+            let report_path = safe_join(&entry.path(), "result.json")?;
+            if let Some(report) = read_json_file::<ReplayAttemptEvidence>(
+                &report_path,
+                &format!("scenario {scenario_id} replay {name} result.json"),
+                errors,
+            )? {
+                if report.scenario_id != scenario_id || report.attempt != number as usize {
+                    errors.push(format!(
+                        "scenario {scenario_id} replay {name} identity mismatch"
+                    ));
+                }
+                if report.finished_at < report.started_at {
+                    errors.push(format!(
+                        "scenario {scenario_id} replay {name} finished before it started"
+                    ));
+                }
+                if report.original_exit != result.exit_code
+                    || report.original_signature.as_deref()
+                        != result
+                            .failure
+                            .as_ref()
+                            .map(|failure| failure.normalized_hash.as_str())
+                {
+                    errors.push(format!(
+                        "scenario {scenario_id} replay {name} does not bind original result"
+                    ));
+                }
+                let recorded = canonical_image_digest_value(&report.recorded_digest);
+                let resolved = canonical_image_digest_value(&report.resolved_digest);
+                if recorded.is_err()
+                    || resolved.is_err()
+                    || recorded.ok() != resolved.ok()
+                    || result.environment.image_digest.as_deref()
+                        != Some(report.recorded_digest.as_str())
+                {
+                    errors.push(format!(
+                        "scenario {scenario_id} replay {name} has invalid or divergent image digest"
+                    ));
+                }
+                if report.engine != result.environment.engine.clone().unwrap_or_default()
+                    || report.engine_version
+                        != result
+                            .environment
+                            .engine_version
+                            .clone()
+                            .unwrap_or_default()
+                    || report.image_tag != result.environment.tag()
+                    || Some(report.fetch_timeout_seconds)
+                        != result.environment.fetch_timeout_seconds
+                    || Some(report.test_timeout_seconds) != result.environment.test_timeout_seconds
+                {
+                    errors.push(format!(
+                        "scenario {scenario_id} replay {name} engine/environment identity mismatch"
+                    ));
+                }
+                let derived_exit_match =
+                    report.replay_exit == result.exit_code && report.timed_out == result.timed_out;
+                let derived_signature_match = report.replay_signature.as_deref()
+                    == result
+                        .failure
+                        .as_ref()
+                        .map(|failure| failure.normalized_hash.as_str());
+                if report.phase == "test"
+                    && (report.exit_match != Some(derived_exit_match)
+                        || report.signature_match != Some(derived_signature_match))
+                {
+                    errors.push(format!(
+                        "scenario {scenario_id} replay {name} comparison flags contradict recorded outputs"
+                    ));
+                }
+                let expected_ok = report.phase == "test"
+                    && report.error.is_none()
+                    && derived_exit_match
+                    && derived_signature_match;
+                if report.ok != expected_ok {
+                    errors.push(format!(
+                        "scenario {scenario_id} replay {name} ok flag contradicts replay comparison"
+                    ));
+                }
+                reports.push(report);
+            }
+        }
+    }
+
+    let latest_path = safe_join(scenario_root, "replay-result.json")?;
+    match (reports.last(), latest_path.exists()) {
+        (Some(expected), true) => {
+            if let Some(latest) = read_json_file::<ReplayAttemptEvidence>(
+                &latest_path,
+                &format!("scenario {scenario_id} replay-result.json"),
+                errors,
+            )? {
+                if &latest != expected {
+                    errors.push(format!(
+                        "scenario {scenario_id} replay-result.json is not the latest committed attempt"
+                    ));
+                }
+            }
+        }
+        (Some(_), false) => errors.push(format!(
+            "scenario {scenario_id} replay attempts exist without replay-result.json"
+        )),
+        (None, true) => errors.push(format!(
+            "scenario {scenario_id} replay-result.json exists without a committed attempt"
+        )),
+        (None, false) => {}
+    }
+    Ok(())
+}
+
+fn parse_checksum_manifest(
+    path: &Path,
+    label: &str,
+    errors: &mut Vec<String>,
+) -> Result<Option<ChecksumManifest>> {
+    if regular_file_metadata(path, label, errors)?.is_none() {
+        return Ok(None);
+    }
+
+    let raw = std::fs::read_to_string(path)?;
+    let first_nonempty = raw.lines().position(|line| !line.trim().is_empty());
+    let format = match first_nonempty.and_then(|index| raw.lines().nth(index)) {
+        Some(line) if line.trim() == CHECKSUM_FORMAT_V2 => ChecksumFormat::CurrentV2,
+        _ => ChecksumFormat::LegacyV1,
+    };
+
+    let mut entries = BTreeMap::new();
+    for (index, line) in raw.lines().enumerate() {
+        let line_number = index + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == CHECKSUM_FORMAT_V2 {
+            if format != ChecksumFormat::CurrentV2 || Some(index) != first_nonempty {
+                errors.push(format!(
+                    "{label} line {line_number}: checksum format header is misplaced"
+                ));
+            }
+            continue;
+        }
+
+        let fields: Vec<_> = trimmed.split_ascii_whitespace().collect();
+        if fields.len() != 2 {
+            errors.push(format!(
+                "{label} line {line_number}: malformed checksum entry"
+            ));
+            continue;
+        }
+
+        let hash = match normalize_checksum(fields[0], format) {
+            Some(hash) => hash,
+            None => {
+                errors.push(format!(
+                    "{label} line {line_number}: malformed sha256 {:?}",
+                    fields[0]
+                ));
+                continue;
+            }
+        };
+        let relative = fields[1];
+        if let Err(error) = validate_manifest_path(relative) {
+            errors.push(format!(
+                "{label} line {line_number}: invalid path {relative:?}: {error}"
+            ));
+            continue;
+        }
+        if relative.chars().any(char::is_whitespace) {
+            errors.push(format!(
+                "{label} line {line_number}: checksum path is not canonical"
+            ));
+            continue;
+        }
+        if entries.insert(relative.to_string(), hash).is_some() {
+            errors.push(format!(
+                "{label} line {line_number}: duplicate checksum path {relative}"
+            ));
+        }
+    }
+
+    Ok(Some(ChecksumManifest { format, entries }))
+}
+
+fn verify_checksum_inventory(
+    root: &Path,
+    scope: InventoryScope,
+    manifest: &ChecksumManifest,
+    errors: &mut Vec<String>,
+    checked: &mut usize,
+) -> Result<()> {
+    let actual = match collect_inventory(root, scope) {
+        Ok(actual) => actual,
+        Err(error) => {
+            errors.push(error.to_string());
+            BTreeSet::new()
+        }
+    };
+    let listed: BTreeSet<_> = manifest.entries.keys().cloned().collect();
+
+    for (relative, expected) in &manifest.entries {
+        if !inventory_path_allowed(scope, relative) {
+            errors.push(format!(
+                "checksum lists unrecognized {} file: {relative}",
+                scope_name(scope)
+            ));
+            continue;
+        }
+        let path = safe_join(root, relative)?;
+        if regular_file_metadata(&path, "checksum", errors)?.is_none() {
+            continue;
+        }
+        let actual_hash = file_checksum(&path)?;
+        if actual_hash != *expected {
+            errors.push(format!(
+                "checksum mutation detected in {} file: {relative}",
+                scope_name(scope)
+            ));
+        } else {
+            *checked += 1;
+        }
+    }
+
+    for relative in actual.difference(&listed) {
+        if manifest.format == ChecksumFormat::LegacyV1 && legacy_unlisted_allowed(scope, relative) {
+            continue;
+        }
+        errors.push(format!("unlisted {} file: {relative}", scope_name(scope)));
+    }
+    for relative in listed.difference(&actual) {
+        errors.push(format!(
+            "checksum lists missing {} file: {relative}",
+            scope_name(scope)
+        ));
+    }
+    Ok(())
+}
+
+fn collect_inventory(root: &Path, scope: InventoryScope) -> Result<BTreeSet<String>> {
+    ensure_directory_no_alias(root)?;
+    match scope {
+        InventoryScope::Run => collect_run_inventory(root),
+        InventoryScope::Scenario => collect_scenario_inventory(root),
+    }
+}
+
+fn collect_run_inventory(root: &Path) -> Result<BTreeSet<String>> {
+    let mut files = BTreeSet::new();
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = utf8_file_name(&entry)?;
+        let metadata = safe_metadata(&path)?;
+
+        if metadata.is_dir() {
+            if name == "scenarios" {
+                collect_scenario_checksum_bindings(&path, &mut files)?;
+            } else if name != "workspace" {
+                return Err(TcError::InvalidState(format!(
+                    "unexpected run directory: {name}"
+                )));
+            }
+            continue;
+        }
+        if !metadata.is_file() {
+            return Err(TcError::InvalidState(format!(
+                "unsupported run filesystem entry: {}",
+                path.display()
+            )));
+        }
+        if name == "checksums.txt" {
+            continue;
+        }
+        validate_manifest_path(&name).map_err(TcError::InvalidState)?;
+        if !inventory_path_allowed(InventoryScope::Run, &name) {
+            return Err(TcError::InvalidState(format!(
+                "unexpected run file: {name}"
+            )));
+        }
+        files.insert(name);
+    }
+    Ok(files)
+}
+
+fn collect_scenario_checksum_bindings(
+    scenarios_root: &Path,
+    files: &mut BTreeSet<String>,
+) -> Result<()> {
+    ensure_directory_no_alias(scenarios_root)?;
+    for entry in std::fs::read_dir(scenarios_root)? {
+        let entry = entry?;
+        let scenario_id = utf8_file_name(&entry)?;
+        validate_identifier(&scenario_id, "scenario directory").map_err(TcError::InvalidState)?;
+        let scenario_root = entry.path();
+        let metadata = safe_metadata(&scenario_root)?;
+        if !metadata.is_dir() {
+            return Err(TcError::InvalidState(format!(
+                "scenario entry is not a directory: {}",
+                scenario_root.display()
+            )));
+        }
+
+        let checksum_path = safe_join(&scenario_root, "checksums.txt")?;
+        match std::fs::symlink_metadata(&checksum_path) {
+            Ok(metadata) if metadata_is_alias(&metadata) => {
+                return Err(TcError::InvalidState(format!(
+                    "scenario checksum manifest is a symlink/reparse point: {}",
+                    checksum_path.display()
+                )));
+            }
+            Ok(metadata) if metadata.is_file() => {
+                files.insert(format!("scenarios/{scenario_id}/checksums.txt"));
+            }
+            Ok(_) => {
+                return Err(TcError::InvalidState(format!(
+                    "scenario checksum manifest is not a regular file: {}",
+                    checksum_path.display()
+                )));
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+fn collect_scenario_inventory(root: &Path) -> Result<BTreeSet<String>> {
+    let mut files = BTreeSet::new();
+    walk_scenario_inventory(root, root, &mut files)?;
+    Ok(files)
+}
+
+fn walk_scenario_inventory(
+    root: &Path,
+    current: &Path,
+    files: &mut BTreeSet<String>,
+) -> Result<()> {
+    for entry in std::fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = safe_metadata(&path)?;
+        let relative = relative_path(root, &path)?;
+        validate_manifest_path(&relative).map_err(TcError::InvalidState)?;
+
+        if metadata.is_dir() {
+            if !scenario_directory_allowed(&relative) {
+                return Err(TcError::InvalidState(format!(
+                    "unexpected scenario directory: {relative}"
+                )));
+            }
+            walk_scenario_inventory(root, &path, files)?;
+            continue;
+        }
+        if !metadata.is_file() {
+            return Err(TcError::InvalidState(format!(
+                "unsupported scenario filesystem entry: {}",
+                path.display()
+            )));
+        }
+        if relative == "checksums.txt" {
+            continue;
+        }
+        if !inventory_path_allowed(InventoryScope::Scenario, &relative) {
+            return Err(TcError::InvalidState(format!(
+                "unexpected scenario file: {relative}"
+            )));
+        }
+        files.insert(relative);
+    }
+    Ok(())
+}
+
+fn collect_workspace_inventory(root: &Path) -> Result<BTreeSet<String>> {
+    let mut files = BTreeSet::new();
+    walk_workspace_inventory(root, root, &mut files)?;
+    Ok(files)
+}
+
+fn walk_workspace_inventory(
+    root: &Path,
+    current: &Path,
+    files: &mut BTreeSet<String>,
+) -> Result<()> {
+    for entry in std::fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = utf8_file_name(&entry)?;
+        let metadata = safe_metadata(&path)?;
+        if WORKSPACE_IGNORED.contains(&name.as_str()) {
+            continue;
+        }
+        if metadata.is_dir() {
+            walk_workspace_inventory(root, &path, files)?;
+        } else if metadata.is_file() {
+            let relative = relative_path(root, &path)?;
+            validate_manifest_path(&relative).map_err(TcError::InvalidState)?;
+            files.insert(relative);
+        } else {
+            return Err(TcError::InvalidState(format!(
+                "unsupported workspace filesystem entry: {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn inventory_path_allowed(scope: InventoryScope, relative: &str) -> bool {
+    match scope {
+        InventoryScope::Run => {
+            scenario_checksum_binding(relative)
+                || (!relative.contains('/')
+                    && relative != "checksums.txt"
+                    && (RUN_REQUIRED.contains(&relative) || RUN_OPTIONAL.contains(&relative)))
+        }
+        InventoryScope::Scenario => {
+            if !relative.contains('/') {
+                return relative != "checksums.txt"
+                    && (SCENARIO_REQUIRED.contains(&relative)
+                        || SCENARIO_OPTIONAL.contains(&relative)
+                        || attempt_log_number(relative).is_some());
+            }
+            let mut components = relative.split('/');
+            matches!(
+                (
+                    components.next(),
+                    components.next(),
+                    components.next(),
+                    components.next()
+                ),
+                (Some("replays"), Some(attempt), Some(file), None)
+                    if replay_attempt_number(attempt).is_some()
+                        && REPLAY_REQUIRED.contains(&file)
+            )
+        }
+    }
+}
+
+fn scenario_directory_allowed(relative: &str) -> bool {
+    if relative == "replays" {
+        return true;
+    }
+    let mut components = relative.split('/');
+    matches!(
+        (components.next(), components.next(), components.next()),
+        (Some("replays"), Some(attempt), None) if replay_attempt_number(attempt).is_some()
+    )
+}
+
+fn legacy_unlisted_allowed(scope: InventoryScope, relative: &str) -> bool {
+    match scope {
+        InventoryScope::Run => {
+            LEGACY_RUN_UNLISTED.contains(&relative) || scenario_checksum_binding(relative)
+        }
+        InventoryScope::Scenario => LEGACY_SCENARIO_UNLISTED.contains(&relative),
+    }
+}
+
+fn scenario_checksum_binding(relative: &str) -> bool {
+    let mut components = relative.split('/');
+    matches!(
+        (
+            components.next(),
+            components.next(),
+            components.next(),
+            components.next()
+        ),
+        (Some("scenarios"), Some(scenario_id), Some("checksums.txt"), None)
+            if validate_identifier(scenario_id, "scenario_id").is_ok()
+    )
+}
+
+fn normalize_checksum(raw: &str, format: ChecksumFormat) -> Option<String> {
+    match format {
+        ChecksumFormat::CurrentV2 => {
+            validate_sha256(raw).ok()?;
+            Some(raw.to_string())
+        }
+        ChecksumFormat::LegacyV1 => {
+            let bare = raw.strip_prefix("sha256:").unwrap_or(raw);
+            if bare.len() != 64 || !bare.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return None;
+            }
+            Some(format!("sha256:{}", bare.to_ascii_lowercase()))
+        }
+    }
+}
+
+fn normalize_workspace_hash(raw: &str) -> Option<String> {
+    let bare = raw
+        .strip_prefix("sha256:sha256:")
+        .or_else(|| raw.strip_prefix("sha256:"))
+        .unwrap_or(raw);
+    if bare.len() != 64 || !bare.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("sha256:{}", bare.to_ascii_lowercase()))
+}
+
+fn attempt_log_number(name: &str) -> Option<u32> {
+    let number = name
+        .strip_prefix("stdout.attempt")
+        .or_else(|| name.strip_prefix("stderr.attempt"))?
+        .strip_suffix(".log")?;
+    canonical_positive_number(number)
+}
+
+fn replay_attempt_number(name: &str) -> Option<u32> {
+    canonical_positive_number(name.strip_prefix("attempt-")?)
+}
+
+fn canonical_positive_number(raw: &str) -> Option<u32> {
+    if raw.is_empty()
+        || !raw.bytes().all(|byte| byte.is_ascii_digit())
+        || (raw.len() > 1 && raw.starts_with('0'))
+    {
+        return None;
+    }
+    let number = raw.parse::<u32>().ok()?;
+    (number > 0).then_some(number)
+}
+
+fn require_regular_file(path: &Path, label: &str, errors: &mut Vec<String>) -> Result<()> {
+    let _ = regular_file_metadata(path, label, errors)?;
+    Ok(())
+}
+
+fn regular_file_metadata(
+    path: &Path,
+    label: &str,
+    errors: &mut Vec<String>,
+) -> Result<Option<std::fs::Metadata>> {
+    let path = match validate_existing_ancestors(path) {
+        Ok(path) => path,
+        Err(error) => {
+            errors.push(error.to_string());
+            return Ok(None);
+        }
+    };
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            errors.push(format!("{label} is missing: {}", path.display()));
+            return Ok(None);
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if metadata_is_alias(&metadata) {
+        errors.push(format!(
+            "{label} is a symlink/reparse point: {}",
+            path.display()
+        ));
+        return Ok(None);
+    }
+    if !metadata.is_file() {
+        errors.push(format!("{label} is not a regular file: {}", path.display()));
+        return Ok(None);
+    }
+    Ok(Some(metadata))
+}
+
+fn safe_metadata_report(
+    path: &Path,
+    errors: &mut Vec<String>,
+) -> Result<Option<std::fs::Metadata>> {
+    let path = match validate_existing_ancestors(path) {
+        Ok(path) => path,
+        Err(error) => {
+            errors.push(error.to_string());
+            return Ok(None);
+        }
+    };
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata_is_alias(&metadata) {
+        errors.push(format!(
+            "refusing symlink/reparse point: {}",
+            path.display()
+        ));
+        return Ok(None);
+    }
+    Ok(Some(metadata))
+}
+
+fn safe_metadata(path: &Path) -> Result<std::fs::Metadata> {
+    let path = validate_existing_ancestors(path)?;
+    let metadata = std::fs::symlink_metadata(&path)?;
+    if metadata_is_alias(&metadata) {
+        return Err(TcError::InvalidState(format!(
+            "refusing symlink/reparse point: {}",
+            path.display()
+        )));
+    }
+    Ok(metadata)
+}
+
+fn ensure_directory_no_alias(path: &Path) -> Result<()> {
+    let metadata = safe_metadata(path)?;
+    if !metadata.is_dir() {
+        return Err(TcError::InvalidState(format!(
+            "expected directory: {}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn utf8_file_name(entry: &std::fs::DirEntry) -> Result<String> {
+    entry
+        .file_name()
+        .to_str()
+        .map(str::to_string)
+        .ok_or_else(|| {
+            TcError::InvalidState(format!(
+                "filesystem entry name is not UTF-8: {}",
+                entry.path().display()
+            ))
+        })
+}
+
+fn relative_path(root: &Path, path: &Path) -> Result<String> {
+    path.strip_prefix(root)
+        .map_err(|_| {
+            TcError::InvalidState(format!(
+                "path escapes inventory root {}: {}",
+                root.display(),
+                path.display()
+            ))
+        })
+        .and_then(|relative| {
+            relative
+                .to_str()
+                .map(|value| value.replace('\\', "/"))
+                .ok_or_else(|| {
+                    TcError::InvalidState(format!(
+                        "inventory path is not UTF-8: {}",
+                        path.display()
+                    ))
+                })
+        })
+}
+
+fn validate_single_component(name: &str) -> Result<()> {
+    validate_identifier(name, "path component").map_err(TcError::InvalidState)
+}
+
+fn scope_name(scope: InventoryScope) -> &'static str {
+    match scope {
+        InventoryScope::Run => "run",
+        InventoryScope::Scenario => "scenario",
+    }
+}
+
 pub fn find_run_dir(cwd: &Path, run_id: &str) -> PathBuf {
-    let direct = cwd.join(".tomorrowci/runs").join(run_id);
+    if validate_identifier(run_id, "run_id").is_err() {
+        return PathBuf::from("__tomorrowci_invalid_run_identifier__");
+    }
+    let cwd = match validate_existing_ancestors(cwd) {
+        Ok(cwd) => cwd,
+        Err(_) => return PathBuf::from("__tomorrowci_unsafe_search_root__"),
+    };
+    let relative = format!(".tomorrowci/runs/{run_id}");
+    let direct = match safe_join(&cwd, &relative) {
+        Ok(path) => path,
+        Err(_) => return PathBuf::from("__tomorrowci_unsafe_run_path__"),
+    };
     if direct.exists() {
         return direct;
     }
-    // scan common fixture-relative locations
-    for cand in [
-        cwd.join("fixtures/python-runtime-break/.tomorrowci/runs")
-            .join(run_id),
-        cwd.join(".tomorrowci/runs").join(run_id),
-    ] {
-        if cand.exists() {
-            return cand;
-        }
+    let fixture_relative = format!("fixtures/python-runtime-break/.tomorrowci/runs/{run_id}");
+    let mut candidates = vec![direct.clone()];
+    if let Ok(path) = safe_join(&cwd, &fixture_relative) {
+        candidates.push(path);
     }
-    if let Ok(rd) = std::fs::read_dir(cwd) {
-        for e in rd.flatten() {
-            let p = e.path().join(".tomorrowci").join("runs").join(run_id);
-            if p.exists() {
-                return p;
-            }
+    for candidate in candidates {
+        if candidate.exists() {
+            return candidate;
         }
     }
     direct
@@ -369,15 +3018,800 @@ pub fn find_run_dir(cwd: &Path, run_id: &str) -> PathBuf {
 mod tests {
     use super::*;
     use crate::EvidenceLayout;
-    use tempfile::tempdir;
+    use tempfile::{tempdir, TempDir};
+
+    fn strict_test_config() -> Config {
+        let mut config = Config::default();
+        config.execution.max_scenarios = 1;
+        config.execution.timeout_seconds = 60;
+        config.sandbox.memory_mb = 128;
+        config.sandbox.cpus = 1.0;
+        config.sandbox.pids_limit = 64;
+        config.candidates.dependencies.latest_allowed = false;
+        config
+    }
+
+    fn minimal_run_json(run_root: &Path) -> serde_json::Value {
+        let config = strict_test_config();
+        let config_hash = config.content_hash().unwrap();
+        serde_json::json!({
+            "evidence_schema_version": 2,
+            "run_id": "r1",
+            "tool_version": env!("CARGO_PKG_VERSION"),
+            "started_at": "2026-08-09T00:00:00Z",
+            "finished_at": "2026-08-09T00:00:01Z",
+            "repository": {
+                "source": "local:fixture",
+                "path": run_root,
+                "commit_sha": null,
+                "is_disposable_copy": true
+            },
+            "config_hash": config_hash,
+            "detection": {
+                "ecosystem": "python",
+                "manifests": [],
+                "package_manager": "pip",
+                "confidence": 1.0,
+                "notes": []
+            },
+            "baseline": {
+                "runtime": "3.9",
+                "dependencies": "locked",
+                "declared_by": "test"
+            },
+            "plan": {
+                "plan_id": "plan",
+                "scenarios": [],
+                "selection_notes": [],
+                "budget_max": 1
+            },
+            "results": [],
+            "frontier": {
+                "observed": false,
+                "horizon_label": null,
+                "first_failing_scenario": null,
+                "last_passing_scenario": null,
+                "changed_axes": [],
+                "failure_signature": null,
+                "grade": "INCONCLUSIVE",
+                "replay_command": null,
+                "notes": ["No observed breakage horizon: baseline is not BASELINE_PASS."]
+            },
+            "evidence_root": run_root,
+            "identity": {
+                "source_commit": null,
+                "dirty_tree": null,
+                "tool_version": env!("CARGO_PKG_VERSION"),
+                "adapter_name": "python",
+                "adapter_version": env!("CARGO_PKG_VERSION"),
+                "config_hash": config_hash,
+                "manifest_hashes": {},
+                "container_engine": null,
+                "container_engine_version": null,
+                "started_at": "2026-08-09T00:00:00Z",
+                "finished_at": "2026-08-09T00:00:01Z"
+            }
+        })
+    }
+
+    fn valid_run() -> (TempDir, PathBuf) {
+        let temp = tempdir().unwrap();
+        let layout = EvidenceLayout::create(temp.path(), "r1").unwrap();
+        let workspace = layout.run_root.join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join("source.txt"), "source\n").unwrap();
+        write_workspace_manifest(&workspace, &layout.run_root.join("workspace-manifest.json"))
+            .unwrap();
+        let run_json = minimal_run_json(&layout.run_root);
+        std::fs::write(
+            layout.run_root.join("run.json"),
+            serde_json::to_string_pretty(&run_json).unwrap(),
+        )
+        .unwrap();
+        for name in RUN_REQUIRED {
+            if matches!(
+                *name,
+                "run.json" | "workspace-manifest.json" | "checksums.txt"
+            ) {
+                continue;
+            }
+            let value = match *name {
+                "repository.json" => run_json["repository"].clone(),
+                "config.normalized.json" => serde_json::to_value(strict_test_config()).unwrap(),
+                "candidates.json" | "plan-decisions.json" | "verdicts.json" => {
+                    serde_json::json!([])
+                }
+                "plan.json" => run_json["plan"].clone(),
+                "frontier.json" => run_json["frontier"].clone(),
+                "metrics.json" => serde_json::json!({
+                    "run_id": "r1",
+                    "recorded_at": "2026-08-09T00:00:01Z",
+                    "scenarios_total": 0,
+                    "scenarios_pass": 0,
+                    "scenarios_fail": 0,
+                    "scenarios_flaky": 0,
+                    "scenarios_blocked": 0,
+                    "scenarios_unsupported": 0,
+                    "scenarios_inconclusive": 0,
+                    "baseline_ok": false,
+                    "frontier_observed": false,
+                    "total_duration_ms": 0,
+                    "mean_duration_ms": 0.0,
+                    "evidence_grade": "Observed",
+                    "ecosystem": "Python",
+                    "wall_ms": null,
+                    "verdict_histogram": {}
+                }),
+                "claims.json" => serde_json::json!({"rows": []}),
+                "report.json" => run_json.clone(),
+                _ => {
+                    std::fs::write(layout.run_root.join(name), "focused\n").unwrap();
+                    continue;
+                }
+            };
+            std::fs::write(
+                layout.run_root.join(name),
+                serde_json::to_string_pretty(&value).unwrap(),
+            )
+            .unwrap();
+        }
+        finalize_run_checksums(&layout.run_root).unwrap();
+        let report = verify_run_root(&layout.run_root).unwrap();
+        assert!(report.ok, "{:?}", report.errors);
+        (temp, layout.run_root)
+    }
+
+    fn add_scenario(run_root: &Path, replay: bool) -> PathBuf {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let scenario_value = serde_json::json!({
+            "id": "baseline",
+            "is_baseline": true,
+            "runtime": "3.9",
+            "dependencies": "locked",
+            "axes_changed": [],
+            "candidates": [],
+            "grade": "OBSERVED"
+        });
+        let result_value = serde_json::json!({
+            "scenario_id": "baseline",
+            "attempt": 1,
+            "verdict": "BASELINE_PASS",
+            "exit_code": 0,
+            "duration_ms": 1,
+            "timed_out": false,
+            "failure": null,
+            "environment": {
+                "image_tag": "python:3.9",
+                "image": "python:3.9",
+                "image_digest": digest,
+                "workdir": "/work",
+                "env": {},
+                "network_mode": "none",
+                "memory_mb": 128,
+                "cpus": 1.0,
+                "pids_limit": 64,
+                "user": null,
+                "read_only_root": true,
+                "scenario_state_root": null,
+                "fetch_timeout_seconds": 60,
+                "test_timeout_seconds": 60,
+                "engine": "docker",
+                "engine_version": "test"
+            },
+            "commands": []
+        });
+
+        let run_json_path = run_root.join("run.json");
+        let mut run_json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&run_json_path).unwrap()).unwrap();
+        run_json["plan"]["plan_id"] = serde_json::json!("plan-1");
+        run_json["plan"]["scenarios"] = serde_json::json!([scenario_value.clone()]);
+        run_json["plan"]["selection_notes"] = serde_json::json!(["planned 1 scenarios (budget 1)"]);
+        run_json["results"] = serde_json::json!([result_value.clone()]);
+        let scenario_typed: Scenario = serde_json::from_value(scenario_value.clone()).unwrap();
+        let result_typed: ExecutionResult = serde_json::from_value(result_value.clone()).unwrap();
+        run_json["frontier"] = serde_json::to_value(compute_breakage_frontier(
+            true,
+            &[(scenario_typed, result_typed)],
+            false,
+            None,
+        ))
+        .unwrap();
+        run_json["identity"]["container_engine"] = serde_json::json!("docker");
+        run_json["identity"]["container_engine_version"] = serde_json::json!("test");
+        std::fs::write(
+            &run_json_path,
+            serde_json::to_string_pretty(&run_json).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            run_root.join("verdicts.json"),
+            serde_json::to_string_pretty(&serde_json::json!([result_value.clone()])).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            run_root.join("plan.json"),
+            serde_json::to_string_pretty(&run_json["plan"]).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            run_root.join("plan-decisions.json"),
+            serde_json::to_string_pretty(&serde_json::json!([{
+                "scenario_id": "baseline",
+                "selected": true,
+                "reason": "baseline must run first"
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            run_root.join("frontier.json"),
+            serde_json::to_string_pretty(&run_json["frontier"]).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            run_root.join("report.json"),
+            serde_json::to_string_pretty(&run_json).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            run_root.join("metrics.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "run_id": "r1",
+                "recorded_at": "2026-08-09T00:00:01Z",
+                "scenarios_total": 1,
+                "scenarios_pass": 1,
+                "scenarios_fail": 0,
+                "scenarios_flaky": 0,
+                "scenarios_blocked": 0,
+                "scenarios_unsupported": 0,
+                "scenarios_inconclusive": 0,
+                "baseline_ok": true,
+                "frontier_observed": false,
+                "total_duration_ms": 1,
+                "mean_duration_ms": 1.0,
+                "evidence_grade": "Observed",
+                "ecosystem": "Python",
+                "wall_ms": null,
+                "verdict_histogram": {"BaselinePass": 1}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let scenario = run_root.join("scenarios").join("baseline");
+        std::fs::create_dir_all(&scenario).unwrap();
+        let environment = result_value["environment"].clone();
+        let replay_descriptor = serde_json::json!({
+            "scenario_id": "baseline",
+            "engine": "docker",
+            "engine_version": "test",
+            "image": "python:3.9",
+            "image_digest": digest,
+            "workdir": "/work",
+            "user": null,
+            "memory_mb": 128,
+            "cpus": 1.0,
+            "pids_limit": 64,
+            "read_only_root": true,
+            "fetch_network": "bridge",
+            "test_network": "none",
+            "fetch_timeout_seconds": 60,
+            "test_timeout_seconds": 60,
+            "fetch_argv": [],
+            "test_argv": [],
+            "expected_exit_code": 0,
+            "expected_timed_out": false,
+            "expected_failure_signature": null
+        });
+        let image_phase = serde_json::json!({
+            "phase": "image-resolve", "ok": true, "exit_code": 0,
+            "timed_out": false, "duration_ms": 1, "network": "n/a",
+            "image": "python:3.9", "image_digest": digest, "argv": [],
+            "started_at": "2026-08-09T00:00:00.100Z",
+            "finished_at": "2026-08-09T00:00:00.200Z", "detail": "ok"
+        });
+        let test_phase = serde_json::json!({
+            "phase": "test", "ok": true, "exit_code": 0,
+            "timed_out": false, "duration_ms": 100, "network": "none",
+            "image": "python:3.9", "image_digest": digest, "argv": [],
+            "started_at": "2026-08-09T00:00:00.300Z",
+            "finished_at": "2026-08-09T00:00:00.400Z", "detail": "ok"
+        });
+        let test_result = serde_json::json!({
+            "exit_code": 0, "timed_out": false, "duration_ms": 1,
+            "network_used": false,
+            "started_at": "2026-08-09T00:00:00.300Z",
+            "finished_at": "2026-08-09T00:00:00.400Z"
+        });
+        let test_attempts = serde_json::json!({
+            "scenario_id": "baseline", "status": "completed", "error": null,
+            "attempts": [{"attempt": 1,
+                "started_at": "2026-08-09T00:00:00.300Z",
+                "finished_at": "2026-08-09T00:00:00.400Z",
+                "exit_code": 0, "timed_out": false,
+                "duration_ms": 1, "failure": null}]
+        });
+        for (name, value) in [
+            ("scenario.json", scenario_value.clone()),
+            ("environment.json", environment),
+            ("fetch-commands.json", serde_json::json!([])),
+            ("test-commands.json", serde_json::json!([])),
+            ("commands.json", serde_json::json!([])),
+            ("result.json", result_value.clone()),
+            ("replay.json", replay_descriptor),
+            ("image-resolve-phase.json", image_phase),
+            ("test-phase.json", test_phase),
+            ("test-result.json", test_result),
+            ("test-attempts.json", test_attempts),
+        ] {
+            std::fs::write(
+                scenario.join(name),
+                serde_json::to_string_pretty(&value).unwrap(),
+            )
+            .unwrap();
+        }
+        for name in [
+            "stdout.log",
+            "stderr.log",
+            "stdout.attempt1.log",
+            "stderr.attempt1.log",
+            "replay.sh",
+            "replay.ps1",
+        ] {
+            std::fs::write(scenario.join(name), "").unwrap();
+        }
+        if replay {
+            let attempt = scenario.join("replays").join("attempt-1");
+            std::fs::create_dir_all(&attempt).unwrap();
+            let replay_result = serde_json::json!({
+                "scenario_id": "baseline", "attempt": 1, "phase": "test", "ok": true,
+                "started_at": "2026-08-09T00:00:02Z", "finished_at": "2026-08-09T00:00:03Z",
+                "original_exit": 0, "fetch_exit": null, "replay_exit": 0,
+                "timed_out": false, "duration_ms": 1, "original_signature": null,
+                "replay_signature": null, "exit_match": true, "signature_match": true,
+                "recorded_digest": digest, "resolved_digest": digest,
+                "engine": "docker", "engine_version": "test", "image_tag": "python:3.9",
+                "fetch_timeout_seconds": 60, "test_timeout_seconds": 60, "error": null
+            });
+            std::fs::write(
+                attempt.join("result.json"),
+                serde_json::to_string_pretty(&replay_result).unwrap(),
+            )
+            .unwrap();
+            std::fs::write(
+                scenario.join("replay-result.json"),
+                serde_json::to_string_pretty(&replay_result).unwrap(),
+            )
+            .unwrap();
+            std::fs::write(attempt.join("stdout.log"), "").unwrap();
+            std::fs::write(attempt.join("stderr.log"), "").unwrap();
+        }
+        finalize_run_checksums(run_root).unwrap();
+        let report = verify_run_root(run_root).unwrap();
+        assert!(report.ok, "{:?}", report.errors);
+        scenario
+    }
+
+    fn strip_header(path: &Path) {
+        let raw = std::fs::read_to_string(path).unwrap();
+        let rewritten = raw
+            .lines()
+            .filter(|line| line.trim() != CHECKSUM_FORMAT_V2)
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        std::fs::write(path, rewritten).unwrap();
+    }
 
     #[test]
     fn verifier_rejects_missing_claims() {
-        let d = tempdir().unwrap();
-        let layout = EvidenceLayout::create(d.path(), "r1").unwrap();
-        // missing most required files including claims.json
-        let rep = verify_run_root(&layout.run_root).unwrap();
-        assert!(!rep.ok);
-        assert!(rep.errors.iter().any(|e| e.contains("claims.json")));
+        let directory = tempdir().unwrap();
+        let layout = EvidenceLayout::create(directory.path(), "r1").unwrap();
+        let report = verify_run_root(&layout.run_root).unwrap();
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|error| error.contains("claims.json")));
+    }
+
+    #[test]
+    fn current_v2_valid_bundle_passes() {
+        let (_temp, run_root) = valid_run();
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(report.ok, "{:?}", report.errors);
+        assert_eq!(
+            report.checksum_compatibility,
+            ChecksumCompatibility::CurrentV2
+        );
+    }
+
+    #[test]
+    fn pre_schema_current_checksum_bundle_requires_explicit_migration() {
+        let (_temp, run_root) = valid_run();
+        let run_path = run_root.join("run.json");
+        let mut run: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&run_path).unwrap()).unwrap();
+        run["evidence_schema_version"] = serde_json::json!(0);
+        std::fs::write(&run_path, serde_json::to_string_pretty(&run).unwrap()).unwrap();
+        std::fs::write(
+            run_root.join("report.json"),
+            serde_json::to_string_pretty(&run).unwrap(),
+        )
+        .unwrap();
+        finalize_run_checksums(&run_root).unwrap();
+
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|error| error.contains("migration") && error.contains("schema")));
+    }
+
+    #[test]
+    fn schema_two_is_readable_across_writer_version_changes() {
+        let (_temp, run_root) = valid_run();
+        let run_path = run_root.join("run.json");
+        let mut run: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&run_path).unwrap()).unwrap();
+        run["tool_version"] = serde_json::json!("9.1.0-beta.2");
+        run["identity"]["tool_version"] = serde_json::json!("9.1.0-beta.2");
+        run["identity"]["adapter_version"] = serde_json::json!("9.1.0-beta.2");
+        std::fs::write(&run_path, serde_json::to_string_pretty(&run).unwrap()).unwrap();
+        std::fs::write(
+            run_root.join("report.json"),
+            serde_json::to_string_pretty(&run).unwrap(),
+        )
+        .unwrap();
+        finalize_run_checksums(&run_root).unwrap();
+
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(report.ok, "{:?}", report.errors);
+    }
+
+    #[test]
+    fn mutation_and_listed_missing_are_rejected() {
+        let (_temp, run_root) = valid_run();
+        std::fs::write(run_root.join("claims.json"), "mutated\n").unwrap();
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(report
+            .errors
+            .iter()
+            .any(|error| error.contains("checksum mutation")));
+
+        std::fs::remove_file(run_root.join("claims.json")).unwrap();
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(report
+            .errors
+            .iter()
+            .any(|error| error.contains("lists missing")));
+    }
+
+    #[test]
+    fn malformed_duplicate_and_traversal_entries_are_rejected() {
+        let (_temp, run_root) = valid_run();
+        let checksums = run_root.join("checksums.txt");
+        let first_entry = std::fs::read_to_string(&checksums)
+            .unwrap()
+            .lines()
+            .find(|line| !line.starts_with('#'))
+            .unwrap()
+            .to_string();
+        let mut raw = std::fs::read_to_string(&checksums).unwrap();
+        raw.push_str(&first_entry);
+        raw.push('\n');
+        raw.push_str("not-a-checksum\n");
+        raw.push_str(&format!("sha256:{}  ../outside\n", "0".repeat(64)));
+        std::fs::write(&checksums, raw).unwrap();
+
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(report
+            .errors
+            .iter()
+            .any(|error| error.contains("duplicate")));
+        assert!(report
+            .errors
+            .iter()
+            .any(|error| error.contains("malformed")));
+        assert!(report
+            .errors
+            .iter()
+            .any(|error| error.contains("invalid path")));
+    }
+
+    #[test]
+    fn strict_inventory_rejects_unlisted_known_file() {
+        let (_temp, run_root) = valid_run();
+        std::fs::write(run_root.join("reduction.json"), "{}\n").unwrap();
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(report
+            .errors
+            .iter()
+            .any(|error| error.contains("unlisted run file: reduction.json")));
+    }
+
+    #[test]
+    fn recursive_scenario_and_replay_mutations_are_rejected() {
+        let (_temp, run_root) = valid_run();
+        let scenario = add_scenario(&run_root, true);
+        std::fs::write(scenario.join("replays/attempt-1/result.json"), "mutated\n").unwrap();
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(report.errors.iter().any(|error| {
+            error.contains("checksum mutation") && error.contains("replays/attempt-1/result.json")
+        }));
+    }
+
+    #[test]
+    fn current_v2_header_cannot_be_downgraded_to_legacy() {
+        let (_temp, run_root) = valid_run();
+        strip_header(&run_root.join("checksums.txt"));
+
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(!report.ok);
+        assert!(report.errors.iter().any(|error| {
+            error.contains("legacy-v1 checksum format is not permitted")
+                && error.contains(LEGACY_TOOL_VERSION)
+        }));
+    }
+
+    #[test]
+    fn current_v2_requires_writer_guaranteed_scenario_files() {
+        let (_temp, run_root) = valid_run();
+        let scenario = add_scenario(&run_root, false);
+        std::fs::remove_file(scenario.join("fetch-commands.json")).unwrap();
+        std::fs::remove_file(scenario.join("commands.json")).unwrap();
+
+        let scenario_checksums = scenario.join("checksums.txt");
+        let raw = std::fs::read_to_string(&scenario_checksums).unwrap();
+        let rewritten = raw
+            .lines()
+            .filter(|line| {
+                !line.ends_with("  fetch-commands.json") && !line.ends_with("  commands.json")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        std::fs::write(&scenario_checksums, rewritten).unwrap();
+
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(report.errors.iter().any(|error| {
+            error.contains("required file fetch-commands.json") && error.contains("missing")
+        }));
+        assert!(report.errors.iter().any(|error| {
+            error.contains("current-v2 file commands.json") && error.contains("missing")
+        }));
+
+        let error = finalize_run_checksums(&run_root).unwrap_err();
+        assert!(error.to_string().contains("required file"));
+    }
+
+    #[test]
+    fn run_manifest_binds_each_recursive_scenario_manifest() {
+        let (_temp, run_root) = valid_run();
+        let scenario = add_scenario(&run_root, false);
+        let scenario_checksums = scenario.join("checksums.txt");
+        let mut raw = std::fs::read_to_string(&scenario_checksums).unwrap();
+        raw.push('\n');
+        std::fs::write(&scenario_checksums, raw).unwrap();
+
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(report.errors.iter().any(|error| {
+            error.contains("checksum mutation")
+                && error.contains("scenarios/baseline/checksums.txt")
+        }));
+    }
+
+    #[test]
+    fn scenario_results_and_verdicts_require_exact_closure() {
+        {
+            let (_temp, run_root) = valid_run();
+            let scenario = add_scenario(&run_root, false);
+            std::fs::remove_dir_all(scenario).unwrap();
+            let report = verify_run_root(&run_root).unwrap();
+            assert!(report.errors.iter().any(|error| {
+                error.contains("scenario directories missing scenario present in run.json results")
+            }));
+        }
+
+        {
+            let (_temp, run_root) = valid_run();
+            std::fs::create_dir_all(run_root.join("scenarios/orphan")).unwrap();
+            let report = verify_run_root(&run_root).unwrap();
+            assert!(report
+                .errors
+                .iter()
+                .any(|error| { error.contains("scenario directories contains orphan scenario") }));
+        }
+
+        {
+            let (_temp, run_root) = valid_run();
+            let scenario = add_scenario(&run_root, false);
+            let result_path = scenario.join("result.json");
+            let mut result: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&result_path).unwrap()).unwrap();
+            result["duration_ms"] = serde_json::json!(999);
+            std::fs::write(&result_path, serde_json::to_string_pretty(&result).unwrap()).unwrap();
+            let report = verify_run_root(&run_root).unwrap();
+            assert!(report
+                .errors
+                .iter()
+                .any(|error| { error.contains("result.json does not match run.json results") }));
+            assert!(report
+                .errors
+                .iter()
+                .any(|error| { error.contains("result.json does not match verdicts.json") }));
+        }
+    }
+
+    #[test]
+    fn baseline_pass_requires_a_result_for_every_planned_scenario() {
+        let (_temp, run_root) = valid_run();
+        add_scenario(&run_root, false);
+
+        let run_path = run_root.join("run.json");
+        let mut run: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&run_path).unwrap()).unwrap();
+        run["plan"]["scenarios"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "id": "future",
+                "is_baseline": false,
+                "runtime": "3.10",
+                "dependencies": "locked",
+                "axes_changed": ["runtime"],
+                "candidates": ["future"],
+                "grade": "OBSERVED"
+            }));
+        std::fs::write(&run_path, serde_json::to_vec_pretty(&run).unwrap()).unwrap();
+        std::fs::write(
+            run_root.join("plan.json"),
+            serde_json::to_vec_pretty(&run["plan"]).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            run_root.join("report.json"),
+            serde_json::to_vec_pretty(&run).unwrap(),
+        )
+        .unwrap();
+        finalize_run_checksums(&run_root).unwrap();
+
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(report.errors.iter().any(|error| {
+            error.contains(
+                "baseline passed but run.json results are missing planned scenario: future",
+            )
+        }));
+    }
+
+    #[test]
+    fn run_lookup_and_verification_reject_path_components() {
+        let directory = tempdir().unwrap();
+        for run_id in [
+            "",
+            ".",
+            "..",
+            "../escape",
+            "nested/run",
+            r"nested\run",
+            r"C:\escape",
+            r"\\server\share",
+        ] {
+            assert_eq!(
+                find_run_dir(directory.path(), run_id),
+                PathBuf::from("__tomorrowci_invalid_run_identifier__"),
+                "{run_id:?} must not participate in a filesystem join"
+            );
+            assert!(verify_run(directory.path(), run_id).is_err());
+        }
+    }
+
+    #[test]
+    fn legacy_v1_allows_only_documented_historical_omissions() {
+        let (_temp, run_root) = valid_run();
+        let scenario = add_scenario(&run_root, false);
+        let run_json_path = run_root.join("run.json");
+        let mut run_json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&run_json_path).unwrap()).unwrap();
+        run_json["tool_version"] = serde_json::json!(LEGACY_TOOL_VERSION);
+        run_json["evidence_schema_version"] = serde_json::json!(0);
+        run_json["identity"]["tool_version"] = serde_json::json!(LEGACY_TOOL_VERSION);
+        std::fs::write(
+            &run_json_path,
+            serde_json::to_string_pretty(&run_json).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            run_root.join("report.json"),
+            serde_json::to_string_pretty(&run_json).unwrap(),
+        )
+        .unwrap();
+        finalize_run_checksums(&run_root).unwrap();
+
+        let scenario_checksums = scenario.join("checksums.txt");
+        let raw = std::fs::read_to_string(&scenario_checksums).unwrap();
+        let rewritten = raw
+            .lines()
+            .filter(|line| line.trim() != CHECKSUM_FORMAT_V2 && !line.ends_with("  commands.json"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        std::fs::write(&scenario_checksums, rewritten).unwrap();
+
+        let root_checksums = run_root.join("checksums.txt");
+        let raw = std::fs::read_to_string(&root_checksums).unwrap();
+        let rewritten = raw
+            .lines()
+            .filter(|line| {
+                line.trim() != CHECKSUM_FORMAT_V2
+                    && !line.ends_with("  scenarios/baseline/checksums.txt")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        std::fs::write(&root_checksums, rewritten).unwrap();
+
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(report.ok, "{:?}", report.errors);
+        assert_eq!(
+            report.checksum_compatibility,
+            ChecksumCompatibility::LegacyV1ReadCompatible
+        );
+
+        std::fs::write(scenario.join("replay-result.json"), "{}\n").unwrap();
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(report
+            .errors
+            .iter()
+            .any(|error| error.contains("unlisted scenario file")));
+    }
+
+    #[test]
+    fn legacy_workspace_double_prefix_is_normalized_for_read_compatibility() {
+        let hex = "a".repeat(64);
+        assert_eq!(
+            normalize_workspace_hash(&format!("sha256:sha256:{hex}")),
+            Some(format!("sha256:{hex}"))
+        );
+    }
+
+    #[test]
+    fn workspace_unlisted_and_mutated_files_are_rejected() {
+        let (_temp, run_root) = valid_run();
+        let workspace = run_root.join("workspace");
+        std::fs::write(workspace.join("source.txt"), "changed\n").unwrap();
+        std::fs::write(workspace.join("extra.txt"), "extra\n").unwrap();
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(report
+            .errors
+            .iter()
+            .any(|error| error.contains("workspace-manifest hash mismatch")));
+        assert!(report
+            .errors
+            .iter()
+            .any(|error| error.contains("workspace contains unlisted")));
+    }
+
+    #[test]
+    fn symlink_or_reparse_entries_are_rejected_when_supported() {
+        let (_temp, run_root) = valid_run();
+        let target = run_root.join("claims.json");
+        let alias = run_root.join("reduction.json");
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &alias).unwrap();
+
+        #[cfg(windows)]
+        if std::os::windows::fs::symlink_file(&target, &alias).is_err() {
+            return;
+        }
+
+        let report = verify_run_root(&run_root).unwrap();
+        assert!(report
+            .errors
+            .iter()
+            .any(|error| error.contains("symlink/reparse")));
     }
 }

@@ -5,6 +5,31 @@ All notable changes to TomorrowCI are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Start the `0.2.0-alpha.1` development line for the versioned strict evidence
+  inventory and fail-closed replay trust core.
+- Make no-engine scans emit complete, verifiable BLOCKED evidence rather than
+  leaving a partial run.
+- Derive CLI, package, archive, changelog, and SBOM identity from the Cargo
+  workspace version; release tags must match it exactly.
+- Pin external GitHub Actions to immutable commits and replace placeholder
+  dependency versions with an exact Cargo.lock CycloneDX inventory.
+- Disable and retire the historical dispatchable release workflow path; build
+  read-only candidates from a new workflow path that does not exist on old
+  published refs.
+- Normalize Windows Docker Desktop bind paths and force-remove exactly named
+  containers after timeout so a killed client cannot leave target work running.
+
+### Security
+
+- Reject malformed, duplicate, escaping, aliased, unlisted, missing, or
+  mutated evidence entries, including scenario and replay content.
+- Reserve replay attempts append-only and refuse target execution when the
+  existing evidence bundle fails verification.
+
 ## [0.1.1-alpha.2] - 2026-08-06
 
 ### Changed
