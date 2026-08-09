@@ -2347,6 +2347,7 @@ fn replay_scenario_with_verified_evidence(
     let test_to = Duration::from_secs(test_seconds);
 
     let replay_workspace = ReplayWorkspace::capture(&work)?;
+    prepare_scenario_state(replay_workspace.path())?;
     verify_replay_evidence(root)?;
 
     // The staging directory is an atomic reservation/lock. No target command may
@@ -2624,6 +2625,25 @@ mod hardening_tests {
         let mut result = blocked_result(scenario, &environment, &commands, &message);
         result.verdict = Verdict::Unsupported;
         assert!(baseline_requires_early_stop(scenario, &result));
+    }
+
+    #[test]
+    fn replay_workspace_prepares_container_writable_state() {
+        let source = tempdir().unwrap();
+        std::fs::write(source.path().join("source.txt"), "focused\n").unwrap();
+        let replay = ReplayWorkspace::capture(source.path()).unwrap();
+        let state = prepare_scenario_state(replay.path()).unwrap();
+
+        assert!(state.join("venv").is_dir());
+        assert!(state.join("cache/pip").is_dir());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&state).unwrap().permissions().mode() & 0o777,
+                0o777
+            );
+        }
     }
 
     fn write_completed_attempt(root: &Path, number: usize) {
