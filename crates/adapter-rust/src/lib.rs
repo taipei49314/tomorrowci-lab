@@ -90,6 +90,7 @@ impl EcosystemAdapter for RustAdapter {
                 },
                 grade_if_executed: EvidenceGrade::Observed,
                 order_key: format!("{i:04}"),
+                dependency_set: None,
             });
         }
         Ok(out)
@@ -103,7 +104,13 @@ impl EcosystemAdapter for RustAdapter {
             image: image.clone(),
             image_digest: None,
             workdir: "/work".into(),
-            env: IndexMap::new(),
+            env: {
+                let state = format!("/work/.tomorrowci/scenarios/{}", scenario.id);
+                let mut env = IndexMap::new();
+                env.insert("CARGO_HOME".into(), format!("{state}/cargo"));
+                env.insert("CARGO_TARGET_DIR".into(), format!("{state}/target"));
+                env
+            },
             network_mode: "none".into(),
             memory_mb: 4096,
             cpus: 2.0,
@@ -118,7 +125,7 @@ impl EcosystemAdapter for RustAdapter {
         })
     }
 
-    fn commands(&self, _scenario: &Scenario, config: &Config) -> Result<Vec<CommandSpec>> {
+    fn commands(&self, scenario: &Scenario, config: &Config) -> Result<Vec<CommandSpec>> {
         let argv = if config.project.test_command == "auto" {
             vec![
                 "cargo".into(),
@@ -135,7 +142,11 @@ impl EcosystemAdapter for RustAdapter {
                 .collect()
         };
         let argv = if config.project.test_command == "auto" {
-            vec!["cargo".into(), "test".into()]
+            let mut argv = vec!["cargo".into(), "test".into()];
+            if scenario.resolved_dependencies.is_some() {
+                argv.extend(["--offline".into(), "--locked".into()]);
+            }
+            argv
         } else {
             argv
         };

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "ecosystem": "node",
+  "runtime": {
+    "version": "20",
+    "container_image": "node@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5"
+  },
+  "content_hash_algorithm": "sha256-tree-v1",
+  "baseline": {
+    "set_id": "node-baseline-v1"
+  },
+  "candidate": {
+    "set_id": "node-candidate-v2",
+    "changes": [
+      {
+        "id": "breaking-api",
+        "name": "m2-node-contract",
+        "before": {
+          "version": "1.0.0",
+          "source": "vendor/contract-v1",
+          "content_sha256": "sha256:ac3437c93365bf6ff1aed6a19519088e6a38bd5a7838112f96070a52f2795a1d"
+        },
+        "after": {
+          "version": "2.0.0",
+          "source": "vendor/contract-v2",
+          "content_sha256": "sha256:40cab586f190808d08bb0633ec9cd524032c732cde3f33645cd79707734e94c5"
+        }
+      },
+      {
+        "id": "irrelevant-noise",
+        "name": "m2-node-noise",
+        "before": {
+          "version": "1.0.0",
+          "source": "vendor/noise-v1",
+          "content_sha256": "sha256:e15999c4115f223f920ac3e9181529b01d552b7e1f9b4df0d53a1c0d7fb84b60"
+        },
+        "after": {
+          "version": "2.0.0",
+          "source": "vendor/noise-v2",
+          "content_sha256": "sha256:72dec31c39cc8168185cf9386035d843bb436e69018c37e185189ed0f8c8c287"
+        }
+      }
+    ]
+  }
+}

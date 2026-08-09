@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "ecosystem": "python",
+  "runtime": {
+    "version": "3.11",
+    "container_image": "python@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff"
+  },
+  "content_hash_algorithm": "sha256-tree-v1",
+  "baseline": {
+    "set_id": "python-baseline-v1"
+  },
+  "candidate": {
+    "set_id": "python-candidate-v2",
+    "changes": [
+      {
+        "id": "breaking-api",
+        "name": "m2-python-contract",
+        "before": {
+          "version": "1.0.0",
+          "source": "vendor/contract-v1",
+          "content_sha256": "sha256:614cf20b7c8476fa8c3982b152f570d92a489f14a070f1811084614b4948ee3d"
+        },
+        "after": {
+          "version": "2.0.0",
+          "source": "vendor/contract-v2",
+          "content_sha256": "sha256:29987c2fb621578aeda553d5dbf0ef0773ac5be977dd9a1ac3e135f8a03f675d"
+        }
+      },
+      {
+        "id": "irrelevant-noise",
+        "name": "m2-python-noise",
+        "before": {
+          "version": "1.0.0",
+          "source": "vendor/noise-v1",
+          "content_sha256": "sha256:56ff4f4f6802eae3c7453cadba92754715528d96e9f41e06e11919765f27730e"
+        },
+        "after": {
+          "version": "2.0.0",
+          "source": "vendor/noise-v2",
+          "content_sha256": "sha256:17ca673be1501fee8a3da944f04ee5a38dd031856a7d006c85cb62d42d195aff"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "tomorrowci-m2-node-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node test/contract.test.js"
+  },
+  "dependencies": {
+    "m2-node-contract": "file:vendor/contract-v1",
+    "m2-node-noise": "file:vendor/noise-v1"
+  }
+}

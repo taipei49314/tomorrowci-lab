@@ -10,11 +10,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use tomorrowci_core::{
-    canonical_image_digest_value, classify_from_reruns, compute_breakage_frontier, plan_scenarios,
-    sha256_bytes, validate_image_digest, BreakageFrontier, Candidate, CommandSpec, Config,
+    canonical_image_digest_value, canonical_json_hash, classify_candidate_attempts,
+    compute_breakage_frontier, dependency_materialization_commands, plan_scenarios, sha256_bytes,
+    sha256_tree_v1, validate_image_digest, BreakageFrontier, Candidate, CommandSpec, Config,
+    ContentHash, DependencyAdditionCheck, DependencyCandidateSet, DependencyChange,
+    DependencyExperimentManifest, DependencyMinimalityCheck, DependencyProbeEvidence,
+    DependencyProbeRecord, DependencyProbeVerdict, DependencyReduction, DependencyReductionStatus,
     Ecosystem, EnvironmentAxis, EnvironmentSpec, EvidenceGrade, ExecutionPlan, ExecutionResult,
-    FailureSignature, PlanDecision, RepositorySnapshot, Result, RunManifest, Scenario, TcError,
-    TestAttemptsSummary, TestExecutionStatus, Verdict,
+    FailureSignature, PlanDecision, RepositorySnapshot, ResolvedDependencySet, Result, RunManifest,
+    Scenario, TcError, TestAttemptsSummary, TestExecutionStatus, Verdict,
 };
 
 pub const RUN_REQUIRED: &[&str] = &[
@@ -50,9 +54,14 @@ pub const SCENARIO_REQUIRED: &[&str] = &[
     "checksums.txt",
 ];
 
-const RUN_OPTIONAL: &[&str] = &["reduction.json", "report.sarif.json"];
+const RUN_OPTIONAL: &[&str] = &[
+    "dependency-experiment.json",
+    "reduction.json",
+    "report.sarif.json",
+];
 const SCENARIO_OPTIONAL: &[&str] = &[
     "commands.json",
+    "resolved-dependencies.json",
     "test-attempts.json",
     "image-resolve-phase.json",
     "fetch-phase.json",
@@ -169,6 +178,8 @@ struct ReplayDescriptor {
     expected_exit_code: Option<i32>,
     expected_timed_out: bool,
     expected_failure_signature: Option<FailureSignature>,
+    #[serde(default)]
+    resolved_dependencies: Option<ResolvedDependencySet>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -196,6 +207,8 @@ struct ReplayAttemptEvidence {
     image_tag: String,
     fetch_timeout_seconds: u64,
     test_timeout_seconds: u64,
+    #[serde(default)]
+    dependency_manifest_sha256: Option<tomorrowci_core::ContentHash>,
     error: Option<String>,
 }
 
@@ -1157,12 +1170,66 @@ fn verify_plan_semantics(
                 candidate.id
             ));
         }
+        match (&candidate.axis, &candidate.dependency_set) {
+            (EnvironmentAxis::Runtime, Some(_)) => errors.push(format!(
+                "runtime candidate {} must not carry a dependency set",
+                candidate.id
+            )),
+            (EnvironmentAxis::Dependencies, Some(set)) => {
+                if let Err(error) = set.validate() {
+                    errors.push(format!(
+                        "dependency candidate {} is not a valid exact set: {error}",
+                        candidate.id
+                    ));
+                }
+                if candidate.grade_if_executed != EvidenceGrade::Observed
+                    || candidate.channel != "content-addressed"
+                    || candidate.version != set.candidate.set_id
+                {
+                    errors.push(format!(
+                        "dependency candidate {} is not bound to observed content-addressed identity",
+                        candidate.id
+                    ));
+                }
+            }
+            (_, Some(_)) => errors.push(format!(
+                "candidate {} carries a dependency set on the wrong axis",
+                candidate.id
+            )),
+            _ => {}
+        }
     }
 
-    let dependency_candidates = expected_dependency_candidates(&manifest.baseline, config);
+    verify_dependency_semantics(run_root, manifest, &candidates, errors)?;
+
+    let runtime_candidates: Vec<_> = candidates
+        .iter()
+        .filter(|candidate| candidate.axis == EnvironmentAxis::Runtime)
+        .cloned()
+        .collect();
+    let concrete_dependency_candidates: Vec<_> = candidates
+        .iter()
+        .filter(|candidate| candidate.axis == EnvironmentAxis::Dependencies)
+        .cloned()
+        .collect();
+    let dependency_candidates = if concrete_dependency_candidates
+        .iter()
+        .any(|candidate| candidate.dependency_set.is_some())
+    {
+        if concrete_dependency_candidates
+            .iter()
+            .any(|candidate| candidate.dependency_set.is_none())
+        {
+            errors
+                .push("candidates.json mixes concrete and synthetic dependency candidates".into());
+        }
+        concrete_dependency_candidates
+    } else {
+        expected_dependency_candidates(&manifest.baseline, config)
+    };
     let (expected_plan, expected_decisions) = plan_scenarios(
         &manifest.baseline,
-        &candidates,
+        &runtime_candidates,
         &dependency_candidates,
         config,
     );
@@ -1176,6 +1243,674 @@ fn verify_plan_semantics(
         );
     }
     Ok(())
+}
+
+fn verify_dependency_semantics(
+    run_root: &Path,
+    manifest: &RunManifest,
+    candidates: &[Candidate],
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    let concrete: Vec<_> = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.axis == EnvironmentAxis::Dependencies && candidate.dependency_set.is_some()
+        })
+        .collect();
+    // Optional paths are inspected lexically here. The recursive inventory has
+    // already recorded aliases/reparse points as verification errors; resolving
+    // them with `safe_join` would turn an ordinary FAIL report into an API error.
+    let experiment_path = run_root.join("dependency-experiment.json");
+    let reduction_path = run_root.join("reduction.json");
+
+    if concrete.is_empty() {
+        if experiment_path.exists() {
+            errors.push(
+                "dependency-experiment.json is present without concrete dependency candidates"
+                    .into(),
+            );
+        }
+        if reduction_path.exists() {
+            errors.push("reduction.json is present without concrete dependency candidates".into());
+        }
+        return Ok(());
+    }
+
+    let Some(experiment) = read_json_file::<DependencyExperimentManifest>(
+        &experiment_path,
+        "dependency-experiment.json",
+        errors,
+    )?
+    else {
+        errors.push("concrete dependency candidates require dependency-experiment.json".into());
+        return Ok(());
+    };
+    if experiment.ecosystem != manifest.detection.ecosystem {
+        errors.push(
+            "dependency experiment ecosystem does not match verified project detection".into(),
+        );
+    }
+    if experiment.runtime.version != manifest.baseline.runtime {
+        errors.push("dependency experiment runtime does not match verified baseline".into());
+    }
+
+    let workspace = safe_join(run_root, "workspace")?;
+    let workspace_experiment_path = safe_join(&workspace, ".tomorrowci-dependencies.json")?;
+    if let Some(workspace_experiment) = read_json_file::<DependencyExperimentManifest>(
+        &workspace_experiment_path,
+        "workspace .tomorrowci-dependencies.json",
+        errors,
+    )? {
+        if !json_equivalent(&workspace_experiment, &experiment)? {
+            errors.push(
+                "dependency-experiment.json does not exactly match the recorded workspace manifest"
+                    .into(),
+            );
+        }
+    }
+
+    let Some(first_set) = concrete
+        .first()
+        .and_then(|candidate| candidate.dependency_set.as_ref())
+    else {
+        return Ok(());
+    };
+    let package_manager = first_set.baseline.package_manager.as_str();
+    let declared_full = match experiment.to_candidate_set(package_manager) {
+        Ok(set) => set,
+        Err(error) => {
+            errors.push(format!(
+                "dependency experiment contract is invalid: {error}"
+            ));
+            return Ok(());
+        }
+    };
+    verify_dependency_artifacts(&workspace, &experiment, errors)?;
+
+    if declared_full.baseline.ecosystem != manifest.detection.ecosystem
+        || declared_full.baseline.package_manager != manifest.detection.package_manager
+    {
+        errors.push(
+            "dependency experiment resolution identity contradicts detected package manager".into(),
+        );
+    }
+    for candidate in &concrete {
+        if let Some(set) = &candidate.dependency_set {
+            if set.baseline.package_manager != package_manager {
+                errors.push(format!(
+                    "dependency candidate {} changes package manager within one experiment",
+                    candidate.id
+                ));
+            }
+        }
+    }
+
+    let expected_probes = expected_dependency_probes(&experiment, &declared_full, errors)?;
+    let expected_ids: Vec<_> = expected_probes.iter().map(|(id, _)| id.as_str()).collect();
+    let actual_ids: Vec<_> = concrete
+        .iter()
+        .map(|candidate| candidate.id.as_str())
+        .collect();
+    if actual_ids != expected_ids {
+        errors.push(format!(
+            "concrete dependency candidates are not the canonical exhaustive probe sequence: expected {expected_ids:?}, got {actual_ids:?}"
+        ));
+    }
+
+    let candidate_by_id: BTreeMap<_, _> = concrete
+        .iter()
+        .map(|candidate| (candidate.id.as_str(), *candidate))
+        .collect();
+    for (index, (probe_id, selected_changes)) in expected_probes.iter().enumerate() {
+        let Some(candidate) = candidate_by_id.get(probe_id.as_str()).copied() else {
+            errors.push(format!(
+                "dependency experiment is missing canonical probe candidate {probe_id}"
+            ));
+            continue;
+        };
+        let Some(set) = candidate.dependency_set.as_ref() else {
+            continue;
+        };
+        let expected_resolution = match declared_full.resolution_for_changes(selected_changes) {
+            Ok(set) => set,
+            Err(error) => {
+                errors.push(format!(
+                    "cannot derive dependency probe {probe_id} resolution: {error}"
+                ));
+                continue;
+            }
+        };
+        let expected_readable_set_id = format!("{}--{probe_id}", experiment.candidate.set_id);
+        let expected_identity = set
+            .stable_identity()
+            .map_err(|error| TcError::InvalidState(error.to_string()))?;
+        let expected_label = format!(
+            "{} dependency probe {} ({})",
+            manifest.baseline.runtime, probe_id, expected_identity
+        );
+        if candidate.order_key != format!("{index:04}")
+            || candidate.label != expected_label
+            || candidate.version != expected_readable_set_id
+            || set.set_id != expected_readable_set_id
+            || set.candidate.set_id != expected_readable_set_id
+        {
+            errors.push(format!(
+                "dependency candidate {probe_id} readable identity/order is not canonically derived"
+            ));
+        }
+        if !json_equivalent(&set.baseline, &declared_full.baseline)? {
+            errors.push(format!(
+                "dependency candidate {probe_id} baseline set differs from the trusted experiment"
+            ));
+        }
+        if !json_equivalent(&set.changes, selected_changes)? {
+            errors.push(format!(
+                "dependency candidate {probe_id} changes differ from its canonical subset"
+            ));
+        }
+        if !dependency_resolution_equivalent(&set.candidate, &expected_resolution) {
+            errors.push(format!(
+                "dependency candidate {probe_id} resolved set is not derived from its exact change subset"
+            ));
+        }
+    }
+
+    for scenario in &manifest.plan.scenarios {
+        let expected = if scenario.is_baseline
+            || !scenario
+                .axes_changed
+                .contains(&EnvironmentAxis::Dependencies)
+        {
+            Some(&declared_full.baseline)
+        } else {
+            candidate_by_id
+                .get(scenario.id.as_str())
+                .and_then(|candidate| candidate.dependency_set.as_ref())
+                .map(|set| &set.candidate)
+        };
+        if let Some(expected) = expected {
+            if scenario.resolved_dependencies.as_ref() != Some(expected) {
+                errors.push(format!(
+                    "scenario {} is not bound to its exact dependency resolution",
+                    scenario.id
+                ));
+            }
+        }
+        if scenario.resolved_dependencies.is_some() {
+            if let Some(result) = manifest
+                .results
+                .iter()
+                .find(|result| result.scenario_id == scenario.id && result.attempt > 0)
+            {
+                if result.environment.run_image_ref() != experiment.runtime.container_image {
+                    errors.push(format!(
+                        "executed dependency scenario {} did not use the manifest-pinned runtime image",
+                        scenario.id
+                    ));
+                }
+            }
+        }
+    }
+
+    let baseline_passed = manifest.results.iter().any(|result| {
+        manifest
+            .plan
+            .scenarios
+            .iter()
+            .any(|scenario| scenario.is_baseline && scenario.id == result.scenario_id)
+            && result.verdict == Verdict::BaselinePass
+    });
+    if baseline_passed && !reduction_path.exists() {
+        errors.push("completed dependency experiment is missing reduction.json".into());
+        return Ok(());
+    }
+    if reduction_path.exists() {
+        if let Some(recorded) =
+            read_json_file::<DependencyReduction>(&reduction_path, "reduction.json", errors)?
+        {
+            if let Some(expected) = derive_expected_dependency_reduction(
+                run_root,
+                manifest,
+                &experiment,
+                &expected_probes,
+                &candidate_by_id,
+                errors,
+            )? {
+                if !json_equivalent(&recorded, &expected)? {
+                    errors.push(
+                        "reduction.json cannot be independently derived from observed dependency probe evidence"
+                            .into(),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_dependency_artifacts(
+    workspace: &Path,
+    experiment: &DependencyExperimentManifest,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    for declaration in &experiment.candidate.changes {
+        for artifact in [&declaration.before, &declaration.after] {
+            if let Err(error) = validate_manifest_path(&artifact.source) {
+                errors.push(format!(
+                    "dependency artifact {} has unsafe source path: {error}",
+                    declaration.id
+                ));
+                continue;
+            }
+            let source = match safe_join(workspace, &artifact.source) {
+                Ok(source) => source,
+                Err(error) => {
+                    errors.push(format!(
+                        "dependency artifact {} source cannot be resolved: {error}",
+                        declaration.id
+                    ));
+                    continue;
+                }
+            };
+            match sha256_tree_v1(&source) {
+                Ok(actual) if actual == artifact.content_sha256 => {}
+                Ok(actual) => errors.push(format!(
+                    "dependency artifact {} {} content hash mismatch: declared={}, actual={}",
+                    declaration.name, artifact.version, artifact.content_sha256, actual
+                )),
+                Err(error) => errors.push(format!(
+                    "dependency artifact {} {} cannot be hashed: {error}",
+                    declaration.name, artifact.version
+                )),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn expected_dependency_probes(
+    experiment: &DependencyExperimentManifest,
+    declared_full: &DependencyCandidateSet,
+    errors: &mut Vec<String>,
+) -> Result<Vec<(String, Vec<DependencyChange>)>> {
+    let mut changes = declared_full.changes.clone();
+    changes.sort_by(|left, right| left.id.cmp(&right.id));
+    if changes.is_empty() || changes.len() > 8 {
+        errors.push("dependency experiments require between one and eight concrete changes".into());
+        return Ok(Vec::new());
+    }
+    let full_mask = (1usize << changes.len()) - 1;
+    let mut subsets = vec![changes.clone()];
+    let mut remaining = Vec::new();
+    for mask in 1..full_mask {
+        let subset = changes
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| mask & (1usize << index) != 0)
+            .map(|(_, change)| change.clone())
+            .collect::<Vec<_>>();
+        remaining.push(subset);
+    }
+    remaining.sort_by(|left, right| {
+        let left_ids: Vec<_> = left.iter().map(|change| change.id.as_str()).collect();
+        let right_ids: Vec<_> = right.iter().map(|change| change.id.as_str()).collect();
+        left.len().cmp(&right.len()).then(left_ids.cmp(&right_ids))
+    });
+    subsets.extend(remaining);
+    Ok(subsets
+        .into_iter()
+        .map(|subset| {
+            let ids: Vec<_> = subset.iter().map(|change| change.id.as_str()).collect();
+            let id = if subset.len() == changes.len() {
+                experiment.candidate.set_id.clone()
+            } else {
+                format!("ddmin-{}", ids.join("--"))
+            };
+            (id, subset)
+        })
+        .collect())
+}
+
+fn dependency_resolution_equivalent(
+    actual: &ResolvedDependencySet,
+    expected: &ResolvedDependencySet,
+) -> bool {
+    actual.ecosystem == expected.ecosystem
+        && actual.package_manager == expected.package_manager
+        && actual.manifest_sha256 == expected.manifest_sha256
+        && actual.dependencies == expected.dependencies
+}
+
+fn derive_expected_dependency_reduction(
+    run_root: &Path,
+    manifest: &RunManifest,
+    experiment: &DependencyExperimentManifest,
+    expected_probes: &[(String, Vec<DependencyChange>)],
+    candidate_by_id: &BTreeMap<&str, &Candidate>,
+    errors: &mut Vec<String>,
+) -> Result<Option<DependencyReduction>> {
+    let Some(full_candidate) = candidate_by_id.get(experiment.candidate.set_id.as_str()) else {
+        errors.push("dependency experiment has no full candidate probe".into());
+        return Ok(None);
+    };
+    let Some(full_set) = full_candidate.dependency_set.as_ref() else {
+        errors.push("dependency experiment full candidate has no exact set".into());
+        return Ok(None);
+    };
+    let candidate_hash = full_set
+        .stable_identity()
+        .map_err(|error| TcError::InvalidState(error.to_string()))?;
+    let candidate_id = full_set
+        .stable_candidate_id()
+        .map_err(|error| TcError::InvalidState(error.to_string()))?;
+    let mut original_changes = full_set.changes.clone();
+    original_changes.sort_by(|left, right| left.id.cmp(&right.id));
+    let original_change_ids: Vec<_> = original_changes
+        .iter()
+        .map(|change| change.id.clone())
+        .collect();
+    let scenario_grades: BTreeMap<_, _> = manifest
+        .plan
+        .scenarios
+        .iter()
+        .map(|scenario| (scenario.id.as_str(), scenario.grade))
+        .collect();
+    let result_by_id: BTreeMap<_, _> = manifest
+        .results
+        .iter()
+        .map(|result| (result.scenario_id.as_str(), result))
+        .collect();
+
+    let mut records = Vec::new();
+    let mut observed_by_subset = BTreeMap::new();
+    for (index, (probe_id, selected_changes)) in expected_probes.iter().enumerate() {
+        let Some(candidate) = candidate_by_id.get(probe_id.as_str()) else {
+            continue;
+        };
+        let Some(set) = candidate.dependency_set.as_ref() else {
+            continue;
+        };
+        let Some(result) = result_by_id.get(probe_id.as_str()).copied() else {
+            continue;
+        };
+        let change_ids: Vec<_> = selected_changes
+            .iter()
+            .map(|change| change.id.clone())
+            .collect();
+        let record = DependencyProbeRecord {
+            sequence: u32::try_from(index + 1)
+                .map_err(|_| TcError::InvalidState("dependency probe sequence overflow".into()))?,
+            scenario_id: probe_id.clone(),
+            candidate_id: candidate_id.clone(),
+            change_ids: change_ids.clone(),
+            subset_hash: dependency_subset_hash(selected_changes)?,
+            resolved_manifest_sha256: set.candidate.manifest_sha256.clone(),
+            verdict: dependency_probe_verdict(result.verdict),
+            failure_hash: dependency_failure_hash(result, probe_id, errors),
+            evidence: dependency_probe_evidence(run_root, &manifest.run_id, probe_id)?,
+            authority: scenario_grades
+                .get(probe_id.as_str())
+                .copied()
+                .unwrap_or(EvidenceGrade::Inconclusive),
+        };
+        observed_by_subset.insert(change_ids, (record.clone(), result));
+        records.push(record);
+    }
+
+    let Some((full_record, full_result)) = observed_by_subset.get(&original_change_ids) else {
+        return Ok(Some(DependencyReduction {
+            candidate_set_id: full_set.set_id.clone(),
+            candidate_id,
+            candidate_hash,
+            original_change_ids,
+            minimal_changes: original_changes,
+            probes: records,
+            addition_probes: vec![],
+            subtraction_probes: vec![],
+            stable_failure_hash: None,
+            status: DependencyReductionStatus::Blocked,
+            authority: EvidenceGrade::Inconclusive,
+        }));
+    };
+    let stable_failure_hash = if full_record.authority == EvidenceGrade::Observed
+        && full_record.verdict == DependencyProbeVerdict::Fail
+        && full_result.attempt >= 3
+    {
+        full_record.failure_hash.clone()
+    } else {
+        None
+    };
+    let Some(stable_failure_hash) = stable_failure_hash else {
+        let status = match full_record.verdict {
+            DependencyProbeVerdict::Pass => DependencyReductionStatus::OriginalPassed,
+            DependencyProbeVerdict::Blocked => DependencyReductionStatus::Blocked,
+            DependencyProbeVerdict::Flaky => DependencyReductionStatus::UnstableFailure,
+            DependencyProbeVerdict::Fail | DependencyProbeVerdict::Inconclusive => {
+                DependencyReductionStatus::Inconclusive
+            }
+        };
+        return Ok(Some(DependencyReduction {
+            candidate_set_id: full_set.set_id.clone(),
+            candidate_id,
+            candidate_hash,
+            original_change_ids,
+            minimal_changes: original_changes,
+            probes: records,
+            addition_probes: vec![],
+            subtraction_probes: vec![],
+            stable_failure_hash: None,
+            status,
+            authority: EvidenceGrade::Inconclusive,
+        }));
+    };
+
+    let mut failing_subsets: Vec<_> = observed_by_subset
+        .iter()
+        .filter(|(_, (record, result))| {
+            record.authority == EvidenceGrade::Observed
+                && record.verdict == DependencyProbeVerdict::Fail
+                && record.failure_hash.as_ref() == Some(&stable_failure_hash)
+                && result.attempt >= 3
+        })
+        .map(|(ids, _)| ids.clone())
+        .collect();
+    failing_subsets.sort_by(|left, right| left.len().cmp(&right.len()).then(left.cmp(right)));
+    let Some(minimal_ids) = failing_subsets.first().cloned() else {
+        errors.push("stable dependency failure vanished from observed probes".into());
+        return Ok(None);
+    };
+    let minimal_id_set: BTreeSet<_> = minimal_ids.iter().cloned().collect();
+    let minimal_changes: Vec<_> = original_changes
+        .iter()
+        .filter(|change| minimal_id_set.contains(&change.id))
+        .cloned()
+        .collect();
+    let mut addition_probes = Vec::new();
+    let mut subtraction_probes = Vec::new();
+    let mut proven = true;
+
+    for excluded in original_changes
+        .iter()
+        .filter(|change| !minimal_id_set.contains(&change.id))
+    {
+        let mut combined = minimal_ids.clone();
+        combined.push(excluded.id.clone());
+        combined.sort();
+        let observation = observed_by_subset.get(&combined);
+        let irrelevant = observation.is_some_and(|(record, result)| {
+            record.authority == EvidenceGrade::Observed
+                && record.verdict == DependencyProbeVerdict::Fail
+                && record.failure_hash.as_ref() == Some(&stable_failure_hash)
+                && result.attempt >= 3
+        });
+        proven &= irrelevant;
+        if let Some((record, _)) = observation {
+            addition_probes.push(DependencyAdditionCheck {
+                added_change_id: excluded.id.clone(),
+                combined_change_ids: combined,
+                probe_sequence: record.sequence,
+                scenario_id: record.scenario_id.clone(),
+                verdict: record.verdict,
+                failure_hash: record.failure_hash.clone(),
+                irrelevant,
+                authority: record.authority,
+            });
+        } else {
+            proven = false;
+        }
+    }
+
+    for retained in &minimal_changes {
+        let remaining: Vec<_> = minimal_ids
+            .iter()
+            .filter(|change_id| change_id.as_str() != retained.id)
+            .cloned()
+            .collect();
+        let observation = if remaining.is_empty() {
+            baseline_dependency_probe_record(
+                run_root,
+                manifest,
+                &result_by_id,
+                &candidate_id,
+                errors,
+            )?
+        } else {
+            observed_by_subset
+                .get(&remaining)
+                .map(|(record, _)| record.clone())
+        };
+        let necessary = observation.as_ref().is_some_and(|record| {
+            record.authority == EvidenceGrade::Observed
+                && !(record.verdict == DependencyProbeVerdict::Fail
+                    && record.failure_hash.as_ref() == Some(&stable_failure_hash))
+                && matches!(
+                    record.verdict,
+                    DependencyProbeVerdict::Pass | DependencyProbeVerdict::Fail
+                )
+        });
+        proven &= necessary;
+        if let Some(record) = observation {
+            subtraction_probes.push(DependencyMinimalityCheck {
+                removed_change_id: retained.id.clone(),
+                remaining_change_ids: remaining,
+                probe_sequence: record.sequence,
+                scenario_id: record.scenario_id,
+                verdict: record.verdict,
+                failure_hash: record.failure_hash,
+                necessary,
+                authority: record.authority,
+            });
+        } else {
+            proven = false;
+        }
+    }
+
+    Ok(Some(DependencyReduction {
+        candidate_set_id: full_set.set_id.clone(),
+        candidate_id,
+        candidate_hash,
+        original_change_ids,
+        minimal_changes,
+        probes: records,
+        addition_probes,
+        subtraction_probes,
+        stable_failure_hash: Some(stable_failure_hash),
+        status: if proven {
+            DependencyReductionStatus::ProvenMinimal
+        } else {
+            DependencyReductionStatus::Inconclusive
+        },
+        authority: if proven {
+            EvidenceGrade::Observed
+        } else {
+            EvidenceGrade::Inconclusive
+        },
+    }))
+}
+
+fn baseline_dependency_probe_record(
+    run_root: &Path,
+    manifest: &RunManifest,
+    results: &BTreeMap<&str, &ExecutionResult>,
+    candidate_id: &str,
+    errors: &mut Vec<String>,
+) -> Result<Option<DependencyProbeRecord>> {
+    let Some(scenario) = manifest
+        .plan
+        .scenarios
+        .iter()
+        .find(|scenario| scenario.is_baseline)
+    else {
+        return Ok(None);
+    };
+    let Some(result) = results.get(scenario.id.as_str()).copied() else {
+        return Ok(None);
+    };
+    let Some(resolved) = scenario.resolved_dependencies.as_ref() else {
+        errors.push("dependency experiment baseline lacks an exact resolved set".into());
+        return Ok(None);
+    };
+    Ok(Some(DependencyProbeRecord {
+        sequence: 0,
+        scenario_id: scenario.id.clone(),
+        candidate_id: candidate_id.to_owned(),
+        change_ids: vec![],
+        subset_hash: dependency_subset_hash(&[])?,
+        resolved_manifest_sha256: resolved.manifest_sha256.clone(),
+        verdict: dependency_probe_verdict(result.verdict),
+        failure_hash: dependency_failure_hash(result, &scenario.id, errors),
+        evidence: dependency_probe_evidence(run_root, &manifest.run_id, &scenario.id)?,
+        authority: scenario.grade,
+    }))
+}
+
+fn dependency_probe_evidence(
+    run_root: &Path,
+    run_id: &str,
+    scenario_id: &str,
+) -> Result<DependencyProbeEvidence> {
+    let relative = format!("scenarios/{scenario_id}/result.json");
+    let checksum = ContentHash::try_from(file_checksum(&safe_join(run_root, &relative)?)?)
+        .map_err(TcError::InvalidState)?;
+    Ok(DependencyProbeEvidence {
+        run_id: run_id.to_owned(),
+        scenario_id: scenario_id.to_owned(),
+        path: relative,
+        checksum,
+    })
+}
+
+fn dependency_subset_hash(changes: &[DependencyChange]) -> Result<ContentHash> {
+    let mut normalized = changes.to_vec();
+    normalized.sort_by(|left, right| left.id.cmp(&right.id));
+    ContentHash::try_from(canonical_json_hash(&normalized)?).map_err(TcError::InvalidState)
+}
+
+fn dependency_failure_hash(
+    result: &ExecutionResult,
+    scenario_id: &str,
+    errors: &mut Vec<String>,
+) -> Option<ContentHash> {
+    let raw = result.failure.as_ref()?.normalized_hash.as_str();
+    match ContentHash::try_from(raw) {
+        Ok(hash) => Some(hash),
+        Err(error) => {
+            errors.push(format!(
+                "dependency scenario {scenario_id} has invalid failure hash: {error}"
+            ));
+            None
+        }
+    }
+}
+
+fn dependency_probe_verdict(verdict: Verdict) -> DependencyProbeVerdict {
+    match verdict {
+        Verdict::BaselinePass | Verdict::FuturePass => DependencyProbeVerdict::Pass,
+        Verdict::BaselineInvalid | Verdict::FutureFail => DependencyProbeVerdict::Fail,
+        Verdict::Flaky => DependencyProbeVerdict::Flaky,
+        Verdict::Blocked | Verdict::Unsupported => DependencyProbeVerdict::Blocked,
+        Verdict::Inconclusive => DependencyProbeVerdict::Inconclusive,
+    }
 }
 
 fn expected_dependency_candidates(
@@ -1192,6 +1927,7 @@ fn expected_dependency_candidates(
             channel: "stable".into(),
             grade_if_executed: EvidenceGrade::Simulated,
             order_key: "0001".into(),
+            dependency_set: None,
         });
     }
     if config.candidates.dependencies.prerelease {
@@ -1203,6 +1939,7 @@ fn expected_dependency_candidates(
             channel: "preview".into(),
             grade_if_executed: EvidenceGrade::Simulated,
             order_key: "0002".into(),
+            dependency_set: None,
         });
     }
     candidates
@@ -1253,7 +1990,45 @@ fn verify_frontier_semantics(
             ));
         }
     }
-    let expected = compute_breakage_frontier(baseline_ok, &ordered, confirmed, replay_command);
+    let reduction_path = run_root.join("reduction.json");
+    let minimal_replay_scenario = if confirmed && reduction_path.exists() {
+        read_json_file::<DependencyReduction>(
+            &reduction_path,
+            "reduction.json frontier binding",
+            errors,
+        )?
+        .filter(|reduction| {
+            reduction.status == DependencyReductionStatus::ProvenMinimal
+                && reduction.authority == EvidenceGrade::Observed
+        })
+        .and_then(|reduction| {
+            let mut minimal_ids: Vec<_> = reduction
+                .minimal_changes
+                .iter()
+                .map(|change| change.id.clone())
+                .collect();
+            minimal_ids.sort();
+            reduction
+                .probes
+                .into_iter()
+                .find(|probe| probe.change_ids == minimal_ids)
+                .map(|probe| probe.scenario_id)
+        })
+    } else {
+        None
+    };
+    if let Some(scenario_id) = &minimal_replay_scenario {
+        replay_command = Some(format!(
+            "tomorrowci replay {} --scenario {scenario_id}",
+            manifest.run_id
+        ));
+    }
+    let mut expected = compute_breakage_frontier(baseline_ok, &ordered, confirmed, replay_command);
+    if let Some(scenario_id) = minimal_replay_scenario {
+        expected.notes.push(format!(
+            "dependency reduction proved 1-minimal at scenario {scenario_id}"
+        ));
+    }
     if !json_equivalent(&expected, &manifest.frontier)? {
         errors.push(
             "run/frontier.json breakage frontier cannot be derived from verified results and rerun confirmation"
@@ -1407,12 +2182,39 @@ fn verify_current_scenario_semantics(
         }
     }
 
+    let resolved_path = safe_join(scenario_root, "resolved-dependencies.json")?;
+    match &scenario.resolved_dependencies {
+        Some(expected) => {
+            if let Err(error) = expected.validate() {
+                errors.push(format!(
+                    "scenario {scenario_id} resolved dependency set is invalid: {error}"
+                ));
+            }
+            if let Some(recorded) = read_json_file::<ResolvedDependencySet>(
+                &resolved_path,
+                &format!("scenario {scenario_id} resolved-dependencies.json"),
+                errors,
+            )? {
+                if !json_equivalent(&recorded, expected)? {
+                    errors.push(format!(
+                        "scenario {scenario_id} resolved-dependencies.json does not match the plan"
+                    ));
+                }
+            }
+        }
+        None if resolved_path.exists() => errors.push(format!(
+            "scenario {scenario_id} has unbound resolved-dependencies.json"
+        )),
+        None => {}
+    }
+
     let fetch_commands = read_json_file::<Vec<CommandSpec>>(
         &safe_join(scenario_root, "fetch-commands.json")?,
         &format!("scenario {scenario_id} fetch-commands.json"),
         errors,
     )?
     .unwrap_or_default();
+    verify_dependency_materialization_contract(scenario, &fetch_commands, errors)?;
     let test_commands = read_json_file::<Vec<CommandSpec>>(
         &safe_join(scenario_root, "test-commands.json")?,
         &format!("scenario {scenario_id} test-commands.json"),
@@ -1466,8 +2268,8 @@ fn verify_current_scenario_semantics(
     )?;
     if let (Some(replay), Some(environment)) = (&replay, &environment) {
         verify_replay_descriptor(
-            scenario_id,
             replay,
+            scenario,
             environment,
             result,
             &fetch_commands,
@@ -1527,19 +2329,20 @@ fn verify_current_scenario_semantics(
     }
 
     verify_failure_signature_file(scenario_root, scenario_id, result, errors)?;
-    verify_replay_attempt_semantics(scenario_root, scenario_id, result, errors)?;
+    verify_replay_attempt_semantics(scenario_root, scenario_id, scenario, result, errors)?;
     Ok(())
 }
 
 fn verify_replay_descriptor(
-    scenario_id: &str,
     replay: &ReplayDescriptor,
+    scenario: &Scenario,
     environment: &EnvironmentSpec,
     result: &ExecutionResult,
     fetch_commands: &[CommandSpec],
     test_commands: &[CommandSpec],
     errors: &mut Vec<String>,
 ) -> Result<()> {
+    let scenario_id = scenario.id.as_str();
     let fetch_argv: Vec<_> = fetch_commands
         .iter()
         .map(|command| command.argv.clone())
@@ -1567,7 +2370,11 @@ fn verify_replay_descriptor(
         || replay.test_argv != test_argv
         || replay.expected_exit_code != result.exit_code
         || replay.expected_timed_out != result.timed_out
-        || !json_equivalent(&replay.expected_failure_signature, &result.failure)?;
+        || !json_equivalent(&replay.expected_failure_signature, &result.failure)?
+        || !json_equivalent(
+            &replay.resolved_dependencies,
+            &scenario.resolved_dependencies,
+        )?;
     if mismatch {
         errors.push(format!(
             "scenario {scenario_id} replay.json does not exactly bind environment, commands, and expected result"
@@ -1684,10 +2491,8 @@ fn verify_test_attempts(
                 } else {
                     Verdict::BaselineInvalid
                 }
-            } else if passes.len() < 2 && passes.iter().all(|passed| !*passed) {
-                Verdict::Inconclusive
             } else {
-                classify_from_reruns(&passes)
+                classify_candidate_attempts(&summary.attempts)
             };
             if result.verdict != expected_verdict {
                 errors.push(format!(
@@ -1873,6 +2678,32 @@ fn verify_failure_signature_file(
         errors.push(format!(
             "scenario {scenario_id} pass-like verdict carries a failure signature"
         ));
+    }
+    Ok(())
+}
+
+fn verify_dependency_materialization_contract(
+    scenario: &Scenario,
+    recorded: &[CommandSpec],
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    if scenario.resolved_dependencies.is_none() {
+        return Ok(());
+    }
+    match dependency_materialization_commands(scenario) {
+        Ok(Some(expected)) if json_equivalent(&expected, &recorded.to_vec())? => {}
+        Ok(Some(_)) => errors.push(format!(
+            "scenario {} fetch commands do not materialize its exact dependency set",
+            scenario.id
+        )),
+        Ok(None) => errors.push(format!(
+            "scenario {} has exact dependencies without a materialization contract",
+            scenario.id
+        )),
+        Err(error) => errors.push(format!(
+            "scenario {} dependency materialization contract is invalid: {error}",
+            scenario.id
+        )),
     }
     Ok(())
 }
@@ -2311,6 +3142,7 @@ fn verify_replay_attempts(
 fn verify_replay_attempt_semantics(
     scenario_root: &Path,
     scenario_id: &str,
+    scenario: &Scenario,
     result: &ExecutionResult,
     errors: &mut Vec<String>,
 ) -> Result<()> {
@@ -2383,6 +3215,16 @@ fn verify_replay_attempt_semantics(
                 {
                     errors.push(format!(
                         "scenario {scenario_id} replay {name} engine/environment identity mismatch"
+                    ));
+                }
+                if report.dependency_manifest_sha256.as_ref()
+                    != scenario
+                        .resolved_dependencies
+                        .as_ref()
+                        .map(|set| &set.manifest_sha256)
+                {
+                    errors.push(format!(
+                        "scenario {scenario_id} replay {name} dependency set identity mismatch"
                     ));
                 }
                 let derived_exit_match =
@@ -3813,5 +4655,107 @@ mod tests {
             .errors
             .iter()
             .any(|error| error.contains("symlink/reparse")));
+    }
+
+    #[test]
+    fn dependency_artifacts_and_exhaustive_probe_order_are_rederived() {
+        let workspace = tempdir().unwrap();
+        for source in ["contract-v1", "contract-v2", "noise-v1", "noise-v2"] {
+            let directory = workspace.path().join("vendor").join(source);
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("payload.txt"), format!("{source}\n")).unwrap();
+        }
+        let hash =
+            |source: &str| sha256_tree_v1(&workspace.path().join("vendor").join(source)).unwrap();
+        let experiment: DependencyExperimentManifest = serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "ecosystem": "python",
+            "runtime": {
+                "version": "3.11",
+                "container_image": format!("python@sha256:{}", "a".repeat(64))
+            },
+            "content_hash_algorithm": "sha256-tree-v1",
+            "baseline": { "set_id": "baseline" },
+            "candidate": {
+                "set_id": "candidate",
+                "changes": [
+                    {
+                        "id": "breaking-api",
+                        "name": "contract",
+                        "before": { "version": "1", "source": "vendor/contract-v1", "content_sha256": hash("contract-v1") },
+                        "after": { "version": "2", "source": "vendor/contract-v2", "content_sha256": hash("contract-v2") }
+                    },
+                    {
+                        "id": "irrelevant-noise",
+                        "name": "noise",
+                        "before": { "version": "1", "source": "vendor/noise-v1", "content_sha256": hash("noise-v1") },
+                        "after": { "version": "2", "source": "vendor/noise-v2", "content_sha256": hash("noise-v2") }
+                    }
+                ]
+            }
+        }))
+        .unwrap();
+        let declared = experiment.to_candidate_set("pip").unwrap();
+        let mut errors = Vec::new();
+        let probes = expected_dependency_probes(&experiment, &declared, &mut errors).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(
+            probes.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            vec!["candidate", "ddmin-breaking-api", "ddmin-irrelevant-noise"]
+        );
+        verify_dependency_artifacts(workspace.path(), &experiment, &mut errors).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+
+        std::fs::write(
+            workspace.path().join("vendor/contract-v2/payload.txt"),
+            "mutated\n",
+        )
+        .unwrap();
+        verify_dependency_artifacts(workspace.path(), &experiment, &mut errors).unwrap();
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("content hash mismatch")));
+    }
+
+    #[test]
+    fn dependency_materialization_command_mutation_is_rejected() {
+        let dependency = tomorrowci_core::ResolvedDependency {
+            id: "breaking-api".into(),
+            name: "contract".into(),
+            version: "2".into(),
+            source: "vendor/contract-v2".into(),
+            source_kind: tomorrowci_core::DependencySourceKind::VendoredTreeSha256V1,
+            content_sha256: ContentHash::sha256("a".repeat(64)).unwrap(),
+        };
+        let mut set = ResolvedDependencySet {
+            set_id: "candidate".into(),
+            ecosystem: Ecosystem::Python,
+            package_manager: "pip".into(),
+            manifest_sha256: ContentHash::sha256("0".repeat(64)).unwrap(),
+            dependencies: vec![dependency],
+        };
+        set.manifest_sha256 = set.expected_manifest_sha256().unwrap();
+        let scenario = Scenario {
+            id: "ddmin-breaking-api".into(),
+            is_baseline: false,
+            runtime: "3.11".into(),
+            dependencies: "candidate".into(),
+            axes_changed: vec![EnvironmentAxis::Dependencies],
+            candidates: vec!["ddmin-breaking-api".into()],
+            grade: EvidenceGrade::Observed,
+            resolved_dependencies: Some(set),
+        };
+        let mut recorded = dependency_materialization_commands(&scenario)
+            .unwrap()
+            .unwrap();
+        let mut errors = Vec::new();
+        verify_dependency_materialization_contract(&scenario, &recorded, &mut errors).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+
+        recorded.last_mut().unwrap().argv.pop();
+        verify_dependency_materialization_contract(&scenario, &recorded, &mut errors).unwrap();
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("do not materialize its exact dependency set")));
     }
 }

@@ -1,6 +1,10 @@
 //! Full scan orchestration with explicit scenario lifecycle:
 //! IMAGE_RESOLVE → WORKSPACE_PREPARE → FETCH → TEST → CLASSIFY → EVIDENCE_FINALIZE
 
+use crate::dependency::{
+    concrete_dependency_fetch_commands, derive_observed_dependency_reduction,
+    load_dependency_experiment, DependencyExperiment,
+};
 use crate::engine::{ContainerExecutor, ExecutionContext, ScenarioExecutor};
 use chrono::Utc;
 use indexmap::IndexMap;
@@ -12,7 +16,7 @@ use tomorrowci_adapter_python::{python_fetch_commands, PythonAdapter};
 use tomorrowci_adapter_rust::RustAdapter;
 use tomorrowci_adapters::EcosystemAdapter;
 use tomorrowci_core::{
-    classify_from_reruns, compute_breakage_frontier, ddmin_axes, plan_scenarios,
+    classify_candidate_attempts, classify_from_reruns, compute_breakage_frontier, plan_scenarios,
     validate_image_digest, Baseline, CommandSpec, Config, Ecosystem, EnvironmentAxis,
     EnvironmentSpec, EvidenceGrade, ExecutionPlan, ExecutionResult, FailureSignature,
     ProjectDetection, RawExecutionResult, RepositorySnapshot, Result, RunIdentity, RunManifest,
@@ -126,16 +130,25 @@ fn scan_with_adapter(
     let detection = captured_detection;
 
     // Target source files are not modified; evidence is under .tomorrowci/runs (excluded).
-    let baseline = adapter.baseline(&work, &config)?;
+    let mut baseline = adapter.baseline(&work, &config)?;
     let rt_cands = adapter.candidates(&baseline, &config)?;
-    let dep_cands = dependency_candidates(&baseline, &config);
+    let dependency_experiment =
+        load_dependency_experiment(&work, detection.ecosystem, &baseline.runtime)?;
+    if let Some(experiment) = &dependency_experiment {
+        baseline.dependencies = experiment.baseline.set_id.clone();
+    }
+    let dep_cands = dependency_candidates(&baseline, &config, dependency_experiment.as_ref())?;
 
     let (plan, decisions) = plan_scenarios(&baseline, &rt_cands, &dep_cands, &config);
     layout.write_json("plan.json", &plan)?;
     layout.write_json("plan-decisions.json", &decisions)?;
-    layout.write_json("candidates.json", &rt_cands)?;
+    let all_candidates: Vec<_> = rt_cands.iter().chain(dep_cands.iter()).cloned().collect();
+    layout.write_json("candidates.json", &all_candidates)?;
     layout.write_json("repository.json", &source_identity.repository)?;
     layout.write_json("config.normalized.json", &config)?;
+    if let Some(experiment) = &dependency_experiment {
+        layout.write_json("dependency-experiment.json", &experiment.manifest)?;
+    }
 
     let engine_resolve_started = Utc::now();
     let engine = ContainerExecutor::detect_requested(&config.sandbox.engine);
@@ -178,7 +191,15 @@ fn scan_with_adapter(
     let is_scripted = executor.name() == "scripted";
 
     for scenario in &plan.scenarios {
-        let mut env = adapter.materialize(scenario, &work)?;
+        // Every scenario executes against a fresh copy of the immutable recorded
+        // workspace. Dependency installers and build tools must never leak state
+        // into a later candidate or mutate the replay authority snapshot.
+        let scenario_workspace = DisposableWorkspace::capture(&work)?;
+        prepare_scenario_state(scenario_workspace.path())?;
+        prepare_dependency_materialization_root(scenario_workspace.path(), scenario)?;
+        let scenario_work = scenario_workspace.path();
+
+        let mut env = adapter.materialize(scenario, scenario_work)?;
         let tag = normalize_image(eco, &scenario.runtime);
         env.image_tag = tag.clone();
         env.image = tag; // legacy alias of tag only — never store digest here
@@ -192,7 +213,7 @@ fn scan_with_adapter(
 
         let sc_dir = layout.ensure_scenario(&scenario.id)?;
         // True scenario-specific mounted state
-        let sc_state = work
+        let sc_state = scenario_work
             .join(".tomorrowci")
             .join("scenarios")
             .join(&scenario.id);
@@ -209,15 +230,34 @@ fn scan_with_adapter(
         }
 
         // IMAGE_RESOLVE — pull/resolve by tag; record digest separately
+        // Command construction is pure planning evidence. Record it even when
+        // immutable image resolution later blocks execution.
+        let test_commands = build_scenario_commands(adapter, scenario, &config, scenario_work)?;
+        let planned_fetch_commands =
+            build_fetch_commands(eco, scenario, scenario_work, is_scripted);
+
         let image_started = Utc::now();
-        let digest = match executor.ensure_image(env.tag()).and_then(|digest| {
+        let image_request = dependency_experiment
+            .as_ref()
+            .filter(|_| scenario.resolved_dependencies.is_some())
+            .map(|experiment| experiment.manifest.runtime.container_image.as_str())
+            .unwrap_or_else(|| env.tag());
+        let digest = match executor.ensure_image(image_request).and_then(|digest| {
             validate_image_digest(&digest).map_err(TcError::InvalidState)?;
             Ok(digest)
         }) {
             Ok(d) => d,
             Err(e) => {
                 let image_finished = Utc::now();
-                let blocked = blocked_result(scenario, &env, &[], &e.to_string());
+                let fetch_commands = planned_fetch_commands
+                    .as_ref()
+                    .ok()
+                    .and_then(|commands| commands.as_ref())
+                    .cloned()
+                    .unwrap_or_default();
+                let mut all_commands = fetch_commands.clone();
+                all_commands.extend(test_commands.clone());
+                let blocked = blocked_result(scenario, &env, &all_commands, &e.to_string());
                 write_phase(
                     &sc_dir,
                     "image-resolve",
@@ -237,8 +277,8 @@ fn scan_with_adapter(
                     &sc_dir,
                     scenario,
                     &env,
-                    &[],
-                    &[],
+                    &fetch_commands,
+                    &test_commands,
                     None,
                     None,
                     &blocked,
@@ -272,8 +312,7 @@ fn scan_with_adapter(
             Some(image_finished),
         )?;
 
-        let test_commands = build_scenario_commands(adapter, scenario, &config, &work)?;
-        let fetch_cmds = match build_fetch_commands(eco, scenario, &work, is_scripted) {
+        let fetch_cmds = match planned_fetch_commands {
             Ok(c) => c,
             Err(TcError::Unsupported(msg)) => {
                 let mut r = blocked_result(scenario, &env, &test_commands, &msg);
@@ -318,7 +357,7 @@ fn scan_with_adapter(
             let fetch_start = Utc::now();
             let fetch_timeout = Duration::from_secs(env.fetch_timeout_seconds.unwrap_or(600));
             let fr = match executor.execute(&ExecutionContext {
-                workspace: &work,
+                workspace: scenario_work,
                 scenario,
                 environment: &env,
                 commands: fcmds,
@@ -446,7 +485,7 @@ fn scan_with_adapter(
             let attempt_started = Utc::now();
             test_phase_started.get_or_insert(attempt_started);
             let raw = match executor.execute(&ExecutionContext {
-                workspace: &work,
+                workspace: scenario_work,
                 scenario,
                 environment: &env,
                 commands: &test_commands,
@@ -575,10 +614,8 @@ fn scan_with_adapter(
                 baseline_ok = false;
                 Verdict::BaselineInvalid
             }
-        } else if attempt_pass.len() < 2 && attempt_pass.iter().all(|passed| !*passed) {
-            Verdict::Inconclusive
         } else {
-            classify_from_reruns(&attempt_pass)
+            classify_candidate_attempts(&attempt_records)
         };
 
         let failure = match verdict {
@@ -639,44 +676,41 @@ fn scan_with_adapter(
         }
     }
 
-    // ddmin note only — not acceptance evidence
-    let mut frontier_notes = Vec::new();
-    if let Some(combo) = results
-        .iter()
-        .find(|r| r.scenario_id.starts_with("combo-") && matches!(r.verdict, Verdict::FutureFail))
-    {
-        let axes = ordered_for_frontier
-            .iter()
-            .find(|(s, _)| s.id == combo.scenario_id)
-            .map(|(s, _)| s.axes_changed.clone())
-            .unwrap_or_default();
-        let minimal = ddmin_axes(&axes, |subset| {
-            subset.iter().any(|ax| {
-                results.iter().any(|r| {
-                    let sc = plan.scenarios.iter().find(|s| s.id == r.scenario_id);
-                    sc.map(|s| {
-                        s.axes_changed == vec![*ax] && matches!(r.verdict, Verdict::FutureFail)
-                    })
-                    .unwrap_or(false)
-                })
-            })
-        });
-        frontier_notes.push(format!(
-            "ddmin label summary (NOT live reduction execution): {minimal:?}"
-        ));
-        layout.write_json(
-            "reduction.json",
-            &serde_json::json!({
-                "combo": combo.scenario_id,
-                "minimal_axes": minimal,
-                "note": "NOT_RUN as real ddmin execution — label summary only",
-            }),
-        )?;
-    }
-
-    let replay_cmd = first_fail_scenario
+    let dependency_reduction = dependency_experiment
         .as_ref()
-        .map(|s| format!("tomorrowci replay {run_id} --scenario {s}"));
+        .map(|experiment| {
+            derive_observed_dependency_reduction(
+                &run_id,
+                &layout.run_root,
+                experiment,
+                &plan,
+                &results,
+            )
+        })
+        .transpose()?;
+    if let Some(reduction) = &dependency_reduction {
+        layout.write_json("reduction.json", reduction)?;
+    }
+    let minimal_replay_scenario = dependency_reduction.as_ref().and_then(|reduction| {
+        if reduction.status != tomorrowci_core::DependencyReductionStatus::ProvenMinimal {
+            return None;
+        }
+        let minimal_ids: Vec<_> = reduction
+            .minimal_changes
+            .iter()
+            .map(|change| change.id.clone())
+            .collect();
+        dependency_experiment
+            .as_ref()?
+            .probes
+            .iter()
+            .find_map(|probe| (probe.change_ids == minimal_ids).then(|| probe.id.clone()))
+    });
+
+    let replay_target = minimal_replay_scenario
+        .as_ref()
+        .or(first_fail_scenario.as_ref());
+    let replay_cmd = replay_target.map(|s| format!("tomorrowci replay {run_id} --scenario {s}"));
 
     let mut frontier = compute_breakage_frontier(
         baseline_ok,
@@ -684,7 +718,11 @@ fn scan_with_adapter(
         confirmed_first_fail,
         replay_cmd.clone(),
     );
-    let _ = frontier_notes;
+    if let Some(scenario_id) = minimal_replay_scenario {
+        frontier.notes.push(format!(
+            "dependency reduction proved 1-minimal at scenario {scenario_id}"
+        ));
+    }
     if is_scripted {
         frontier
             .notes
@@ -1174,7 +1212,7 @@ pub fn scan_with_executor(
 
     let baseline = adapter.baseline(repo, &config)?;
     let rt_cands = adapter.candidates(&baseline, &config)?;
-    let dep_cands = dependency_candidates(&baseline, &config);
+    let dep_cands = dependency_candidates(&baseline, &config, None)?;
     let (plan, _) = plan_scenarios(&baseline, &rt_cands, &dep_cands, &config);
     layout.write_json("plan.json", &plan)?;
 
@@ -1314,7 +1352,39 @@ pub fn scan_with_executor(
     })
 }
 
-fn dependency_candidates(baseline: &Baseline, config: &Config) -> Vec<tomorrowci_core::Candidate> {
+fn dependency_candidates(
+    baseline: &Baseline,
+    config: &Config,
+    experiment: Option<&DependencyExperiment>,
+) -> Result<Vec<tomorrowci_core::Candidate>> {
+    if let Some(experiment) = experiment {
+        let candidates = experiment
+            .probes
+            .iter()
+            .enumerate()
+            .map(|(index, probe)| {
+                let identity = probe
+                    .dependency_set
+                    .stable_identity()
+                    .map_err(|error| TcError::InvalidState(error.to_string()))?;
+                Ok(tomorrowci_core::Candidate {
+                    id: probe.id.clone(),
+                    axis: EnvironmentAxis::Dependencies,
+                    label: format!(
+                        "{} dependency probe {} ({})",
+                        baseline.runtime, probe.id, identity
+                    ),
+                    version: probe.dependency_set.candidate.set_id.clone(),
+                    channel: "content-addressed".into(),
+                    grade_if_executed: EvidenceGrade::Observed,
+                    order_key: format!("{index:04}"),
+                    dependency_set: Some(probe.dependency_set.clone()),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        return Ok(candidates);
+    }
+
     let mut out = Vec::new();
     if config.candidates.dependencies.latest_allowed {
         out.push(tomorrowci_core::Candidate {
@@ -1325,6 +1395,7 @@ fn dependency_candidates(baseline: &Baseline, config: &Config) -> Vec<tomorrowci
             channel: "stable".into(),
             grade_if_executed: EvidenceGrade::Simulated,
             order_key: "0001".into(),
+            dependency_set: None,
         });
     }
     if config.candidates.dependencies.prerelease {
@@ -1336,9 +1407,10 @@ fn dependency_candidates(baseline: &Baseline, config: &Config) -> Vec<tomorrowci
             channel: "preview".into(),
             grade_if_executed: EvidenceGrade::Simulated,
             order_key: "0002".into(),
+            dependency_set: None,
         });
     }
-    out
+    Ok(out)
 }
 
 fn normalize_image(eco: Ecosystem, runtime: &str) -> String {
@@ -1385,6 +1457,9 @@ fn build_fetch_commands(
     work: &Path,
     scripted: bool,
 ) -> Result<Option<Vec<CommandSpec>>> {
+    if let Some(commands) = concrete_dependency_fetch_commands(eco, scenario)? {
+        return Ok(Some(commands));
+    }
     let upgrade =
         scenario.dependencies == "latest-allowed" || scenario.dependencies == "prerelease";
     match eco {
@@ -1600,6 +1675,12 @@ fn persist_scenario_artifacts(
         sc_dir.join("test-attempts.json"),
         serde_json::to_string_pretty(test_attempts)?,
     )?;
+    if let Some(dependencies) = &scenario.resolved_dependencies {
+        std::fs::write(
+            sc_dir.join("resolved-dependencies.json"),
+            serde_json::to_string_pretty(dependencies)?,
+        )?;
+    }
     if let Some(raw) = test_raw {
         std::fs::write(sc_dir.join("stdout.log"), &raw.stdout)?;
         std::fs::write(sc_dir.join("stderr.log"), &raw.stderr)?;
@@ -1636,6 +1717,7 @@ fn persist_scenario_artifacts(
         "expected_exit_code": exec.exit_code,
         "expected_timed_out": exec.timed_out,
         "expected_failure_signature": failure,
+        "resolved_dependencies": scenario.resolved_dependencies,
     });
     std::fs::write(
         sc_dir.join("replay.json"),
@@ -1651,6 +1733,7 @@ fn persist_scenario_artifacts(
         "test-commands.json",
         "commands.json",
         "test-attempts.json",
+        "resolved-dependencies.json",
         "image-resolve-phase.json",
         "fetch-phase.json",
         "test-phase.json",
@@ -1893,11 +1976,56 @@ fn load_stable_verified_manifest(root: &Path, require_current: bool) -> Result<R
     Ok(manifest)
 }
 
-struct ReplayWorkspace {
+fn prepare_dependency_materialization_root(workspace: &Path, scenario: &Scenario) -> Result<()> {
+    let is_rust = scenario
+        .resolved_dependencies
+        .as_ref()
+        .is_some_and(|set| set.ecosystem == Ecosystem::Rust);
+    if !is_rust {
+        return Ok(());
+    }
+    let root = workspace.join("vendor").join("tomorrowci-selected");
+    match std::fs::symlink_metadata(&root) {
+        Ok(metadata) => {
+            if metadata_is_alias(&metadata) || !metadata.is_dir() {
+                return Err(TcError::Blocked(format!(
+                    "Rust dependency materialization root is not a plain directory: {}",
+                    root.display()
+                )));
+            }
+            if std::fs::read_dir(&root)?.next().transpose()?.is_some() {
+                return Err(TcError::Blocked(format!(
+                    "Rust dependency materialization root must be absent or empty: {}",
+                    root.display()
+                )));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(&root)?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o777))?;
+        // Cargo rewrites Cargo.lock via a temporary file in the project root.
+        // This is a disposable scenario snapshot, never the recorded evidence
+        // workspace, so granting the sandbox UID write access is safe here.
+        std::fs::set_permissions(workspace, std::fs::Permissions::from_mode(0o777))?;
+        let lock = workspace.join("Cargo.lock");
+        if lock.is_file() {
+            std::fs::set_permissions(lock, std::fs::Permissions::from_mode(0o666))?;
+        }
+    }
+    Ok(())
+}
+
+struct DisposableWorkspace {
     path: PathBuf,
 }
 
-impl ReplayWorkspace {
+impl DisposableWorkspace {
     fn capture(recorded_workspace: &Path) -> Result<Self> {
         let root =
             std::env::temp_dir().join(format!("tomorrowci-replay-{}", Uuid::new_v4().simple()));
@@ -1921,7 +2049,7 @@ impl ReplayWorkspace {
     }
 }
 
-impl Drop for ReplayWorkspace {
+impl Drop for DisposableWorkspace {
     fn drop(&mut self) {
         if let Some(root) = self.path.parent() {
             let _ = std::fs::remove_dir_all(root);
@@ -2115,6 +2243,7 @@ fn replay_attempt_report(
     recorded_digest: &str,
     resolved_digest: &str,
     environment: &EnvironmentSpec,
+    dependency_manifest_sha256: Option<&tomorrowci_core::ContentHash>,
     exit_match: Option<bool>,
     signature_match: Option<bool>,
     error: Option<&str>,
@@ -2143,6 +2272,7 @@ fn replay_attempt_report(
         "image_tag": environment.tag(),
         "fetch_timeout_seconds": environment.fetch_timeout_seconds,
         "test_timeout_seconds": environment.test_timeout_seconds,
+        "dependency_manifest_sha256": dependency_manifest_sha256,
         "error": error,
     })
 }
@@ -2346,8 +2476,9 @@ fn replay_scenario_with_verified_evidence(
     let fetch_to = Duration::from_secs(fetch_seconds);
     let test_to = Duration::from_secs(test_seconds);
 
-    let replay_workspace = ReplayWorkspace::capture(&work)?;
+    let replay_workspace = DisposableWorkspace::capture(&work)?;
     prepare_scenario_state(replay_workspace.path())?;
+    prepare_dependency_materialization_root(replay_workspace.path(), &scenario)?;
     verify_replay_evidence(root)?;
 
     // The staging directory is an atomic reservation/lock. No target command may
@@ -2384,6 +2515,10 @@ fn replay_scenario_with_verified_evidence(
                     &recorded_digest,
                     &resolved,
                     &env_run,
+                    scenario
+                        .resolved_dependencies
+                        .as_ref()
+                        .map(|set| &set.manifest_sha256),
                     None,
                     None,
                     Some(&error_message),
@@ -2420,6 +2555,10 @@ fn replay_scenario_with_verified_evidence(
                 &recorded_digest,
                 &resolved,
                 &env_run,
+                scenario
+                    .resolved_dependencies
+                    .as_ref()
+                    .map(|set| &set.manifest_sha256),
                 None,
                 None,
                 Some(&detail),
@@ -2468,6 +2607,10 @@ fn replay_scenario_with_verified_evidence(
                 &recorded_digest,
                 &resolved,
                 &env_run,
+                scenario
+                    .resolved_dependencies
+                    .as_ref()
+                    .map(|set| &set.manifest_sha256),
                 None,
                 None,
                 Some(&error_message),
@@ -2525,6 +2668,10 @@ fn replay_scenario_with_verified_evidence(
         &recorded_digest,
         &resolved,
         &env_run,
+        scenario
+            .resolved_dependencies
+            .as_ref()
+            .map(|set| &set.manifest_sha256),
         Some(exit_match),
         Some(sig_match),
         None,
@@ -2631,7 +2778,7 @@ mod hardening_tests {
     fn replay_workspace_prepares_container_writable_state() {
         let source = tempdir().unwrap();
         std::fs::write(source.path().join("source.txt"), "focused\n").unwrap();
-        let replay = ReplayWorkspace::capture(source.path()).unwrap();
+        let replay = DisposableWorkspace::capture(source.path()).unwrap();
         let state = prepare_scenario_state(replay.path()).unwrap();
 
         assert!(state.join("venv").is_dir());
@@ -2663,7 +2810,7 @@ mod hardening_tests {
         config.baseline.dependencies = "locked".into();
         let baseline = adapter.baseline(repo, &config).unwrap();
         let candidates = adapter.candidates(&baseline, &config).unwrap();
-        let dependency_candidates = dependency_candidates(&baseline, &config);
+        let dependency_candidates = dependency_candidates(&baseline, &config, None).unwrap();
         let (plan, decisions) =
             plan_scenarios(&baseline, &candidates, &dependency_candidates, &config);
 

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "ecosystem": "rust",
+  "runtime": {
+    "version": "1.83",
+    "container_image": "rust@sha256:a45bf1f5d9af0a23b26703b3500d70af1abff7f984a7abef5a104b42c02a292b"
+  },
+  "content_hash_algorithm": "sha256-tree-v1",
+  "baseline": {
+    "set_id": "rust-baseline-v1"
+  },
+  "candidate": {
+    "set_id": "rust-candidate-v2",
+    "changes": [
+      {
+        "id": "breaking-api",
+        "name": "m2-rust-contract",
+        "before": {
+          "version": "1.0.0",
+          "source": "vendor/contract-v1",
+          "content_sha256": "sha256:bf0db92884dcb4bd35f0c8cb09b64c658314d54ae67352272ee0df69880aa584"
+        },
+        "after": {
+          "version": "2.0.0",
+          "source": "vendor/contract-v2",
+          "content_sha256": "sha256:05b6f179aad08ee5aa7ba6fbc937171a62b64a8936e7214e44937c71493a6ec0"
+        }
+      },
+      {
+        "id": "irrelevant-noise",
+        "name": "m2-rust-noise",
+        "before": {
+          "version": "1.0.0",
+          "source": "vendor/noise-v1",
+          "content_sha256": "sha256:25a438f9a535c09a70d7d11f37ab6f58af17454d78493196f58dddb75ecd8b8a"
+        },
+        "after": {
+          "version": "2.0.0",
+          "source": "vendor/noise-v2",
+          "content_sha256": "sha256:18aca5c226245fccdd151a4eb8105d92cf00d626ac0f624d80706d2b45568cf5"
+        }
+      }
+    ]
+  }
+}

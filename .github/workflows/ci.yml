@@ -115,6 +115,142 @@ jobs:
           path: fixtures/python-runtime-break/.tomorrowci/runs/
           if-no-files-found: warn
 
+  m2-dependency-fixtures:
+    runs-on: ubuntu-latest
+    needs: rust
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # action implementation
+        with:
+          toolchain: 1.97.1
+      - name: Build release CLI
+        run: cargo build -p tomorrowci-cli --release
+      - name: Native content-addressed dependency probes
+        run: |
+          set -euo pipefail
+          python3 scripts/test_dependency_fixtures.py \
+            --native \
+            --output /tmp/m2-dependency-fixtures.json
+      - name: CLI dependency reduction, verify, and replay twice
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/m2-cli
+          CLI="$GITHUB_WORKSPACE/target/release/tomorrowci"
+
+          for ECOSYSTEM in python node rust; do
+            FIXTURE="fixtures/dependency-$ECOSYSTEM"
+            "$CLI" scan "$FIXTURE" \
+              --config "$FIXTURE/.tomorrowci.yml" \
+              | tee "/tmp/m2-cli/$ECOSYSTEM-scan.out"
+            if grep -Eq '^verdict: (BLOCKED|UNSUPPORTED|INCONCLUSIVE|BASELINE_INVALID|FLAKY)$' \
+              "/tmp/m2-cli/$ECOSYSTEM-scan.out"; then
+              echo "$ECOSYSTEM dependency scan did not produce authoritative evidence"
+              exit 2
+            fi
+
+            RUN_ID="$(sed -n 's/^run_id: //p' "/tmp/m2-cli/$ECOSYSTEM-scan.out" | tail -1)"
+            test -n "$RUN_ID"
+            RUN_DIR="$FIXTURE/.tomorrowci/runs/$RUN_ID"
+            test -d "$RUN_DIR"
+            test -f "$RUN_DIR/reduction.json"
+            (cd "$FIXTURE" && "$CLI" verify "$RUN_ID")
+
+            SCENARIO="$(python3 - "$RUN_DIR/reduction.json" \
+              "$RUN_DIR/dependency-experiment.json" \
+              "$FIXTURE/fixture-oracle.json" <<'PY'
+          import json
+          import sys
+
+          reduction = json.load(open(sys.argv[1], encoding="utf-8"))
+          trusted = json.load(open(sys.argv[2], encoding="utf-8"))
+          oracle = json.load(open(sys.argv[3], encoding="utf-8"))
+
+          forbidden = {
+              "authoritative",
+              "required",
+              "required_change_ids",
+              "irrelevant_change_ids",
+              "expected_minimal_change_ids",
+              "expected_probes",
+              "expected_verdict",
+              "probes",
+          }
+
+          def assert_oracle_free(value):
+              if isinstance(value, dict):
+                  leaked = forbidden.intersection(value)
+                  assert not leaked, f"trusted manifest leaked fixture oracle fields: {sorted(leaked)}"
+                  for nested in value.values():
+                      assert_oracle_free(nested)
+              elif isinstance(value, list):
+                  for nested in value:
+                      assert_oracle_free(nested)
+
+          assert_oracle_free(trusted)
+          assert oracle["authoritative"] is False
+          expected = sorted(oracle["expected_minimal_change_ids"])
+          actual = sorted(change["id"] for change in reduction["minimal_changes"])
+          assert reduction["status"] == "PROVEN_MINIMAL", reduction
+          assert reduction["authority"] == "OBSERVED", reduction
+          assert reduction["stable_failure_hash"], reduction
+          assert actual == expected, (actual, expected)
+
+          required = set(oracle["required_change_ids"])
+          irrelevant = set(oracle["irrelevant_change_ids"])
+          subtraction = {
+              check["removed_change_id"]
+              for check in reduction["subtraction_probes"]
+              if check["necessary"] and check["authority"] == "OBSERVED"
+          }
+          addition = {
+              check["added_change_id"]
+              for check in reduction["addition_probes"]
+              if check["irrelevant"] and check["authority"] == "OBSERVED"
+          }
+          assert required.issubset(subtraction), (required, subtraction)
+          assert irrelevant.issubset(addition), (irrelevant, addition)
+
+          matches = [
+              probe
+              for probe in reduction["probes"]
+              if sorted(probe["change_ids"]) == expected
+              and probe["verdict"] == "FAIL"
+              and probe["authority"] == "OBSERVED"
+          ]
+          assert matches, reduction["probes"]
+          print(matches[0]["scenario_id"])
+          PY
+            )"
+            test -n "$SCENARIO"
+
+            (
+              cd "$FIXTURE"
+              "$CLI" replay "$RUN_ID" --scenario "$SCENARIO" \
+                | tee "/tmp/m2-cli/$ECOSYSTEM-replay-1.out"
+              "$CLI" replay "$RUN_ID" --scenario "$SCENARIO" \
+                | tee "/tmp/m2-cli/$ECOSYSTEM-replay-2.out"
+              grep -q 'replay: PASS' "/tmp/m2-cli/$ECOSYSTEM-replay-1.out"
+              grep -q 'replay: PASS' "/tmp/m2-cli/$ECOSYSTEM-replay-2.out"
+              test -f ".tomorrowci/runs/$RUN_ID/scenarios/$SCENARIO/replays/attempt-1/result.json"
+              test -f ".tomorrowci/runs/$RUN_ID/scenarios/$SCENARIO/replays/attempt-2/result.json"
+              "$CLI" verify "$RUN_ID"
+            )
+          done
+      - name: Upload M2 dependency evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tomorrowci-m2-dependency-evidence
+          path: |
+            /tmp/m2-dependency-fixtures.json
+            /tmp/m2-cli/
+            fixtures/dependency-python/.tomorrowci/runs/
+            fixtures/dependency-node/.tomorrowci/runs/
+            fixtures/dependency-rust/.tomorrowci/runs/
+          include-hidden-files: true
+          if-no-files-found: warn
+
   action-dogfood:
     runs-on: ubuntu-latest
     needs: rust
