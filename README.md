@@ -11,15 +11,17 @@ No breakage claim without replayable evidence.
 
 ## Product status (evidence-based)
 
-**TomorrowCI is an experimental pre-alpha architecture under evidence-and-release closure.**
+**TomorrowCI is an experimental pre-alpha architecture. The measured
+`v0.1.1-alpha.2` lab release is published; broader product qualification is
+still in progress.**
 
 | Area | Status | Notes |
 |------|--------|--------|
 | Live Python runtime vertical slice | **PASS** (demonstrated) | Real Docker path on public CI; see claim ledger |
 | Live report (minimum static) | **in closure** | Real digests; Phase F links/tests in alpha.2 track |
-| Action dogfood + consumer | **PASS** (alpha.1 demonstrated; re-prove on final alpha.2 commit) | `uses: ./action` |
-| Evidence integrity + exact replay | **in closure** | alpha.1 operational replay accepted; exact-manifest incomplete |
-| Release gate | **in closure** | alpha.1 rejected for premature tag / weak release workflow |
+| Action dogfood + consumer | **PASS** (alpha.2 demonstrated) | `uses: ./action`; public CI evidence in the claim ledger |
+| Evidence integrity + exact replay | **PASS** (bounded alpha.2 scope) | `verify` plus two independent replay attempts passed |
+| Release gate | **PASS** (alpha.2 scope) | Three platform archives, checksums, and CycloneDX SBOM published |
 | Node / Rust live adapters | **NOT_RUN** | Out of alpha.2 scope |
 | Dependency axis / real ddmin | **NOT_RUN** | Out of alpha.2 scope |
 | React/TypeScript interactive report | **NOT_RUN** | Out of alpha.2 scope |
@@ -32,7 +34,7 @@ No breakage claim without replayable evidence.
 |-----|-------------|
 | `v0.1.0` | **REJECTED** product candidate — scripted acceptance; red CI |
 | `v0.1.1-alpha.1` | **REJECTED acceptance candidate** / live-path demonstration — Python slice real; evidence envelope + release gate incomplete ([audit note](docs/audits/v0.1.1-alpha.1-rejection.md)) |
-| `v0.1.1-alpha.2` | **NOT_CREATED** until every alpha.2 closure gate passes |
+| `v0.1.1-alpha.2` | **PUBLISHED MEASURED LAB RELEASE** — Python live path, verify, replay ×2, Action dogfood, and release assets passed; Node/Rust live and the other `NOT_RUN` rows remain unclaimed |
 
 Full matrix: [docs/CLAIM_TO_EVIDENCE.md](docs/CLAIM_TO_EVIDENCE.md).
 
