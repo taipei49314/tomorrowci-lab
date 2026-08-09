@@ -1,0 +1,2 @@
+./vendor/contract-v1
+./vendor/noise-v1

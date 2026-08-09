@@ -1,7 +1,8 @@
 //! Verdict authorization: breakage horizon rules and safety invariants.
 
 use crate::domain::{
-    BreakageFrontier, EvidenceGrade, ExecutionResult, FailureSignature, Scenario, Verdict,
+    BreakageFrontier, EvidenceGrade, ExecutionResult, FailureSignature, Scenario,
+    TestAttemptRecord, Verdict,
 };
 
 /// Authorize a breakage horizon only under strict conditions (mission §4).
@@ -130,10 +131,45 @@ pub fn classify_from_reruns(outcomes: &[bool]) -> Verdict {
     }
 }
 
+/// Classify a non-baseline live candidate from its semantic attempt records.
+/// A repeatable failure requires two or more failures with one normalized
+/// signature; signature drift remains inconclusive.
+pub fn classify_candidate_attempts(attempts: &[TestAttemptRecord]) -> Verdict {
+    if attempts.is_empty() {
+        return Verdict::Inconclusive;
+    }
+    let passes: Vec<_> = attempts
+        .iter()
+        .map(|attempt| attempt.exit_code == Some(0) && !attempt.timed_out)
+        .collect();
+    if passes.iter().all(|passed| *passed) {
+        return Verdict::FuturePass;
+    }
+    if passes.iter().any(|passed| *passed) {
+        return Verdict::Flaky;
+    }
+    if attempts.len() < 2 {
+        return Verdict::Inconclusive;
+    }
+    let mut hashes = attempts.iter().map(|attempt| {
+        attempt
+            .failure
+            .as_ref()
+            .map(|failure| failure.normalized_hash.as_str())
+    });
+    let first = hashes.next().flatten();
+    if first.is_some() && hashes.all(|hash| hash == first) {
+        Verdict::FutureFail
+    } else {
+        Verdict::Inconclusive
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::{EnvironmentAxis, EnvironmentSpec};
+    use chrono::Utc;
     use indexmap::IndexMap;
 
     fn env() -> EnvironmentSpec {
@@ -170,6 +206,7 @@ mod tests {
             },
             candidates: vec![],
             grade: EvidenceGrade::Observed,
+            resolved_dependencies: None,
         }
     }
 
@@ -194,6 +231,39 @@ mod tests {
             environment: env(),
             commands: vec![],
         }
+    }
+
+    fn failed_attempt(hash: &str) -> TestAttemptRecord {
+        let now = Utc::now();
+        TestAttemptRecord {
+            attempt: 1,
+            started_at: now,
+            finished_at: now,
+            exit_code: Some(1),
+            timed_out: false,
+            duration_ms: 1,
+            failure: Some(FailureSignature {
+                kind: "DependencyApiBreak".into(),
+                summary: "TOMORROWCI_DEPENDENCY_BREAK".into(),
+                normalized_hash: hash.into(),
+                primary_frame: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn stable_failure_requires_matching_normalized_hashes() {
+        let stable = vec![
+            failed_attempt(&format!("sha256:{}", "a".repeat(64))),
+            failed_attempt(&format!("sha256:{}", "a".repeat(64))),
+        ];
+        assert_eq!(classify_candidate_attempts(&stable), Verdict::FutureFail);
+
+        let drift = vec![
+            failed_attempt(&format!("sha256:{}", "a".repeat(64))),
+            failed_attempt(&format!("sha256:{}", "b".repeat(64))),
+        ];
+        assert_eq!(classify_candidate_attempts(&drift), Verdict::Inconclusive);
     }
 
     #[test]

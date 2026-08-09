@@ -143,6 +143,7 @@ impl EcosystemAdapter for PythonAdapter {
                 channel: "stable".into(),
                 grade_if_executed: EvidenceGrade::Observed,
                 order_key: version_order_key(maj, min),
+                dependency_set: None,
             });
         }
         out.sort_by(|a, b| a.order_key.cmp(&b.order_key));
@@ -158,6 +159,7 @@ impl EcosystemAdapter for PythonAdapter {
             .unwrap_or(&scenario.runtime);
         let state = format!("/work/.tomorrowci/scenarios/{}", scenario.id);
         let venv = format!("{state}/venv");
+        let exact_dependencies = scenario.resolved_dependencies.is_some();
         let image = format!("python:{ver}-slim");
         Ok(EnvironmentSpec {
             image_tag: image.clone(),
@@ -167,11 +169,16 @@ impl EcosystemAdapter for PythonAdapter {
             env: {
                 let mut m = IndexMap::new();
                 m.insert("PIP_CACHE_DIR".into(), format!("{state}/cache/pip"));
-                m.insert("VIRTUAL_ENV".into(), venv.clone());
-                m.insert(
-                    "PATH".into(),
-                    format!("{venv}/bin:/usr/local/bin:/usr/bin:/bin"),
-                );
+                if exact_dependencies {
+                    m.insert("PATH".into(), "/usr/local/bin:/usr/bin:/bin".into());
+                    m.insert("PYTHONPATH".into(), format!("{state}/deps"));
+                } else {
+                    m.insert("VIRTUAL_ENV".into(), venv.clone());
+                    m.insert(
+                        "PATH".into(),
+                        format!("{venv}/bin:/usr/local/bin:/usr/bin:/bin"),
+                    );
+                }
                 m
             },
             network_mode: "none".into(),
@@ -189,10 +196,14 @@ impl EcosystemAdapter for PythonAdapter {
     }
 
     fn commands(&self, scenario: &Scenario, config: &Config) -> Result<Vec<CommandSpec>> {
-        let py = format!(
-            "/work/.tomorrowci/scenarios/{}/venv/bin/python",
-            scenario.id
-        );
+        let py = if scenario.resolved_dependencies.is_some() {
+            "python".into()
+        } else {
+            format!(
+                "/work/.tomorrowci/scenarios/{}/venv/bin/python",
+                scenario.id
+            )
+        };
         let test = if config.project.test_command == "auto" {
             vec![py, "-m".into(), "pytest".into(), "-q".into()]
         } else {

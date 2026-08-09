@@ -928,6 +928,7 @@ mod tests {
             axes_changed: Vec::new(),
             candidates: Vec::new(),
             grade: EvidenceGrade::Observed,
+            resolved_dependencies: None,
         });
         manifest.results.push(ExecutionResult {
             scenario_id,

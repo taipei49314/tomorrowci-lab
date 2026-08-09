@@ -101,6 +101,7 @@ impl EcosystemAdapter for NodeAdapter {
                 channel: "stable".into(),
                 grade_if_executed: EvidenceGrade::Observed,
                 order_key: format!("{i:04}"),
+                dependency_set: None,
             });
         }
         Ok(out)
@@ -114,7 +115,17 @@ impl EcosystemAdapter for NodeAdapter {
             image,
             image_digest: None,
             workdir: "/work".into(),
-            env: IndexMap::new(),
+            env: {
+                let mut env = IndexMap::new();
+                env.insert(
+                    "NODE_PATH".into(),
+                    format!(
+                        "/work/.tomorrowci/scenarios/{}/node-project/node_modules",
+                        scenario.id
+                    ),
+                );
+                env
+            },
             network_mode: "none".into(),
             memory_mb: 4096,
             cpus: 2.0,

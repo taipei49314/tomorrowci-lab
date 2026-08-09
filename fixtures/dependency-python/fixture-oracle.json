@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "authoritative": false,
+  "purpose": "ci-fixture-assertions-only",
+  "failure_marker": "M2_PYTHON_BREAKING_API_V2",
+  "required_change_ids": ["breaking-api"],
+  "irrelevant_change_ids": ["irrelevant-noise"],
+  "expected_minimal_change_ids": ["breaking-api"],
+  "probes": [
+    {"id": "baseline", "change_ids": [], "expected_verdict": "PASS"},
+    {"id": "candidate-full", "change_ids": ["breaking-api", "irrelevant-noise"], "expected_verdict": "FAIL"},
+    {"id": "ddmin-minimal", "change_ids": ["breaking-api"], "expected_verdict": "FAIL"},
+    {"id": "subtract-breaking-api", "change_ids": ["irrelevant-noise"], "expected_verdict": "PASS"},
+    {"id": "subtract-irrelevant-noise", "change_ids": ["breaking-api"], "expected_verdict": "FAIL"}
+  ]
+}

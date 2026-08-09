@@ -1,0 +1,10 @@
+[package]
+name = "tomorrowci-m2-rust-fixture"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+m2-rust-contract = { path = "vendor/tomorrowci-selected/m2-rust-contract" }
+m2-rust-noise = { path = "vendor/tomorrowci-selected/m2-rust-noise" }
+
+[workspace]
