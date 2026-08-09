@@ -4,12 +4,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
-use tomorrowci_core::{
-    CommandSpec, EnvironmentSpec, RawExecutionResult, Result, Scenario, TcError,
-};
+use tomorrowci_core::{CommandSpec, EnvironmentSpec, RawExecutionResult, Result, Scenario};
 use tomorrowci_sandbox::{
-    detect_engines, env_spec_to_map, resolve_or_pull_digest, run_in_container, RunRequest,
-    SandboxEngine,
+    detect_requested_engine, engine_version as sandbox_engine_version, env_spec_to_map,
+    resolve_or_pull_digest, run_in_container, RunRequest, SandboxEngine,
 };
 
 pub struct ExecutionContext<'a> {
@@ -29,6 +27,10 @@ pub trait ScenarioExecutor: Send + Sync {
     fn engine_label(&self) -> String {
         self.name().to_string()
     }
+    /// Exact engine build identity recorded with executable evidence.
+    fn engine_version(&self) -> Option<String> {
+        None
+    }
     fn execute(&self, ctx: &ExecutionContext<'_>) -> Result<RawExecutionResult>;
 }
 
@@ -39,10 +41,13 @@ pub struct ContainerExecutor {
 
 impl ContainerExecutor {
     pub fn detect() -> Result<Self> {
-        let avail = detect_engines();
-        let engine = avail
-            .selected
-            .ok_or_else(|| TcError::Blocked(avail.notes.join("; ")))?;
+        Self::detect_requested("auto")
+    }
+
+    /// Detect exactly the configured engine. A requested Docker/Podman engine
+    /// is never silently replaced by the other implementation.
+    pub fn detect_requested(requested: &str) -> Result<Self> {
+        let engine = detect_requested_engine(requested)?;
         Ok(Self { engine })
     }
 }
@@ -61,6 +66,10 @@ impl ScenarioExecutor for ContainerExecutor {
 
     fn ensure_image(&self, image: &str) -> Result<String> {
         resolve_or_pull_digest(self.engine, image)
+    }
+
+    fn engine_version(&self) -> Option<String> {
+        sandbox_engine_version(self.engine)
     }
 
     fn execute(&self, ctx: &ExecutionContext<'_>) -> Result<RawExecutionResult> {
@@ -116,7 +125,11 @@ impl ScenarioExecutor for ScriptedExecutor {
     }
 
     fn ensure_image(&self, _image: &str) -> Result<String> {
-        Ok("sha256:scripted-test-digest".into())
+        Ok(format!("sha256:{}", "a".repeat(64)))
+    }
+
+    fn engine_version(&self) -> Option<String> {
+        Some("scripted-test-v1".into())
     }
 
     fn execute(&self, ctx: &ExecutionContext<'_>) -> Result<RawExecutionResult> {

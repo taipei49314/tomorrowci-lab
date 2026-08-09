@@ -14,7 +14,18 @@ def main() -> int:
         return 2
     fr = json.load(open(f"{run_dir}/frontier.json", encoding="utf-8"))
     run = json.load(open(f"{run_dir}/run.json", encoding="utf-8"))
-    fo = bool(fr.get("observed"))
+    if run.get("evidence_schema_version") != 2:
+        print(
+            "legacy/pre-schema evidence is readable only and cannot authorize an Action gate",
+            file=sys.stderr,
+        )
+        return 2
+    with open(f"{run_dir}/checksums.txt", encoding="utf-8") as checksum_file:
+        if checksum_file.readline().strip() != "# tomorrowci-checksums-v2":
+            print("Action gate requires current-v2 checksum evidence", file=sys.stderr)
+            return 2
+    observed_grade = fr.get("grade") == "OBSERVED"
+    fo = bool(fr.get("observed")) and observed_grade
     blocked = any(r.get("verdict") == "BLOCKED" for r in run.get("results", []))
     baseline_pass = any(r.get("verdict") == "BASELINE_PASS" for r in run.get("results", []))
     future_fail = any(r.get("verdict") == "FUTURE_FAIL" for r in run.get("results", []))
@@ -24,6 +35,7 @@ def main() -> int:
     print(f"TCI_FUTURE_FAIL={'1' if future_fail else '0'}")
     print(f"TCI_SIG={'1' if sig else '0'}")
     print(f"TCI_FO={'1' if fo else '0'}")
+    print(f"TCI_OBSERVED_GRADE={'1' if observed_grade else '0'}")
     gh_out = os.environ.get("GITHUB_OUTPUT")
     if gh_out:
         with open(gh_out, "a", encoding="utf-8") as o:

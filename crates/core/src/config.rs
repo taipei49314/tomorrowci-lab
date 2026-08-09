@@ -33,11 +33,12 @@ pub struct Config {
     pub sandbox: SandboxConfig,
     #[serde(default)]
     pub report: ReportConfig,
-    #[serde(default)]
+    #[serde(default = "default_policy")]
     pub policy: Option<PolicyConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
     #[serde(default = "auto_str")]
     pub ecosystem: String,
@@ -62,6 +63,7 @@ impl Default for ProjectConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BaselineConfig {
     #[serde(default = "auto_str")]
     pub runtime: String,
@@ -83,6 +85,7 @@ impl Default for BaselineConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CandidatesConfig {
     #[serde(default)]
     pub runtime: RuntimeCandidates,
@@ -91,6 +94,7 @@ pub struct CandidatesConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeCandidates {
     #[serde(default = "default_channels")]
     pub channels: Vec<String>,
@@ -116,6 +120,7 @@ impl Default for RuntimeCandidates {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DependencyCandidates {
     #[serde(default = "default_true")]
     pub latest_allowed: bool,
@@ -137,6 +142,7 @@ impl Default for DependencyCandidates {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExecutionConfig {
     #[serde(default = "default_max_scenarios")]
     pub max_scenarios: u32,
@@ -173,6 +179,7 @@ impl Default for ExecutionConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SandboxConfig {
     #[serde(default = "auto_str")]
     pub engine: String,
@@ -212,6 +219,7 @@ impl Default for SandboxConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReportConfig {
     #[serde(default = "default_true")]
     pub html: bool,
@@ -232,21 +240,44 @@ impl Default for ReportConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyConfig {
     #[serde(default)]
     pub fail_if: FailIfPolicy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FailIfPolicy {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub baseline_invalid: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub new_future_failure: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub horizon_regression: bool,
-    #[serde(default)]
+    #[serde(default = "default_blocked_ratio")]
     pub blocked_ratio_above: Option<f64>,
+}
+
+fn default_blocked_ratio() -> Option<f64> {
+    Some(0.5)
+}
+
+impl Default for FailIfPolicy {
+    fn default() -> Self {
+        Self {
+            baseline_invalid: true,
+            new_future_failure: true,
+            horizon_regression: true,
+            blocked_ratio_above: default_blocked_ratio(),
+        }
+    }
+}
+
+fn default_policy() -> Option<PolicyConfig> {
+    Some(PolicyConfig {
+        fail_if: FailIfPolicy::default(),
+    })
 }
 
 impl Default for Config {
@@ -259,7 +290,7 @@ impl Default for Config {
             execution: ExecutionConfig::default(),
             sandbox: SandboxConfig::default(),
             report: ReportConfig::default(),
-            policy: None,
+            policy: default_policy(),
         }
     }
 }
@@ -294,11 +325,47 @@ impl Config {
                 "execution.max_parallel must be >= 1".into(),
             ));
         }
+        if self.execution.timeout_seconds == 0 {
+            return Err(TcError::Config(
+                "execution.timeout_seconds must be >= 1".into(),
+            ));
+        }
+        if self.execution.reruns_on_failure == 0 {
+            return Err(TcError::Config(
+                "execution.reruns_on_failure must be >= 1".into(),
+            ));
+        }
         let eng = self.sandbox.engine.as_str();
         if !matches!(eng, "auto" | "docker" | "podman") {
             return Err(TcError::Config(format!(
                 "sandbox.engine must be auto|docker|podman, got {eng}"
             )));
+        }
+        if self.sandbox.network != "fetch-only" {
+            return Err(TcError::Config(format!(
+                "sandbox.network must be fetch-only, got {}",
+                self.sandbox.network
+            )));
+        }
+        if self.sandbox.memory_mb == 0
+            || self.sandbox.pids_limit == 0
+            || !self.sandbox.cpus.is_finite()
+            || self.sandbox.cpus <= 0.0
+        {
+            return Err(TcError::Config(
+                "sandbox memory_mb/cpus/pids_limit must be positive finite values".into(),
+            ));
+        }
+        if let Some(threshold) = self
+            .policy
+            .as_ref()
+            .and_then(|policy| policy.fail_if.blocked_ratio_above)
+        {
+            if !threshold.is_finite() || !(0.0..=1.0).contains(&threshold) {
+                return Err(TcError::Config(
+                    "policy.fail_if.blocked_ratio_above must be finite and between 0 and 1".into(),
+                ));
+            }
         }
         Ok(())
     }
@@ -344,6 +411,11 @@ mod tests {
         let c = Config::default();
         c.validate().unwrap();
         assert!(c.content_hash().unwrap().starts_with("sha256:"));
+        let fail_if = &c.policy.as_ref().unwrap().fail_if;
+        assert!(fail_if.baseline_invalid);
+        assert!(fail_if.new_future_failure);
+        assert!(fail_if.horizon_regression);
+        assert_eq!(fail_if.blocked_ratio_above, Some(0.5));
     }
 
     #[test]
@@ -354,6 +426,48 @@ foobar: true
 "#;
         let err = Config::load_str(raw).unwrap_err().to_string();
         assert!(err.contains("unknown top-level key"), "{err}");
+    }
+
+    #[test]
+    fn rejects_zero_timeout_reruns_and_non_fetch_only_network() {
+        let mut config = Config::default();
+        config.execution.timeout_seconds = 0;
+        assert!(config.validate().is_err());
+        config.execution.timeout_seconds = 1;
+        config.execution.reruns_on_failure = 0;
+        assert!(config.validate().is_err());
+        config.execution.reruns_on_failure = 1;
+        config.sandbox.network = "none".into();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_nested_key() {
+        let raw = r#"
+version: 1
+execution:
+  timeout_second: 30
+"#;
+        let error = Config::load_str(raw).unwrap_err().to_string();
+        assert!(error.contains("timeout_second"), "{error}");
+    }
+
+    #[test]
+    fn rejects_out_of_range_or_nonfinite_blocked_ratio() {
+        let mut config = Config {
+            policy: Some(PolicyConfig {
+                fail_if: FailIfPolicy {
+                    blocked_ratio_above: Some(1.01),
+                    ..FailIfPolicy::default()
+                },
+            }),
+            ..Config::default()
+        };
+        assert!(config.validate().is_err());
+        config.policy.as_mut().unwrap().fail_if.blocked_ratio_above = Some(f64::NAN);
+        assert!(config.validate().is_err());
+        config.policy.as_mut().unwrap().fail_if.blocked_ratio_above = Some(0.5);
+        config.validate().unwrap();
     }
 
     #[test]

@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-08-09T00:00:00+08:00",
+  "baseline_sha": "1e23b40157e55e5763e3360b667d10a003b50ff9",
+  "items": [
+    {
+      "id": "TRUST-001",
+      "phase": 1,
+      "status": "OPEN",
+      "summary": "Enforce a canonical recursive exact evidence inventory and reject mutation, deletion, unlisted files, aliases, duplicate entries, and path traversal.",
+      "blocks_release": true
+    },
+    {
+      "id": "TRUST-002",
+      "phase": 1,
+      "status": "OPEN",
+      "summary": "Make replay attempts append-only and make every finalization failure fatal.",
+      "blocks_release": true
+    },
+    {
+      "id": "TRUST-003",
+      "phase": 1,
+      "status": "OPEN",
+      "summary": "Finalize an honest, verifiable BLOCKED bundle when no container engine is available.",
+      "blocks_release": true
+    },
+    {
+      "id": "PORT-001",
+      "phase": 5,
+      "status": "OPEN",
+      "summary": "Add and test a cross-platform checkout EOL contract; the encoding gate currently fails on Windows with core.autocrlf=true.",
+      "blocks_release": true
+    },
+    {
+      "id": "M2-DEPENDENCY-DDMIN",
+      "phase": 2,
+      "status": "NOT_RUN",
+      "summary": "Qualify live dependency axes and real evidence-producing ddmin for Python, Node, and Rust.",
+      "blocks_release": true
+    },
+    {
+      "id": "M3-NODE-LIVE",
+      "phase": 3,
+      "status": "NOT_RUN",
+      "summary": "Qualify the Node adapter in real Docker and Podman execution with replay-equivalent evidence.",
+      "blocks_release": true
+    },
+    {
+      "id": "M3-RUST-LIVE",
+      "phase": 3,
+      "status": "NOT_RUN",
+      "summary": "Qualify the Rust adapter in real Docker and Podman execution with replay-equivalent evidence.",
+      "blocks_release": true
+    },
+    {
+      "id": "M4-REPORT",
+      "phase": 4,
+      "status": "NOT_RUN",
+      "summary": "Build and qualify the versioned React/TypeScript interactive report, browser, XSS, accessibility, responsive, and no-JavaScript paths.",
+      "blocks_release": true
+    },
+    {
+      "id": "M4-REMOTE",
+      "phase": 4,
+      "status": "NOT_RUN",
+      "summary": "Implement bounded exact-commit GitHub URL scanning and malicious-input fail-closed acceptance.",
+      "blocks_release": true
+    },
+    {
+      "id": "PLATFORM-MATRIX",
+      "phase": 5,
+      "status": "NOT_RUN",
+      "summary": "Retain exact evidence for Linux Docker/Podman, Windows Docker Desktop, macOS Docker Desktop or Colima, and macOS arm64 support.",
+      "blocks_release": true
+    },
+    {
+      "id": "OCI-CANDIDATE",
+      "phase": 5,
+      "status": "NOT_RUN",
+      "summary": "Produce a non-root content-addressed OCI candidate with digest, SBOM, scan, provenance, and clean-load smoke.",
+      "blocks_release": true
+    },
+    {
+      "id": "RELEASE-SUPPLY-CHAIN",
+      "phase": 6,
+      "status": "OPEN",
+      "summary": "Generalize the release workflow, pin actions, make archives deterministic, emit exact dependency versions, and bind candidate/tag promotion identities.",
+      "blocks_release": true
+    },
+    {
+      "id": "EXTERNAL-TARGETS",
+      "phase": 7,
+      "status": "NOT_RUN",
+      "summary": "Pre-register and run exact-SHA Python, Node, and Rust public external targets without result-based replacement.",
+      "blocks_release": true
+    },
+    {
+      "id": "INDEPENDENT-ADOPTION",
+      "phase": 7,
+      "status": "BLOCKED_EXTERNAL",
+      "summary": "Obtain an attributed replay or immutable Action adoption from an independent maintainer or auditor.",
+      "blocks_release": true
+    }
+  ]
+}
