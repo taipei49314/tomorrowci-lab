@@ -1,0 +1,431 @@
+name: external-qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful release-candidate workflow run ID at this exact master SHA
+        required: true
+        type: string
+      candidate_run_attempt:
+        description: Exact positive release-candidate run attempt
+        required: true
+        type: string
+      candidate_manifest_sha256:
+        description: Exact sha256 digest of candidate-manifest.json, including sha256 prefix
+        required: true
+        type: string
+      candidate_source_sha:
+        description: Exact 40-hex candidate source SHA; must equal this qualification head
+        required: true
+        type: string
+      oci_manifest_digest:
+        description: Exact sha256 OCI image-manifest digest from detached provenance
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  candidate-binding:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Guard exact clean master and verify frozen preregistration first
+        env:
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/master"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CANDIDATE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CANDIDATE_MANIFEST_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$CANDIDATE_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$OCI_MANIFEST_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$CANDIDATE_SOURCE_SHA" = "$GITHUB_SHA"
+          python3 scripts/external_target_preregistration.py
+      - name: Snapshot and validate exact candidate run and artifact APIs
+        id: candidate-api
+        env:
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/candidate-api"
+          test ! -e "$metadata"
+          mkdir "$metadata"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" \
+            > "$metadata/run.json"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" \
+            > "$metadata/artifacts.json"
+          python3 scripts/validate_external_evidence.py inspect-candidate-api \
+            --run-metadata "$metadata/run.json" \
+            --artifact-metadata "$metadata/artifacts.json" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --project-repository "$GITHUB_REPOSITORY" \
+            | tee "$metadata/validated.txt"
+          artifact_id="$(sed -n 's/^artifact_id: //p' "$metadata/validated.txt")"
+          artifact_digest="$(sed -n 's/^artifact_digest: //p' "$metadata/validated.txt")"
+          artifact_size="$(sed -n 's/^artifact_size: //p' "$metadata/validated.txt")"
+          [[ "$artifact_id" =~ ^[1-9][0-9]*$ ]]
+          [[ "$artifact_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$artifact_size" =~ ^[1-9][0-9]*$ ]]
+          archive="$metadata/candidate-artifact.zip"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$archive"
+          test "$(stat -c '%s' "$archive")" = "$artifact_size"
+          test "sha256:$(sha256sum "$archive" | cut -d ' ' -f 1)" = "$artifact_digest"
+      - name: Download exact candidate artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-candidate-dist-attempt-${{ inputs.candidate_run_attempt }}
+          path: ${{ runner.temp }}/candidate-dist
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Verify candidate bytes and create immutable qualification binding
+        env:
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+        run: |
+          set -euo pipefail
+          dist="$RUNNER_TEMP/candidate-dist"
+          metadata="$RUNNER_TEMP/candidate-api"
+          VERSION="$(python3 scripts/version_contract.py)"
+          archive="$dist/tomorrowci-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          python3 scripts/candidate_manifest.py verify \
+            --dist "$dist" \
+            --expected-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$CANDIDATE_RUN_ID" \
+            --expected-run-attempt "$CANDIDATE_RUN_ATTEMPT"
+          test "sha256:$(sha256sum "$dist/candidate-manifest.json" | cut -d ' ' -f 1)" = \
+            "$CANDIDATE_MANIFEST_SHA256"
+          python3 scripts/oci_candidate.py verify \
+            --archive "$dist/tomorrowci-oci-linux-amd64.tar" \
+            --metadata "$dist/build-metadata.json" \
+            --containerfile "$dist/Containerfile" \
+            --provenance "$dist/image-provenance.json" \
+            --expected-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$CANDIDATE_RUN_ID" \
+            --expected-run-attempt "$CANDIDATE_RUN_ATTEMPT"
+          python3 scripts/package_release.py verify \
+            --archive "$archive" --version "$VERSION" \
+            --target x86_64-unknown-linux-gnu
+          extract="$RUNNER_TEMP/candidate-cli-extract"
+          test ! -e "$extract"
+          python3 scripts/package_release.py extract \
+            --archive "$archive" --output-dir "$extract" \
+            --version "$VERSION" --target x86_64-unknown-linux-gnu
+          cli="$extract/tomorrowci-v${VERSION}-x86_64-unknown-linux-gnu/tomorrowci"
+          test "$($cli --version)" = "tomorrowci $VERSION"
+          binding_name="tomorrowci-candidate-input-attempt-${GITHUB_RUN_ATTEMPT}-source-${GITHUB_SHA}"
+          binding_root="$RUNNER_TEMP/$binding_name"
+          test ! -e "$binding_root"
+          mkdir "$binding_root"
+          python3 scripts/validate_external_evidence.py create-binding \
+            --candidate-dist "$dist" \
+            --run-metadata "$metadata/run.json" \
+            --artifact-metadata "$metadata/artifacts.json" \
+            --candidate-cli-binary "$cli" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            --candidate-manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+            --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --oci-manifest-digest "$OCI_MANIFEST_DIGEST" \
+            --project-repository "$GITHUB_REPOSITORY" \
+            --project-source-sha "$GITHUB_SHA" \
+            --project-source-ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "$binding_root/candidate-binding.json"
+          cp "$archive" "$binding_root/$(basename "$archive")"
+          python3 scripts/validate_external_evidence.py verify-binding \
+            --candidate-binding "$binding_root/candidate-binding.json" \
+            --candidate-cli-archive "$binding_root/$(basename "$archive")" \
+            --candidate-cli-binary "$cli" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            --candidate-manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+            --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --oci-manifest-digest "$OCI_MANIFEST_DIGEST" \
+            --project-repository "$GITHUB_REPOSITORY" \
+            --project-source-sha "$GITHUB_SHA" \
+            --project-source-ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Upload exact candidate input binding
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tomorrowci-candidate-input-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/tomorrowci-candidate-input-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/*
+          if-no-files-found: error
+          retention-days: 90
+
+  qualification:
+    needs: candidate-binding
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_id: python-azure-flask
+            engine: docker
+            repository: Azure-Samples/msdocs-python-flask-webapp-quickstart
+            commit: 5bfb67bffda1a5083e33fec45861de6b55f74e57
+            config: docs/qualification/external-targets/configs/python-azure-flask.docker.tomorrowci.json
+          - target_id: python-azure-flask
+            engine: podman
+            repository: Azure-Samples/msdocs-python-flask-webapp-quickstart
+            commit: 5bfb67bffda1a5083e33fec45861de6b55f74e57
+            config: docs/qualification/external-targets/configs/python-azure-flask.podman.tomorrowci.json
+          - target_id: node-helmet
+            engine: docker
+            repository: helmetjs/helmet
+            commit: 9315aac37eb69d8dd3fe81c67febcebe60d7e97e
+            config: docs/qualification/external-targets/configs/node-helmet.docker.tomorrowci.json
+          - target_id: node-helmet
+            engine: podman
+            repository: helmetjs/helmet
+            commit: 9315aac37eb69d8dd3fe81c67febcebe60d7e97e
+            config: docs/qualification/external-targets/configs/node-helmet.podman.tomorrowci.json
+          - target_id: rust-human-panic
+            engine: docker
+            repository: rust-cli/human-panic
+            commit: b8915ed30fcfca3300e3796fa35ddd0a9a0a5db7
+            config: docs/qualification/external-targets/configs/rust-human-panic.docker.tomorrowci.json
+          - target_id: rust-human-panic
+            engine: podman
+            repository: rust-cli/human-panic
+            commit: b8915ed30fcfca3300e3796fa35ddd0a9a0a5db7
+            config: docs/qualification/external-targets/configs/rust-human-panic.podman.tomorrowci.json
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Verify preregistration before execution
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/master"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          python3 scripts/external_target_preregistration.py
+      - name: Download verified candidate input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tomorrowci-candidate-input-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/candidate-input
+      - name: Qualify exact public target and retain current-v2 evidence
+        env:
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          CONFIG_PATH: ${{ matrix.config }}
+          ENGINE: ${{ matrix.engine }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+          REMOTE_COMMIT: ${{ matrix.commit }}
+          REMOTE_REPOSITORY: ${{ matrix.repository }}
+          TARGET_ID: ${{ matrix.target_id }}
+        run: |
+          set -euo pipefail
+          input="$RUNNER_TEMP/candidate-input"
+          VERSION="$(python3 scripts/version_contract.py)"
+          archive="$input/tomorrowci-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          binding="$input/candidate-binding.json"
+          test "$(find "$input" -mindepth 1 -maxdepth 1 | wc -l)" -eq 2
+          python3 scripts/package_release.py verify \
+            --archive "$archive" --version "$VERSION" \
+            --target x86_64-unknown-linux-gnu
+          extract="$RUNNER_TEMP/candidate-cli"
+          test ! -e "$extract"
+          python3 scripts/package_release.py extract \
+            --archive "$archive" --output-dir "$extract" \
+            --version "$VERSION" --target x86_64-unknown-linux-gnu
+          cli="$extract/tomorrowci-v${VERSION}-x86_64-unknown-linux-gnu/tomorrowci"
+          candidate_args=(
+            --candidate-binding "$binding"
+            --candidate-cli-archive "$archive"
+            --candidate-cli-binary "$cli"
+            --candidate-run-id "$CANDIDATE_RUN_ID"
+            --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT"
+            --candidate-manifest-sha256 "$CANDIDATE_MANIFEST_SHA256"
+            --candidate-source-sha "$CANDIDATE_SOURCE_SHA"
+            --oci-manifest-digest "$OCI_MANIFEST_DIGEST"
+            --project-repository "$GITHUB_REPOSITORY"
+            --project-source-sha "$GITHUB_SHA"
+            --project-source-ref "$GITHUB_REF"
+            --workflow-run-id "$GITHUB_RUN_ID"
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
+          )
+          python3 scripts/validate_external_evidence.py verify-binding "${candidate_args[@]}"
+          test "$($cli --version)" = "tomorrowci $VERSION"
+          "$ENGINE" info
+          set +e
+          ENGINE_VERSION="$("$ENGINE" version --format '{{.Server.Version}}' 2>/dev/null)"
+          engine_version_status=$?
+          set -e
+          if [ "$engine_version_status" -ne 0 ] || [ -z "$ENGINE_VERSION" ]; then
+            ENGINE_VERSION="$("$ENGINE" --version)"
+          fi
+          test -n "$ENGINE_VERSION"
+          artifact_name="external-qualification-${TARGET_ID}-${ENGINE}-attempt-${GITHUB_RUN_ATTEMPT}-source-${GITHUB_SHA}"
+          artifact_root="$RUNNER_TEMP/$artifact_name"
+          test ! -e "$artifact_root"
+          mkdir "$artifact_root"
+          cd "$artifact_root"
+          "$cli" scan "https://github.com/$REMOTE_REPOSITORY" \
+            --commit "$REMOTE_COMMIT" \
+            --config "$GITHUB_WORKSPACE/$CONFIG_PATH" \
+            | tee "$RUNNER_TEMP/${TARGET_ID}-${ENGINE}-scan.txt"
+          mapfile -t run_ids < <(sed -n 's/^run_id: //p' "$RUNNER_TEMP/${TARGET_ID}-${ENGINE}-scan.txt")
+          test "${#run_ids[@]}" -eq 1
+          RUN_ID="${run_ids[0]}"
+          [[ "$RUN_ID" =~ ^[0-9a-f]{12}$ ]]
+          run_root="$artifact_root/.tomorrowci/runs/$RUN_ID"
+          test -d "$run_root"
+          "$cli" verify "$RUN_ID"
+          replay_scenario="$(python3 "$GITHUB_WORKSPACE/scripts/validate_external_evidence.py" select-replay \
+            --run-root "$run_root" \
+            --target-id "$TARGET_ID" \
+            --engine "$ENGINE" \
+            --engine-version "$ENGINE_VERSION" \
+            --expected-tool-version "$VERSION")"
+          [[ "$replay_scenario" =~ ^[a-z0-9][a-z0-9._-]{0,127}$ ]]
+          "$cli" replay "$RUN_ID" --scenario "$replay_scenario"
+          "$cli" replay "$RUN_ID" --scenario "$replay_scenario"
+          "$cli" verify "$RUN_ID"
+          python3 "$GITHUB_WORKSPACE/scripts/validate_external_evidence.py" create-record \
+            --run-root "$run_root" \
+            --target-id "$TARGET_ID" \
+            --engine "$ENGINE" \
+            --engine-version "$ENGINE_VERSION" \
+            "${candidate_args[@]}" \
+            --output "$artifact_root/qualification-record.json"
+          python3 "$GITHUB_WORKSPACE/scripts/validate_external_evidence.py" verify-artifact \
+            --artifact-root "$artifact_root" \
+            "${candidate_args[@]}"
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git -C "$GITHUB_WORKSPACE" status --porcelain --untracked-files=all)"
+      - name: Upload isolated target and engine evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: external-qualification-${{ matrix.target_id }}-${{ matrix.engine }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/external-qualification-${{ matrix.target_id }}-${{ matrix.engine }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+  readback:
+    needs: qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Guard exact clean qualification source
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/master"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          python3 scripts/external_target_preregistration.py
+      - name: Download verified candidate input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tomorrowci-candidate-input-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/candidate-input
+      - name: Download six qualification artifacts into isolated roots
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: external-qualification-*-*-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/qualification-artifacts
+      - name: Verify all downloaded bytes with the frozen candidate CLI
+        env:
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+        run: |
+          set -euo pipefail
+          input="$RUNNER_TEMP/candidate-input"
+          VERSION="$(python3 scripts/version_contract.py)"
+          archive="$input/tomorrowci-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          binding="$input/candidate-binding.json"
+          python3 scripts/package_release.py verify \
+            --archive "$archive" --version "$VERSION" \
+            --target x86_64-unknown-linux-gnu
+          extract="$RUNNER_TEMP/readback-candidate-cli"
+          test ! -e "$extract"
+          python3 scripts/package_release.py extract \
+            --archive "$archive" --output-dir "$extract" \
+            --version "$VERSION" --target x86_64-unknown-linux-gnu
+          cli="$extract/tomorrowci-v${VERSION}-x86_64-unknown-linux-gnu/tomorrowci"
+          candidate_args=(
+            --candidate-binding "$binding"
+            --candidate-cli-archive "$archive"
+            --candidate-cli-binary "$cli"
+            --candidate-run-id "$CANDIDATE_RUN_ID"
+            --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT"
+            --candidate-manifest-sha256 "$CANDIDATE_MANIFEST_SHA256"
+            --candidate-source-sha "$CANDIDATE_SOURCE_SHA"
+            --oci-manifest-digest "$OCI_MANIFEST_DIGEST"
+            --project-repository "$GITHUB_REPOSITORY"
+            --project-source-sha "$GITHUB_SHA"
+            --project-source-ref "$GITHUB_REF"
+            --workflow-run-id "$GITHUB_RUN_ID"
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
+          )
+          python3 scripts/validate_external_evidence.py verify-binding "${candidate_args[@]}"
+          test "$($cli --version)" = "tomorrowci $VERSION"
+          artifacts="$RUNNER_TEMP/qualification-artifacts"
+          mapfile -d '' roots < <(find "$artifacts" -mindepth 1 -maxdepth 1 -type d -print0)
+          test "${#roots[@]}" -eq 6
+          for root in "${roots[@]}"; do
+            mapfile -d '' runs < <(find "$root/.tomorrowci/runs" -mindepth 1 -maxdepth 1 -type d -print0)
+            test "${#runs[@]}" -eq 1
+            run_id="$(basename "${runs[0]}")"
+            [[ "$run_id" =~ ^[0-9a-f]{12}$ ]]
+            (cd "$root" && "$cli" verify "$run_id")
+            python3 scripts/validate_external_evidence.py verify-artifact \
+              --artifact-root "$root" \
+              "${candidate_args[@]}"
+          done
+          summary_name="external-qualification-summary-attempt-${GITHUB_RUN_ATTEMPT}-source-${GITHUB_SHA}"
+          summary_root="$RUNNER_TEMP/$summary_name"
+          test ! -e "$summary_root"
+          mkdir "$summary_root"
+          python3 scripts/validate_external_evidence.py summarize \
+            --artifacts-root "$artifacts" \
+            "${candidate_args[@]}" \
+            --output "$summary_root/project-owned-summary.json"
+          python3 scripts/validate_external_evidence.py verify-summary \
+            --artifacts-root "$artifacts" \
+            "${candidate_args[@]}" \
+            --summary "$summary_root/project-owned-summary.json"
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Upload canonical project-owned summary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: external-qualification-summary-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/external-qualification-summary-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/project-owned-summary.json
+          if-no-files-found: error
+          retention-days: 90
