@@ -34,6 +34,7 @@ jobs:
           python3 scripts/test_external_authorization.py
           python3 scripts/test_tag_promotion_attestation.py
           python3 scripts/test_external_target_preregistration.py
+          python3 scripts/test_external_evidence.py
           python3 scripts/generate_sbom.py --output /tmp/sbom.cdx.json
       - name: fmt
         run: cargo fmt --all -- --check
