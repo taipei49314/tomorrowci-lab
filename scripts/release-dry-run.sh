@@ -13,21 +13,46 @@ rm -rf -- "$DIST"
 mkdir -p "$DIST"
 
 VERSION="$(python3 scripts/version_contract.py)"
+TARGET="$(rustc -vV | sed -n 's/^host: //p')"
+case "$TARGET" in
+  x86_64-unknown-linux-gnu|x86_64-apple-darwin|aarch64-apple-darwin) ;;
+  *) echo "unsupported release dry-run host target: $TARGET" >&2; exit 1 ;;
+esac
+TCI_RELEASE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/tomorrowci-release.XXXXXX")"
+cleanup_release_tmp() {
+  case "$TCI_RELEASE_TMP" in
+    "${TMPDIR:-/tmp}"/tomorrowci-release.*) rm -rf -- "$TCI_RELEASE_TMP" ;;
+    *) echo "refusing unsafe temporary cleanup: $TCI_RELEASE_TMP" >&2 ;;
+  esac
+}
+trap cleanup_release_tmp EXIT
 
-echo "== build release CLI =="
-cargo build -p tomorrowci-cli --release
-BIN="$ROOT/target/release/tomorrowci"
+echo "== two clean release builds + deterministic package =="
+for slot in a b; do
+  target_dir="$TCI_RELEASE_TMP/repro-$slot"
+  CARGO_INCREMENTAL=0 SOURCE_DATE_EPOCH=0 CARGO_TARGET_DIR="$target_dir" \
+    cargo build -p tomorrowci-cli --release --locked --target "$TARGET"
+  python3 scripts/package_release.py create \
+    --binary "$target_dir/$TARGET/release/tomorrowci" \
+    --output-dir "$TCI_RELEASE_TMP/package-$slot" \
+    --version "$VERSION" \
+    --target "$TARGET"
+done
+ARCHIVE="tomorrowci-v${VERSION}-${TARGET}.tar.gz"
+python3 - "$TCI_RELEASE_TMP/package-a/$ARCHIVE" "$TCI_RELEASE_TMP/package-b/$ARCHIVE" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+digests = [hashlib.sha256(pathlib.Path(value).read_bytes()).hexdigest() for value in sys.argv[1:]]
+if digests[0] != digests[1]:
+    raise SystemExit(f"non-reproducible release archives: {digests[0]} != {digests[1]}")
+PY
+cp "$TCI_RELEASE_TMP/package-a/$ARCHIVE" "$DIST/$ARCHIVE"
+BIN="$TCI_RELEASE_TMP/repro-a/$TARGET/release/tomorrowci"
 test -x "$BIN"
 ACTUAL_VERSION="$("$BIN" --version)"
 test "$ACTUAL_VERSION" = "tomorrowci $VERSION"
-
-STAGE="dist/tomorrowci-v${VERSION}-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
-mkdir -p "$STAGE"
-cp "$BIN" "$STAGE/"
-cp README.md LICENSE CHANGELOG.md "$STAGE/"
-TAR="dist/$(basename "$STAGE").tar.gz"
-tar -C dist -czf "$TAR" "$(basename "$STAGE")"
-rm -rf -- "$STAGE"
 
 echo "== exact SBOM + claim snapshot =="
 python3 scripts/generate_sbom.py --output dist/sbom.cdx.json
@@ -44,7 +69,7 @@ cat > dist/dry-run-results.md <<EOF
 |---|---|---|---|---|
 | Rust workspace tests | PASS | cargo test --workspace | exit 0 | local |
 | Trust audit | PASS | tomorrowci trust | overall Pass | stdout |
-| Host CLI archive | PASS | tar | created | $(basename "$TAR") |
+| Host CLI archive | PASS | two clean builds + deterministic pack/hash compare | created | $ARCHIVE |
 | SBOM document | PASS | exact Cargo.lock inventory | created | sbom.cdx.json |
 EOF
 

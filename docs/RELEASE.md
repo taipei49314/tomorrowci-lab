@@ -17,7 +17,8 @@ Semantic versioning. Tag format: `v<SemVer>` (for example,
 
 Produces under `dist/`:
 
-- CLI archives per target (as available on the host)
+- a deterministic CLI archive for the exact host target, reproduced from two
+  clean release builds
 - `SHA256SUMS.txt`
 - `sbom.cdx.json` (exact non-dev CLI dependency closure from locked Cargo metadata)
 - `claim-to-evidence.md` snapshot
@@ -30,18 +31,46 @@ It does not accept tag pushes and has no GitHub Release or registry publish
 step. This is deliberate while required platform, OCI, and external gates are
 open:
 
-1. Build Linux x86_64, macOS x86_64, macOS arm64, and Windows x86_64 binaries
-2. Assert each runner architecture matches the archive label
-3. Generate an exact locked CLI dependency SBOM and claim snapshot
-4. Verify checksums over the complete candidate file set
-5. Retain the result as a GitHub Actions candidate artifact only
+1. Accept dispatches only from `refs/heads/master` and bind the candidate to
+   the exact checked-out `GITHUB_SHA` and workflow run
+2. Build Linux x86_64, macOS x86_64, macOS arm64, and Windows x86_64 binaries
+   twice from independent clean target directories
+3. Assert each runner architecture matches the archive label, package with
+   fixed paths/order/mtime/permissions, and require both archive hashes to match
+4. Build a single-platform `linux/amd64` OCI layout twice with Buildx
+   `v0.36.1` and the BuildKit `v0.31.2` image pinned by digest, embedded
+   provenance disabled, `SOURCE_DATE_EPOCH=0`, and timestamp rewriting; require
+   the complete OCI tar SHA-256 values and bytes to match
+5. Bind the OCI manifest/config/layers, pinned base-image materials, exact
+   Containerfile, max-mode Buildx metadata, source SHA, and workflow attempt in
+   canonical detached `image-provenance.json`; then load the image and recheck
+   CLI version/trust, numeric user `65532:65532`, OCI labels, and Docker-socket
+   doctor readiness
+6. Use the digest-pinned Trivy `0.73.0` image to generate a CycloneDX image SBOM
+   and reject fixed HIGH or CRITICAL vulnerabilities with `--ignore-unfixed`
+7. Generate an exact locked CLI dependency SBOM plus claim, support, and
+   qualification-backlog snapshots
+8. Freeze `candidate-manifest.json` with the exact source SHA, run URL, version,
+   toolchain, payload sizes, and payload digests, including the OCI tar, build
+   metadata, detached provenance, Containerfile, image SBOM, and vulnerability
+   JSON; the manifest remains explicitly
+   `CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED`
+9. Scope every platform, OCI, and final artifact name to
+   `GITHUB_RUN_ATTEMPT`, then
+   verify canonical archive inventories and the exact final
+   `SHA256SUMS.txt`/candidate inventory before retention; partial failed-job
+   reruns cannot reuse an earlier attempt's bytes
 
-If any required artifact is missing, the release job fails.
+If any required artifact is missing, the candidate-index job fails.
 
 Tag promotion remains absent (and therefore fail-closed) until a detached,
 independently attributable authorization can be verified against the frozen
 candidate manifest and OCI digest. A tracked self-asserted JSON file is not an
 external trust root and will not be accepted as one.
+
+The SHA-256 digest of `candidate-manifest.json` is the detached subject an
+external auditor must authorize. Neither the manifest nor its checksums grant
+promotion authority by themselves.
 
 The historical `release.yml` workflow is retired and disabled. Candidate work
 uses a new workflow path that did not exist at any published historical tag,

@@ -11,8 +11,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Validate authoritative source version
-        run: python3 scripts/version_contract.py
+      - name: Validate exact default source and release contracts
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/master"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          python3 scripts/version_contract.py
+          python3 scripts/test_release_metadata.py
+          python3 scripts/test_release_candidate.py
+          python3 scripts/test_container_contract.py
+          python3 scripts/test_oci_candidate.py
+          python3 scripts/test_container_contract.py
+          python3 scripts/test_oci_candidate.py
 
   acceptance:
     uses: ./.github/workflows/ci.yml
@@ -41,58 +52,338 @@ jobs:
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # action implementation
         with:
           toolchain: 1.97.1
-      - name: Build exact host target
+      - name: Validate exact host target
         shell: bash
         run: |
           set -euo pipefail
           HOST="$(rustc -vV | sed -n 's/^host: //p')"
           test "$HOST" = "${{ matrix.target }}"
-          cargo build -p tomorrowci-cli --release --locked --target "${{ matrix.target }}"
-      - name: Package (unix)
+      - name: Reproducible clean build and package (unix)
         if: runner.os != 'Windows'
+        shell: bash
         run: |
           set -euo pipefail
           VERSION="$(python3 scripts/version_contract.py)"
-          VER="v$VERSION"
-          STAGE="tomorrowci-${VER}-${{ matrix.target }}"
-          mkdir -p "dist/$STAGE"
-          cp "target/${{ matrix.target }}/release/tomorrowci" "dist/$STAGE/"
-          cp README.md LICENSE CHANGELOG.md "dist/$STAGE/"
-          tar -C dist -czf "dist/${STAGE}.tar.gz" "$STAGE"
-          "target/${{ matrix.target }}/release/tomorrowci" --version | tee dist/version.txt
-          test "$(cat dist/version.txt)" = "tomorrowci $VERSION"
-      - name: Package (windows)
+          export CARGO_INCREMENTAL=0 SOURCE_DATE_EPOCH=0
+          for slot in a b; do
+            target_dir="$RUNNER_TEMP/tomorrowci-repro-$slot"
+            test ! -e "$target_dir"
+            CARGO_TARGET_DIR="$target_dir" cargo build -p tomorrowci-cli \
+              --release --locked --target "${{ matrix.target }}"
+            python3 scripts/package_release.py create \
+              --binary "$target_dir/${{ matrix.target }}/release/tomorrowci" \
+              --output-dir "dist/$slot" \
+              --version "$VERSION" \
+              --target "${{ matrix.target }}"
+          done
+          archive="tomorrowci-v${VERSION}-${{ matrix.target }}.tar.gz"
+          python3 - "dist/a/$archive" "dist/b/$archive" <<'PY'
+          import hashlib
+          import pathlib
+          import sys
+
+          digests = [
+              hashlib.sha256(pathlib.Path(value).read_bytes()).hexdigest()
+              for value in sys.argv[1:]
+          ]
+          if digests[0] != digests[1]:
+              raise SystemExit(
+                  f"non-reproducible release archives: {digests[0]} != {digests[1]}"
+              )
+          PY
+          test "$("$RUNNER_TEMP/tomorrowci-repro-a/${{ matrix.target }}/release/tomorrowci" --version)" = \
+            "tomorrowci $VERSION"
+          mkdir -p dist/upload
+          cp "dist/a/$archive" "dist/upload/$archive"
+          python3 scripts/package_release.py extract \
+            --archive "dist/upload/$archive" \
+            --output-dir dist/readback \
+            --version "$VERSION" \
+            --target "${{ matrix.target }}"
+          cli="$GITHUB_WORKSPACE/dist/readback/tomorrowci-v${VERSION}-${{ matrix.target }}/tomorrowci"
+          test "$("$cli" --version)" = "tomorrowci $VERSION"
+          "$cli" doctor
+          "$cli" trust
+          smoke="$RUNNER_TEMP/tomorrowci-release-smoke"
+          test ! -e "$smoke"
+          cp -R fixtures/rust-msrv-break "$smoke"
+          set +e
+          smoke_output="$(cd "$smoke" && DOCKER_HOST=tcp://127.0.0.1:1 \
+            "$cli" scan . --config .tomorrowci-blocked.yml 2>&1)"
+          smoke_code=$?
+          set -e
+          printf '%s\n' "$smoke_output"
+          test "$smoke_code" -eq 2
+          run_id="$(printf '%s\n' "$smoke_output" | sed -n 's/^run_id: //p' | tail -n 1)"
+          test -n "$run_id"
+          (cd "$smoke" && "$cli" verify "$run_id")
+          (cd "$smoke" && "$cli" report "$run_id" --format json)
+          (cd "$smoke" && "$cli" verify "$run_id")
+      - name: Reproducible clean build and package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $version = (python scripts/version_contract.py).Trim()
           if ($LASTEXITCODE -ne 0) { throw "version contract failed" }
-          $ver = "v$version"
-          $stage = "tomorrowci-$ver-x86_64-pc-windows-msvc"
-          New-Item -ItemType Directory -Force -Path "dist/$stage" | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/tomorrowci.exe" "dist/$stage/"
-          Copy-Item README.md,LICENSE,CHANGELOG.md "dist/$stage/"
-          Compress-Archive -Path "dist/$stage" -DestinationPath "dist/$stage.zip"
-          $actual = (& "target/${{ matrix.target }}/release/tomorrowci.exe" --version).Trim()
-          $actual | Set-Content -Encoding ascii dist/version.txt
+          $env:CARGO_INCREMENTAL = "0"
+          $env:SOURCE_DATE_EPOCH = "0"
+          foreach ($slot in @("a", "b")) {
+            $targetDir = Join-Path $env:RUNNER_TEMP "tomorrowci-repro-$slot"
+            if (Test-Path $targetDir) { throw "non-clean target directory: $targetDir" }
+            $env:CARGO_TARGET_DIR = $targetDir
+            cargo build -p tomorrowci-cli --release --locked --target "${{ matrix.target }}"
+            if ($LASTEXITCODE -ne 0) { throw "cargo build $slot failed" }
+            python scripts/package_release.py create `
+              --binary "$targetDir/${{ matrix.target }}/release/tomorrowci.exe" `
+              --output-dir "dist/$slot" `
+              --version $version `
+              --target "${{ matrix.target }}"
+            if ($LASTEXITCODE -ne 0) { throw "package $slot failed" }
+          }
+          $archive = "tomorrowci-v$version-${{ matrix.target }}.zip"
+          $first = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist/a/$archive").Hash
+          $second = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist/b/$archive").Hash
+          if ($first -ne $second) { throw "non-reproducible archive: $first != $second" }
+          $actual = (& "$env:RUNNER_TEMP/tomorrowci-repro-a/${{ matrix.target }}/release/tomorrowci.exe" --version).Trim()
           if ($actual -ne "tomorrowci $version") { throw "CLI version mismatch: $actual" }
+          New-Item -ItemType Directory -Force -Path dist/upload | Out-Null
+          Copy-Item "dist/a/$archive" "dist/upload/$archive"
+          python scripts/package_release.py extract `
+            --archive "dist/upload/$archive" `
+            --output-dir dist/readback `
+            --version $version `
+            --target "${{ matrix.target }}"
+          if ($LASTEXITCODE -ne 0) { throw "archive read-back failed" }
+          $cli = Join-Path $env:GITHUB_WORKSPACE "dist/readback/tomorrowci-v$version-${{ matrix.target }}/tomorrowci.exe"
+          $actual = (& $cli --version).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -ne "tomorrowci $version") {
+            throw "extracted CLI version mismatch: $actual"
+          }
+          & $cli doctor
+          if ($LASTEXITCODE -ne 0) { throw "extracted CLI doctor failed" }
+          & $cli trust
+          if ($LASTEXITCODE -ne 0) { throw "extracted CLI trust failed" }
+          $smoke = Join-Path $env:RUNNER_TEMP "tomorrowci-release-smoke"
+          if (Test-Path $smoke) { throw "non-fresh smoke directory: $smoke" }
+          Copy-Item -Recurse fixtures/rust-msrv-break $smoke
+          $previousDockerHost = $env:DOCKER_HOST
+          Push-Location $smoke
+          try {
+            $env:DOCKER_HOST = "tcp://127.0.0.1:1"
+            $smokeOutput = (& $cli scan "." --config ".tomorrowci-blocked.yml" 2>&1 | Out-String)
+            $smokeCode = $LASTEXITCODE
+          } finally {
+            if ($null -eq $previousDockerHost) {
+              Remove-Item Env:DOCKER_HOST -ErrorAction SilentlyContinue
+            } else {
+              $env:DOCKER_HOST = $previousDockerHost
+            }
+          }
+          Write-Output $smokeOutput
+          if ($smokeCode -ne 2) { throw "expected structured BLOCKED exit 2, got $smokeCode" }
+          $matches = [regex]::Matches($smokeOutput, '(?m)^run_id: ([0-9a-f]+)\r?$')
+          if ($matches.Count -eq 0) { throw "scan output contains no run_id" }
+          $runId = $matches[$matches.Count - 1].Groups[1].Value
+          & $cli verify $runId
+          if ($LASTEXITCODE -ne 0) { throw "extracted CLI verify smoke failed" }
+          & $cli report $runId --format json
+          if ($LASTEXITCODE -ne 0) { throw "extracted CLI report smoke failed" }
+          & $cli verify $runId
+          if ($LASTEXITCODE -ne 0) { throw "post-report verify smoke failed" }
+          Pop-Location
       - name: Upload dist
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: dist-${{ matrix.target }}
-          path: dist/*
+          name: dist-${{ matrix.target }}-attempt-${{ github.run_attempt }}
+          path: dist/upload/*
           if-no-files-found: error
 
+  oci-candidate:
+    needs: [acceptance, identity]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          version: v0.36.1
+          driver: docker-container
+          driver-opts: |
+            image=moby/buildkit@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+      - name: Build reproducible single-platform OCI candidate
+        env:
+          BUILDX_METADATA_PROVENANCE: max
+          SOURCE_DATE_EPOCH: "0"
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/master"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          docker buildx version
+          VERSION="$(python3 scripts/version_contract.py)"
+          IMAGE="tomorrowci-candidate:v${VERSION}-${GITHUB_SHA}"
+          for slot in a b; do
+            output="$GITHUB_WORKSPACE/dist/oci/$slot"
+            mkdir -p "$output"
+            docker buildx build \
+              --file Containerfile \
+              --platform linux/amd64 \
+              --pull \
+              --no-cache \
+              --provenance=false \
+              --build-arg SOURCE_DATE_EPOCH=0 \
+              --build-arg "TCI_VERSION=$VERSION" \
+              --build-arg "TCI_REVISION=$GITHUB_SHA" \
+              --build-arg "TCI_SOURCE=https://github.com/$GITHUB_REPOSITORY" \
+              --tag "$IMAGE" \
+              --output "type=oci,dest=$output/tomorrowci-oci-linux-amd64.tar,rewrite-timestamp=true" \
+              --metadata-file "$output/build-metadata.json" \
+              .
+          done
+          archive_a="$GITHUB_WORKSPACE/dist/oci/a/tomorrowci-oci-linux-amd64.tar"
+          archive_b="$GITHUB_WORKSPACE/dist/oci/b/tomorrowci-oci-linux-amd64.tar"
+          sha_a="$(sha256sum "$archive_a" | cut -d ' ' -f 1)"
+          sha_b="$(sha256sum "$archive_b" | cut -d ' ' -f 1)"
+          printf 'OCI build A sha256:%s\nOCI build B sha256:%s\n' "$sha_a" "$sha_b"
+          test "$sha_a" = "$sha_b"
+          cmp "$archive_a" "$archive_b"
+          upload="$GITHUB_WORKSPACE/dist/oci/upload"
+          mkdir -p "$upload"
+          cp "$archive_a" "$upload/tomorrowci-oci-linux-amd64.tar"
+          cp "$GITHUB_WORKSPACE/dist/oci/a/build-metadata.json" \
+            "$upload/build-metadata.json"
+          cp Containerfile "$upload/Containerfile"
+          python3 scripts/oci_candidate.py create \
+            --archive "$upload/tomorrowci-oci-linux-amd64.tar" \
+            --metadata "$upload/build-metadata.json" \
+            --containerfile "$upload/Containerfile" \
+            --provenance "$upload/image-provenance.json" \
+            --version "$VERSION" \
+            --source-sha "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --server-url "$GITHUB_SERVER_URL"
+          python3 scripts/oci_candidate.py verify \
+            --archive "$upload/tomorrowci-oci-linux-amd64.tar" \
+            --metadata "$upload/build-metadata.json" \
+            --containerfile "$upload/Containerfile" \
+            --provenance "$upload/image-provenance.json" \
+            --expected-source-sha "$GITHUB_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$GITHUB_RUN_ID" \
+            --expected-run-attempt "$GITHUB_RUN_ATTEMPT"
+          python3 scripts/oci_candidate.py verify \
+            --archive "$archive_b" \
+            --metadata "$upload/build-metadata.json" \
+            --containerfile "$upload/Containerfile" \
+            --provenance "$upload/image-provenance.json" \
+            --expected-source-sha "$GITHUB_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$GITHUB_RUN_ID" \
+            --expected-run-attempt "$GITHUB_RUN_ATTEMPT"
+          docker load --input "$upload/tomorrowci-oci-linux-amd64.tar"
+          test "$(docker run --rm "$IMAGE" --version)" = "tomorrowci $VERSION"
+          docker run --rm "$IMAGE" trust
+          test "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = \
+            "65532:65532"
+          test "$(docker run --rm --entrypoint /usr/bin/id "$IMAGE" -u)" = "65532"
+          test "$(docker run --rm --entrypoint /usr/bin/id "$IMAGE" -g)" = "65532"
+          test "$(docker image inspect --format \
+            '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$IMAGE")" = \
+            "$VERSION"
+          test "$(docker image inspect --format \
+            '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = \
+            "$GITHUB_SHA"
+          test "$(docker image inspect --format \
+            '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$IMAGE")" = \
+            "https://github.com/$GITHUB_REPOSITORY"
+          socket_gid="$(stat -c '%g' /var/run/docker.sock)"
+          doctor_output="$(docker run --rm \
+            --group-add "$socket_gid" \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            "$IMAGE" doctor)"
+          printf '%s\n' "$doctor_output"
+          printf '%s\n' "$doctor_output" | grep -Fqx 'docker: true'
+          printf '%s\n' "$doctor_output" | grep -Fqx 'status: READY'
+      - name: Generate image SBOM and reject fixed high or critical vulnerabilities
+        run: |
+          set -euo pipefail
+          VERSION="$(python3 scripts/version_contract.py)"
+          IMAGE="tomorrowci-candidate:v${VERSION}-${GITHUB_SHA}"
+          TRIVY_IMAGE="aquasec/trivy:0.73.0@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c"
+          output="$GITHUB_WORKSPACE/dist/oci/upload"
+          cache="$RUNNER_TEMP/trivy-cache"
+          mkdir -p "$cache"
+          docker pull "$TRIVY_IMAGE"
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$cache:/root/.cache/trivy" \
+            --volume "$output:/output" \
+            "$TRIVY_IMAGE" image \
+            --format cyclonedx \
+            --output /output/image-sbom.cdx.json \
+            "$IMAGE"
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$cache:/root/.cache/trivy" \
+            --volume "$output:/output" \
+            "$TRIVY_IMAGE" image \
+            --scanners vuln \
+            --ignore-unfixed \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            --format json \
+            --output /output/image-vulnerabilities.json \
+            "$IMAGE"
+          python3 - "$output/image-sbom.cdx.json" \
+            "$output/image-vulnerabilities.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          sbom = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if sbom.get("bomFormat") != "CycloneDX" or not sbom.get("components"):
+              raise SystemExit("Trivy did not produce a populated CycloneDX image SBOM")
+          report = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+          results = report.get("Results")
+          if not isinstance(results, list):
+              raise SystemExit("Trivy vulnerability JSON has no Results array")
+          vulnerabilities = [
+              vulnerability
+              for result in results
+              for vulnerability in (result.get("Vulnerabilities") or [])
+          ]
+          if vulnerabilities:
+              raise SystemExit("fixed HIGH/CRITICAL vulnerabilities remain in OCI candidate")
+          PY
+      - name: Upload OCI candidate evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: oci-candidate-attempt-${{ github.run_attempt }}
+          path: |
+            dist/oci/upload/tomorrowci-oci-linux-amd64.tar
+            dist/oci/upload/build-metadata.json
+            dist/oci/upload/image-provenance.json
+            dist/oci/upload/Containerfile
+            dist/oci/upload/image-sbom.cdx.json
+            dist/oci/upload/image-vulnerabilities.json
+          if-no-files-found: error
+          retention-days: 90
+
   candidate-index:
-    needs: build
+    needs: [build, oci-candidate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: dist-*
+          pattern: dist-*-attempt-${{ github.run_attempt }}
           path: artifacts
-      - name: Build exact candidate metadata and require four platform archives
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: oci-candidate-attempt-${{ github.run_attempt }}
+          path: artifacts/oci
+      - name: Build exact candidate metadata and require all candidate evidence
         run: |
           set -euo pipefail
           VERSION="$(python3 scripts/version_contract.py)"
@@ -105,25 +396,81 @@ jobs:
             cp "$archive" "$destination"
           done
           cp docs/CLAIM_TO_EVIDENCE.md dist/claim-to-evidence.md
+          cp docs/qualification/backlog.json dist/qualification-backlog.json
+          cp SUPPORT.md dist/support.md
           python3 scripts/generate_sbom.py --output dist/sbom.cdx.json
-          cd dist
-          ls -la
-          expected=(
-            "tomorrowci-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-            "tomorrowci-v${VERSION}-x86_64-apple-darwin.tar.gz"
-            "tomorrowci-v${VERSION}-aarch64-apple-darwin.tar.gz"
-            "tomorrowci-v${VERSION}-x86_64-pc-windows-msvc.zip"
-          )
-          for archive in "${expected[@]}"; do
-            test -f "$archive"
+          python3 - artifacts/oci <<'PY'
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          expected = {
+              "Containerfile",
+              "build-metadata.json",
+              "image-provenance.json",
+              "image-sbom.cdx.json",
+              "image-vulnerabilities.json",
+              "tomorrowci-oci-linux-amd64.tar",
+          }
+          entries = list(root.iterdir())
+          actual = {entry.name for entry in entries}
+          if actual != expected or any(entry.is_symlink() or not entry.is_file() for entry in entries):
+              raise SystemExit(
+                  f"OCI artifact inventory mismatch: expected {sorted(expected)!r}, "
+                  f"got {sorted(actual)!r}"
+              )
+          PY
+          cmp artifacts/oci/Containerfile Containerfile
+          python3 scripts/oci_candidate.py verify \
+            --archive artifacts/oci/tomorrowci-oci-linux-amd64.tar \
+            --metadata artifacts/oci/build-metadata.json \
+            --containerfile artifacts/oci/Containerfile \
+            --provenance artifacts/oci/image-provenance.json \
+            --expected-source-sha "$GITHUB_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$GITHUB_RUN_ID" \
+            --expected-run-attempt "$GITHUB_RUN_ATTEMPT"
+          for name in \
+            Containerfile \
+            build-metadata.json \
+            image-provenance.json \
+            image-sbom.cdx.json \
+            image-vulnerabilities.json \
+            tomorrowci-oci-linux-amd64.tar; do
+            cp "artifacts/oci/$name" "dist/$name"
           done
-          test "$(find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l)" -eq 4
-          sha256sum ./*.tar.gz ./*.zip ./sbom.cdx.json ./claim-to-evidence.md > SHA256SUMS.txt
-          test -s SHA256SUMS.txt
-          sha256sum -c SHA256SUMS.txt
+          for target in \
+            x86_64-unknown-linux-gnu \
+            x86_64-apple-darwin \
+            aarch64-apple-darwin; do
+            python3 scripts/package_release.py verify \
+              --archive "dist/tomorrowci-v${VERSION}-${target}.tar.gz" \
+              --version "$VERSION" --target "$target"
+          done
+          python3 scripts/package_release.py verify \
+            --archive "dist/tomorrowci-v${VERSION}-x86_64-pc-windows-msvc.zip" \
+            --version "$VERSION" --target x86_64-pc-windows-msvc
+          python3 scripts/candidate_manifest.py create \
+            --dist dist \
+            --version "$VERSION" \
+            --source-sha "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-ref "$GITHUB_REF" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --workflow-ref "$GITHUB_WORKFLOW_REF" \
+            --server-url "$GITHUB_SERVER_URL"
+          python3 scripts/candidate_manifest.py verify \
+            --dist dist \
+            --expected-source-sha "$GITHUB_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$GITHUB_RUN_ID" \
+            --expected-run-attempt "$GITHUB_RUN_ATTEMPT"
+          ls -la dist
       - name: Candidate artifact upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-candidate-dist
+          name: release-candidate-dist-attempt-${{ github.run_attempt }}
           path: dist/*
           if-no-files-found: error
+          retention-days: 90

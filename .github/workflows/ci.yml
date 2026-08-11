@@ -26,6 +26,9 @@ jobs:
           python3 scripts/check_actions_pinned.py
           python3 scripts/version_contract.py
           python3 scripts/test_release_metadata.py
+          python3 scripts/test_release_candidate.py
+          python3 scripts/test_container_contract.py
+          python3 scripts/test_oci_candidate.py
           python3 scripts/test_historical_regressions.py
           python3 scripts/test_config_schema.py
           python3 scripts/generate_sbom.py --output /tmp/sbom.cdx.json

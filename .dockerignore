@@ -1,0 +1,14 @@
+.git
+.github-convergence-*
+.completion-audit-*
+.tomorrowci
+**/.tomorrowci
+**/__pycache__
+**/node_modules
+**/target
+dist
+target
+*.pyc
+*.pyo
+*.tmp
+*.log
