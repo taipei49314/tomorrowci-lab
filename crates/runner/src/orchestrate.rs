@@ -67,17 +67,49 @@ struct SourceIdentity {
 
 /// Auto-detect ecosystem and run a full local scan.
 pub fn scan_local(repo: &Path, opts: ScanOptions) -> Result<ScanOutcome> {
+    scan_local_into(repo, repo, opts)
+}
+
+/// Scan `repo` while retaining evidence under a separate trusted root. Remote
+/// materialization uses this so its temporary Git checkout can be deleted
+/// without deleting the immutable recorded workspace or replay evidence.
+pub(crate) fn scan_local_into(
+    repo: &Path,
+    evidence_repo: &Path,
+    opts: ScanOptions,
+) -> Result<ScanOutcome> {
     let py = PythonAdapter.detect(repo);
     if py.supported {
-        return scan_with_adapter(repo, &PythonAdapter, opts, py.detection);
+        return scan_with_adapter(
+            repo,
+            evidence_repo,
+            &PythonAdapter,
+            opts,
+            py.detection,
+            None,
+        );
     }
     let node = NodeAdapter.detect(repo);
     if node.supported {
-        return scan_with_adapter(repo, &NodeAdapter, opts, node.detection);
+        return scan_with_adapter(
+            repo,
+            evidence_repo,
+            &NodeAdapter,
+            opts,
+            node.detection,
+            None,
+        );
     }
     let rust = RustAdapter.detect(repo);
     if rust.supported {
-        return scan_with_adapter(repo, &RustAdapter, opts, rust.detection);
+        return scan_with_adapter(
+            repo,
+            evidence_repo,
+            &RustAdapter,
+            opts,
+            rust.detection,
+            None,
+        );
     }
     Err(TcError::Unsupported(
         "no supported ecosystem detected (need Python, Node/npm, or Rust/cargo manifests)".into(),
@@ -86,9 +118,11 @@ pub fn scan_local(repo: &Path, opts: ScanOptions) -> Result<ScanOutcome> {
 
 fn scan_with_adapter(
     repo: &Path,
+    evidence_repo: &Path,
     adapter: &dyn EcosystemAdapter,
     opts: ScanOptions,
     detection: ProjectDetection,
+    executor_override: Option<&dyn ScenarioExecutor>,
 ) -> Result<ScanOutcome> {
     let config = opts.config;
     config.validate()?;
@@ -111,7 +145,7 @@ fn scan_with_adapter(
     let run_started = Utc::now();
     let source_before = capture_source_identity(repo)?;
     let run_id = Uuid::new_v4().to_string().replace('-', "")[..12].to_string();
-    let layout = EvidenceLayout::create(repo, &run_id)?;
+    let layout = EvidenceLayout::create(evidence_repo, &run_id)?;
 
     let work = layout.run_root.join("workspace");
     make_disposable_copy(repo, &work)?;
@@ -151,11 +185,15 @@ fn scan_with_adapter(
     }
 
     let engine_resolve_started = Utc::now();
-    let engine = ContainerExecutor::detect_requested(&config.sandbox.engine);
+    let engine = if executor_override.is_none() {
+        Some(ContainerExecutor::detect_requested(&config.sandbox.engine))
+    } else {
+        None
+    };
     let engine_resolve_finished = Utc::now();
-    let executor: Box<dyn ScenarioExecutor> = match engine {
-        Ok(e) => Box::new(e),
-        Err(e) => {
+    let detected_executor = match engine {
+        Some(Ok(executor)) => Some(executor),
+        Some(Err(e)) => {
             let detail = if opts.allow_scripted {
                 format!("sandbox unavailable ({e}); scripted executors are test-only")
             } else {
@@ -179,7 +217,13 @@ fn scan_with_adapter(
                 &source_identity,
             );
         }
+        None => None,
     };
+    let executor: &dyn ScenarioExecutor = executor_override.unwrap_or_else(|| {
+        detected_executor
+            .as_ref()
+            .expect("container executor was detected when no test override was supplied")
+    });
 
     let mut results: Vec<ExecutionResult> = Vec::new();
     let mut ordered_for_frontier: Vec<(Scenario, ExecutionResult)> = Vec::new();
@@ -1192,6 +1236,55 @@ fn manifest_hashes_for_detection(
         }
     }
     Ok(hashes)
+}
+
+#[cfg(test)]
+pub(crate) fn scan_local_with_executor_into(
+    repo: &Path,
+    evidence_repo: &Path,
+    config: Config,
+    executor: &dyn ScenarioExecutor,
+) -> Result<ScanOutcome> {
+    let opts = ScanOptions {
+        config,
+        allow_scripted: true,
+    };
+    let py = PythonAdapter.detect(repo);
+    if py.supported {
+        return scan_with_adapter(
+            repo,
+            evidence_repo,
+            &PythonAdapter,
+            opts,
+            py.detection,
+            Some(executor),
+        );
+    }
+    let node = NodeAdapter.detect(repo);
+    if node.supported {
+        return scan_with_adapter(
+            repo,
+            evidence_repo,
+            &NodeAdapter,
+            opts,
+            node.detection,
+            Some(executor),
+        );
+    }
+    let rust = RustAdapter.detect(repo);
+    if rust.supported {
+        return scan_with_adapter(
+            repo,
+            evidence_repo,
+            &RustAdapter,
+            opts,
+            rust.detection,
+            Some(executor),
+        );
+    }
+    Err(TcError::Unsupported(
+        "no supported ecosystem detected (need Python, Node/npm, or Rust/cargo manifests)".into(),
+    ))
 }
 
 /// Test-only scan with injected executor (scripted).
@@ -2385,7 +2478,7 @@ pub fn replay_scenario(repo: &Path, run_id: &str, scenario_id: &str) -> Result<S
 }
 
 #[cfg(test)]
-fn replay_scenario_with_executor(
+pub(crate) fn replay_scenario_with_executor(
     repo: &Path,
     run_id: &str,
     scenario_id: &str,

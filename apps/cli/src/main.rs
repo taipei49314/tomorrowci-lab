@@ -17,9 +17,12 @@ use tomorrowci_evidence::{
 };
 use tomorrowci_metrics::{run_trust_audit, ClaimLedger, ClaimStatus, ScanMetrics, TrustVerdict};
 use tomorrowci_report::{
-    write_github_job_summary, write_html_report, write_json_report, write_sarif_stub,
+    write_github_job_summary, write_html_report_from_verified_root, write_json_report,
+    write_sarif_stub,
 };
-use tomorrowci_runner::{load_and_explain, replay_scenario, scan_local, ScanOptions};
+use tomorrowci_runner::{
+    load_and_explain, replay_scenario, scan_local, scan_remote_github, ScanOptions, ScanOutcome,
+};
 use tomorrowci_sandbox::{detect_engines, SecurityPolicy};
 
 #[derive(Parser, Debug)]
@@ -35,11 +38,14 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Scan a repository path (Python/Node/Rust)
+    /// Scan a local path or an exact GitHub commit (Python/Node/Rust)
     Scan {
         target: String,
         #[arg(long)]
         config: Option<PathBuf>,
+        /// Required immutable 40-hex commit for remote GitHub scans
+        #[arg(long)]
+        commit: Option<String>,
     },
     Show {
         run_id: String,
@@ -99,7 +105,11 @@ fn real_main() -> Result<()> {
     match cli.command {
         Commands::Doctor => cmd_doctor(),
         Commands::Trust { json } => cmd_trust(json),
-        Commands::Scan { target, config } => cmd_scan(&target, config.as_deref()),
+        Commands::Scan {
+            target,
+            config,
+            commit,
+        } => cmd_scan(&target, config.as_deref(), commit.as_deref()),
         Commands::Show { run_id } => cmd_show(&run_id),
         Commands::Verify { run_id } => cmd_verify(&run_id),
         Commands::Replay { run_id, scenario } => {
@@ -182,9 +192,31 @@ fn cmd_trust(json: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_scan(target: &str, config_path: Option<&Path>) -> Result<()> {
+fn cmd_scan(target: &str, config_path: Option<&Path>, commit: Option<&str>) -> Result<()> {
     if target.starts_with("http://") || target.starts_with("https://") {
-        bail!("remote GitHub clone scan: NOT_RUN in this build (local path only)");
+        let commit = commit.context(
+            "remote GitHub scans require --commit <40-lowercase-hex>; moving refs are forbidden",
+        )?;
+        let explicit_config = config_path.map(Config::load_file).transpose()?;
+        let cwd = std::env::current_dir()?;
+        let result = scan_remote_github(target, commit, &cwd, explicit_config);
+        let eco = result
+            .as_ref()
+            .ok()
+            .map(|outcome| ecosystem_name(outcome.manifest.detection.ecosystem))
+            .unwrap_or("remote");
+        if eco != "remote" {
+            println!("ecosystem: {eco}");
+            println!("detection: PASS");
+        }
+        return finish_scan(
+            result,
+            eco,
+            format!("tomorrowci scan {target} --commit {commit}"),
+        );
+    }
+    if commit.is_some() {
+        bail!("--commit is only valid for an HTTPS GitHub remote target");
     }
     let root = PathBuf::from(target);
     if !root.exists() {
@@ -208,13 +240,34 @@ fn cmd_scan(target: &str, config_path: Option<&Path>) -> Result<()> {
     println!("ecosystem: {eco}");
     println!("detection: PASS");
 
-    match scan_local(
-        &root,
-        ScanOptions {
-            config: cfg,
-            allow_scripted: false,
-        },
-    ) {
+    finish_scan(
+        scan_local(
+            &root,
+            ScanOptions {
+                config: cfg,
+                allow_scripted: false,
+            },
+        ),
+        eco,
+        format!("tomorrowci scan {}", root.display()),
+    )
+}
+
+fn ecosystem_name(ecosystem: tomorrowci_core::Ecosystem) -> &'static str {
+    match ecosystem {
+        tomorrowci_core::Ecosystem::Python => "python",
+        tomorrowci_core::Ecosystem::Node => "node",
+        tomorrowci_core::Ecosystem::Rust => "rust",
+        tomorrowci_core::Ecosystem::Unknown => "unknown",
+    }
+}
+
+fn finish_scan(
+    result: tomorrowci_core::Result<ScanOutcome>,
+    eco: &str,
+    claim_command: String,
+) -> Result<()> {
+    match result {
         Ok(out) => {
             println!("{}", out.terminal_summary);
             println!(
@@ -244,7 +297,7 @@ fn cmd_scan(target: &str, config_path: Option<&Path>) -> Result<()> {
             claims.push(
                 format!("{eco} scan completed"),
                 status,
-                format!("tomorrowci scan {}", root.display()),
+                claim_command,
                 out.metrics.summary_line(),
                 out.evidence_root.display().to_string(),
             );
@@ -652,11 +705,12 @@ fn report_file_name(format: &str) -> &'static str {
 
 fn write_report_format(
     manifest: &tomorrowci_core::RunManifest,
+    verified_run_root: &Path,
     format: &str,
     output: &Path,
 ) -> Result<()> {
     match format {
-        "html" => write_html_report(manifest, output)?,
+        "html" => write_html_report_from_verified_root(manifest, verified_run_root, output)?,
         "sarif" => write_sarif_stub(manifest, output)?,
         "summary" => write_github_job_summary(manifest, output)?,
         _ => write_json_report(manifest, output)?,
@@ -737,7 +791,7 @@ fn render_report_transactionally(run_root: &Path, format: &str) -> Result<PathBu
     ));
     std::fs::create_dir(&staging_root)?;
     let staged = staging_root.join(file_name);
-    let render_result = write_report_format(manifest, format, &staged);
+    let render_result = write_report_format(manifest, run_root, format, &staged);
     if let Err(error) = render_result {
         let cleanup = std::fs::remove_dir_all(&staging_root);
         return match cleanup {
@@ -909,7 +963,8 @@ mod tests {
             .write_json("claims.json", &serde_json::json!({ "rows": [] }))
             .unwrap();
         write_json_report(&manifest, &layout.run_root.join("report.json")).unwrap();
-        write_html_report(&manifest, &layout.run_root.join("report.html")).unwrap();
+        tomorrowci_report::write_html_report(&manifest, &layout.run_root.join("report.html"))
+            .unwrap();
         write_github_job_summary(&manifest, &layout.run_root.join("job-summary.md")).unwrap();
         std::fs::write(layout.run_root.join("summary.txt"), "focused summary\n").unwrap();
         finalize_and_verify_run(&layout.run_root).unwrap();
@@ -991,6 +1046,41 @@ mod tests {
                 verification.errors
             );
         }
+
+        std::fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn html_report_dispatch_uses_current_run_root_for_replays() {
+        let repo = std::env::temp_dir().join(format!(
+            "tomorrowci-cli-report-root-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir(&repo).unwrap();
+        let root = create_valid_run(&repo, "report-root");
+        let mut manifest: tomorrowci_core::RunManifest =
+            serde_json::from_slice(&std::fs::read(root.join("run.json")).unwrap()).unwrap();
+        add_observed_passing_baseline(&mut manifest);
+        manifest.evidence_root = repo.join("stale-original-location");
+
+        let attempt_root = root.join("scenarios/baseline/replays/attempt-1");
+        std::fs::create_dir_all(&attempt_root).unwrap();
+        std::fs::write(attempt_root.join("result.json"), b"{}\n").unwrap();
+
+        let output = repo.join("staging/report.html");
+        write_report_format(&manifest, &root, "html", &output).unwrap();
+        let body = std::fs::read_to_string(output).unwrap();
+        let embedded = body
+            .split_once("<script id=\"report-data\" type=\"application/json\">")
+            .unwrap()
+            .1
+            .split_once("</script>")
+            .unwrap()
+            .0;
+        let model: serde_json::Value = serde_json::from_str(embedded).unwrap();
+        assert_eq!(model["replayAttempts"].as_array().unwrap().len(), 1);
+        assert_eq!(model["replayAttempts"][0]["scenarioId"], "baseline");
+        assert_eq!(model["replayAttempts"][0]["attempt"], 1);
 
         std::fs::remove_dir_all(repo).unwrap();
     }
@@ -1163,5 +1253,18 @@ mod tests {
         assert!(render_report_transactionally(&root, "html").is_err());
 
         std::fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn remote_scan_requires_an_exact_commit_before_network_access() {
+        let error = cmd_scan("https://github.com/example/project", None, None).unwrap_err();
+        assert!(error.to_string().contains("require --commit"));
+        assert!(error.to_string().contains("moving refs are forbidden"));
+    }
+
+    #[test]
+    fn local_scan_rejects_remote_commit_authority() {
+        let error = cmd_scan(".", None, Some(&"a".repeat(40))).unwrap_err();
+        assert!(error.to_string().contains("only valid"));
     }
 }

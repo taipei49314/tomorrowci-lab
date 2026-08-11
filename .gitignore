@@ -1,5 +1,8 @@
 /target
 **/node_modules
+packages/report-ui/.tmp/
+packages/report-ui/test-results/
+packages/report-ui/playwright-report/
 dist
 .DS_Store
 .tomorrowci/

@@ -17,8 +17,8 @@ use tomorrowci_core::{
     DependencyExperimentManifest, DependencyMinimalityCheck, DependencyProbeEvidence,
     DependencyProbeRecord, DependencyProbeVerdict, DependencyReduction, DependencyReductionStatus,
     Ecosystem, EnvironmentAxis, EnvironmentSpec, EvidenceGrade, ExecutionPlan, ExecutionResult,
-    FailureSignature, PlanDecision, RepositorySnapshot, ResolvedDependencySet, Result, RunManifest,
-    Scenario, TcError, TestAttemptsSummary, TestExecutionStatus, Verdict,
+    FailureSignature, PlanDecision, RemoteSourceRecord, RepositorySnapshot, ResolvedDependencySet,
+    Result, RunManifest, Scenario, TcError, TestAttemptsSummary, TestExecutionStatus, Verdict,
 };
 
 pub const RUN_REQUIRED: &[&str] = &[
@@ -57,6 +57,7 @@ pub const SCENARIO_REQUIRED: &[&str] = &[
 const RUN_OPTIONAL: &[&str] = &[
     "dependency-experiment.json",
     "reduction.json",
+    "remote-source.json",
     "report.sarif.json",
 ];
 const SCENARIO_OPTIONAL: &[&str] = &[
@@ -804,7 +805,149 @@ fn verify_identity(
             }
         }
     }
+    verify_remote_source_identity(run_root, manifest, current_v2, errors)?;
     Ok(())
+}
+
+fn verify_remote_source_identity(
+    run_root: &Path,
+    manifest: &RunManifest,
+    current_v2: bool,
+    errors: &mut Vec<String>,
+) -> Result<()> {
+    const REMOTE_CLONE_TIMEOUT_SECONDS: u64 = 120;
+    const REMOTE_MAX_FILES: u64 = 10_000;
+    const REMOTE_MAX_FILE_BYTES: u64 = 25 * 1024 * 1024;
+    const REMOTE_MAX_TOTAL_BYTES: u64 = 100 * 1024 * 1024;
+    const REMOTE_MAX_CLONE_DISK_BYTES: u64 = 256 * 1024 * 1024;
+    let path = safe_join(run_root, "remote-source.json")?;
+    if !path.exists() {
+        return Ok(());
+    }
+    if !current_v2 {
+        errors.push("remote-source.json is only valid in current-v2 evidence".into());
+        return Ok(());
+    }
+    let Some(record) = read_json_file::<RemoteSourceRecord>(&path, "remote-source.json", errors)?
+    else {
+        return Ok(());
+    };
+    if record.schema_version != 1 {
+        errors.push(format!(
+            "remote-source.json has unsupported schema_version {}",
+            record.schema_version
+        ));
+    }
+    if !canonical_github_repository_url(&record.requested_url) {
+        errors
+            .push("remote-source requested_url is not a canonical HTTPS GitHub repository".into());
+    }
+    if record.canonical_origin != format!("origin:{}", record.requested_url)
+        || record.canonical_origin != manifest.repository.source
+    {
+        errors.push("remote-source canonical origin does not match repository identity".into());
+    }
+    if record.requested_commit != record.resolved_commit
+        || manifest.repository.commit_sha.as_deref() != Some(record.resolved_commit.as_str())
+        || manifest
+            .identity
+            .as_ref()
+            .and_then(|identity| identity.source_commit.as_deref())
+            != Some(record.resolved_commit.as_str())
+        || !is_canonical_exact_github_commit(&record.resolved_commit)
+    {
+        errors.push("remote-source exact commit does not match run identity".into());
+    }
+    if !record.clean_tree
+        || manifest
+            .identity
+            .as_ref()
+            .and_then(|identity| identity.dirty_tree)
+            != Some(false)
+    {
+        errors.push("remote-source evidence must bind a verified clean tree".into());
+    }
+    if record.moving_ref_allowed
+        || record.redirects_allowed
+        || record.credentials_allowed
+        || record.submodules_allowed
+        || record.lfs_allowed
+    {
+        errors.push(
+            "remote-source evidence cannot authorize moving refs, redirects, credentials, submodules, or LFS"
+                .into(),
+        );
+    }
+    if record.clone_timeout_seconds != REMOTE_CLONE_TIMEOUT_SECONDS
+        || record.max_files != REMOTE_MAX_FILES
+        || record.max_file_bytes != REMOTE_MAX_FILE_BYTES
+        || record.max_total_bytes != REMOTE_MAX_TOTAL_BYTES
+        || record.max_clone_disk_bytes != REMOTE_MAX_CLONE_DISK_BYTES
+        || record.snapshot_file_count > record.max_files
+        || record.snapshot_total_bytes > record.max_total_bytes
+    {
+        errors.push("remote-source bounds are absent or exceeded".into());
+    }
+
+    let workspace_manifest_path = safe_join(run_root, "workspace-manifest.json")?;
+    if crate::validate_sha256(&record.workspace_manifest_sha256).is_err()
+        || file_checksum(&workspace_manifest_path)? != record.workspace_manifest_sha256
+    {
+        errors.push("remote-source workspace manifest digest mismatch".into());
+    }
+    if let Some(workspace) = read_json_file::<WorkspaceManifest>(
+        &workspace_manifest_path,
+        "workspace-manifest.json",
+        errors,
+    )? {
+        let total = workspace
+            .files
+            .values()
+            .try_fold(0_u64, |sum, file| sum.checked_add(file.size));
+        if workspace.files.len() as u64 != record.snapshot_file_count
+            || total != Some(record.snapshot_total_bytes)
+            || workspace
+                .files
+                .values()
+                .any(|file| file.size > record.max_file_bytes)
+        {
+            errors.push("remote-source snapshot bounds do not match workspace-manifest".into());
+        }
+    }
+    Ok(())
+}
+
+fn canonical_github_repository_url(raw: &str) -> bool {
+    if raw.len() > 256 {
+        return false;
+    }
+    let Some(path) = raw.strip_prefix("https://github.com/") else {
+        return false;
+    };
+    if raw.contains(['\r', '\n', '\0', '?', '#', '%', '@'])
+        || path.contains(':')
+        || path.ends_with('/')
+        || path.ends_with(".git")
+    {
+        return false;
+    }
+    let parts: Vec<_> = path.split('/').collect();
+    parts.len() == 2
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && part.len() <= 100
+                && *part != "."
+                && *part != ".."
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        })
+}
+
+fn is_canonical_exact_github_commit(raw: &str) -> bool {
+    raw.len() == 40
+        && raw.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && !raw.bytes().any(|byte| byte.is_ascii_uppercase())
 }
 
 fn is_canonical_git_object_id(raw: &str) -> bool {

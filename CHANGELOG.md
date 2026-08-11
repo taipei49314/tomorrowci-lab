@@ -33,8 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   containers after timeout so a killed client cannot leave target work running.
 - Record the bounded M2 PASS at exact master
   `456a36edb1e8547612cd13ee7a30be3479d33bab` in CI run
-  `31316809823`; M3 runtime, Podman, platform, and independent external
-  qualification remain unclaimed.
+  `31316809823`; at that source identity M3 runtime, Podman, platform, and
+  independent external qualification remained unclaimed.
+- Qualify bounded Node and Rust runtime slices on Linux Docker at exact master
+  `a6af3076ed3286d42c5ed7a386cb6812d8b76c50` in CI run `31447884019`,
+  including current-v2 verification, replay x2, downloaded-artifact read-back,
+  and fail-closed baseline-invalid/flaky/blocked controls. Podman and the wider
+  platform matrix remain unclaimed.
 
 ### Security
 

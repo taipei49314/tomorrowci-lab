@@ -118,7 +118,7 @@ M3 Node/Rust runtime matrix. See the [M2 record](../qualification/M2.md).
 - Local concurrent filesystem mutation and platform-specific alias behavior are reduced by pre/post verification and no-follow checks, but the host OS remains trusted.
 - External independent qualification, artifact signing/attestation, and release authorization remain outside this Phase-1 trust core.
 - Dependency-axis/ddmin behavior beyond the exact M2 Linux Docker fixtures,
-  M3 full Node/Rust execution and Podman coverage, M4 Action/UI qualification,
+  M3 Node/Rust execution beyond the exact Linux Docker fixtures and Podman coverage, M4 Action/UI qualification,
   and M5 public release qualification are not established by these controls.
 
 ## Out of scope
