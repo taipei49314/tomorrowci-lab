@@ -1,0 +1,868 @@
+#!/usr/bin/env python3
+"""Create and verify a detached, explicitly unauthorized OCI candidate record.
+
+The OCI archive is inspected in place.  Nothing from the archive is extracted.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import stat
+import sys
+import tarfile
+from pathlib import Path, PurePosixPath
+from typing import BinaryIO
+
+
+KIND = "tomorrowci.oci-candidate-provenance.v1"
+STATUS = "CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED"
+DEFAULT_PROVENANCE = Path("image-provenance.json")
+OCI_INDEX = "application/vnd.oci.image.index.v1+json"
+OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+OCI_CONFIG = "application/vnd.oci.image.config.v1+json"
+SHA = re.compile(r"^[0-9a-f]{40}$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+SLUG = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+SEMVER = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
+FROM = re.compile(
+    r"^\s*FROM\s+(?P<source>[^\s@]+)@sha256:(?P<digest>[0-9a-f]{64})"
+    r"(?:\s+AS\s+[^\s]+)?\s*$",
+    re.IGNORECASE,
+)
+MAX_JSON = 32 * 1024 * 1024
+MAX_MEMBERS = 4096
+MAX_ARCHIVE_MEMBER = 8 * 1024 * 1024 * 1024
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _require_regular(path: Path, label: str) -> Path:
+    path = path.absolute()
+    try:
+        mode = path.lstat().st_mode
+    except OSError as exc:
+        raise ValueError(f"{label} is missing or inaccessible") from exc
+    if not stat.S_ISREG(mode):
+        raise ValueError(f"{label} must be a regular file")
+    return path.resolve(strict=True)
+
+
+def _reject_duplicate(pairs: list[tuple[str, object]]) -> dict:
+    result: dict = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON number is forbidden: {value}")
+
+
+def _load_json_bytes(data: bytes, label: str) -> object:
+    if len(data) > MAX_JSON:
+        raise ValueError(f"{label} exceeds the JSON size limit")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{label} is not UTF-8") from exc
+    if text.startswith("\ufeff"):
+        raise ValueError(f"{label} must not contain a UTF-8 BOM")
+    try:
+        return json.loads(
+            text,
+            object_pairs_hook=_reject_duplicate,
+            parse_constant=_reject_constant,
+        )
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} is not strict JSON: {exc}") from exc
+
+
+def _object(value: object, label: str) -> dict:
+    if type(value) is not dict:
+        raise ValueError(f"{label} must be a JSON object")
+    return value
+
+
+def _array(value: object, label: str) -> list:
+    if type(value) is not list:
+        raise ValueError(f"{label} must be a JSON array")
+    return value
+
+
+def _canonical_bytes(value: object) -> bytes:
+    return (
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _strict_equal(left: object, right: object) -> bool:
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        return left.keys() == right.keys() and all(
+            _strict_equal(left[key], right[key]) for key in left
+        )
+    if type(left) is list:
+        return len(left) == len(right) and all(
+            _strict_equal(a, b) for a, b in zip(left, right)
+        )
+    return left == right
+
+
+def _validate_identity(
+    *, source_sha: str, repository: str, run_id: str, run_attempt: int
+) -> None:
+    if type(source_sha) is not str or not SHA.fullmatch(source_sha):
+        raise ValueError("source SHA must be exactly 40 lowercase hex characters")
+    if type(repository) is not str or not SLUG.fullmatch(repository):
+        raise ValueError("repository must be an owner/name GitHub slug")
+    if type(run_id) is not str or not run_id.isascii() or not run_id.isdigit():
+        raise ValueError("workflow run ID must be a positive decimal integer")
+    if run_id.startswith("0") or int(run_id) < 1:
+        raise ValueError("workflow run ID must be a positive decimal integer")
+    if type(run_attempt) is not int or run_attempt < 1:
+        raise ValueError("workflow run attempt must be a strict positive integer")
+
+
+def _digest_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _safe_member_name(name: str) -> bool:
+    if not name or "\\" in name or name.startswith("/") or "\x00" in name:
+        return False
+    path = PurePosixPath(name)
+    return (
+        path.as_posix() == name
+        and all(part not in ("", ".", "..") for part in path.parts)
+    )
+
+
+class _OciArchive:
+    def __init__(self, path: Path):
+        self.path = _require_regular(path, "OCI archive")
+        self.tar: tarfile.TarFile | None = None
+        self.members: dict[str, tarfile.TarInfo] = {}
+        self.hashes: dict[str, str] = {}
+
+    def __enter__(self) -> "_OciArchive":
+        try:
+            self.tar = tarfile.open(self.path, mode="r:*")
+            members = self.tar.getmembers()
+        except tarfile.TarError as exc:
+            raise ValueError(f"OCI archive is not a readable tar: {exc}") from exc
+        try:
+            if len(members) > MAX_MEMBERS:
+                raise ValueError("OCI archive contains too many members")
+            for member in members:
+                if not _safe_member_name(member.name):
+                    raise ValueError(f"unsafe OCI archive member path: {member.name!r}")
+                if member.name in self.members:
+                    raise ValueError(f"duplicate OCI archive member: {member.name}")
+                if member.isdir():
+                    if member.name not in {"blobs", "blobs/sha256"}:
+                        raise ValueError(f"unexpected OCI archive directory: {member.name}")
+                elif not member.isreg():
+                    raise ValueError(
+                        f"OCI archive member is not a regular file: {member.name}"
+                    )
+                if member.size < 0 or member.size > MAX_ARCHIVE_MEMBER:
+                    raise ValueError(
+                        f"OCI archive member has an unsafe size: {member.name}"
+                    )
+                self.members[member.name] = member
+            if {"blobs", "blobs/sha256"} - self.members.keys():
+                raise ValueError("OCI archive is missing its blob directories")
+            if not all(
+                self.members[name].isdir() for name in ("blobs", "blobs/sha256")
+            ):
+                raise ValueError("OCI blob directory entries must be directories")
+        except Exception:
+            self.tar.close()
+            self.tar = None
+            raise
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if self.tar is not None:
+            self.tar.close()
+
+    def _stream(self, name: str) -> BinaryIO:
+        member = self.members.get(name)
+        if member is None or not member.isreg() or self.tar is None:
+            raise ValueError(f"OCI archive is missing regular member: {name}")
+        stream = self.tar.extractfile(member)
+        if stream is None:
+            raise ValueError(f"OCI archive member cannot be read: {name}")
+        return stream
+
+    def read(self, name: str, *, limit: int = MAX_JSON) -> bytes:
+        member = self.members.get(name)
+        if member is None or not member.isreg():
+            raise ValueError(f"OCI archive is missing regular member: {name}")
+        if member.size > limit:
+            raise ValueError(f"OCI archive member exceeds size limit: {name}")
+        with self._stream(name) as stream:
+            data = stream.read(limit + 1)
+        if len(data) != member.size:
+            raise ValueError(f"OCI archive member size is inconsistent: {name}")
+        return data
+
+    def hash(self, name: str) -> str:
+        if name in self.hashes:
+            return self.hashes[name]
+        digest = hashlib.sha256()
+        total = 0
+        with self._stream(name) as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                total += len(chunk)
+                digest.update(chunk)
+        if total != self.members[name].size:
+            raise ValueError(f"OCI archive member size is inconsistent: {name}")
+        value = digest.hexdigest()
+        self.hashes[name] = value
+        return value
+
+    def blob(self, digest: str, *, json_blob: bool = False) -> bytes:
+        if type(digest) is not str or not digest.startswith("sha256:"):
+            raise ValueError("OCI descriptor must use a sha256 digest")
+        value = digest[7:]
+        if not SHA256.fullmatch(value):
+            raise ValueError("OCI descriptor has a malformed sha256 digest")
+        name = f"blobs/sha256/{value}"
+        if self.hash(name) != value:
+            raise ValueError(f"OCI blob filename/content digest mismatch: {name}")
+        return self.read(name) if json_blob else b""
+
+
+def _descriptor(
+    value: object,
+    label: str,
+    *,
+    media_type: str | None = None,
+    require_platform: bool = False,
+) -> dict:
+    descriptor = _object(value, label)
+    allowed = {"mediaType", "digest", "size", "annotations", "platform"}
+    required = {"mediaType", "digest", "size"}
+    if not required <= descriptor.keys() or not descriptor.keys() <= allowed:
+        raise ValueError(f"{label} has an unexpected descriptor schema")
+    if type(descriptor["mediaType"]) is not str or (
+        media_type is not None and descriptor["mediaType"] != media_type
+    ):
+        raise ValueError(f"{label} media type mismatch")
+    digest = descriptor["digest"]
+    if (
+        type(digest) is not str
+        or not digest.startswith("sha256:")
+        or not SHA256.fullmatch(digest[7:])
+    ):
+        raise ValueError(f"{label} digest is malformed")
+    if type(descriptor["size"]) is not int or descriptor["size"] <= 0:
+        raise ValueError(f"{label} size must be a strict positive integer")
+    if "annotations" in descriptor:
+        annotations = _object(descriptor["annotations"], f"{label} annotations")
+        if any(type(key) is not str or type(item) is not str for key, item in annotations.items()):
+            raise ValueError(f"{label} annotations must contain only strings")
+    if require_platform:
+        if descriptor.get("platform") != {"architecture": "amd64", "os": "linux"}:
+            raise ValueError(f"{label} must be exactly linux/amd64")
+    elif "platform" in descriptor:
+        _object(descriptor["platform"], f"{label} platform")
+    return descriptor
+
+
+def _read_descriptor_json(
+    archive: _OciArchive, descriptor: dict, label: str
+) -> tuple[dict, bytes]:
+    data = archive.blob(descriptor["digest"], json_blob=True)
+    if len(data) != descriptor["size"]:
+        raise ValueError(f"{label} descriptor size mismatch")
+    return _object(_load_json_bytes(data, label), label), data
+
+
+def _parse_containerfile(path: Path) -> tuple[str, int, list[dict[str, str]]]:
+    path = _require_regular(path, "Containerfile")
+    if path.name != "Containerfile":
+        raise ValueError("container build definition must be named Containerfile")
+    try:
+        raw = path.read_bytes()
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Containerfile is not UTF-8") from exc
+    materials = []
+    for line in text.splitlines():
+        if not line.lstrip().upper().startswith("FROM "):
+            continue
+        match = FROM.fullmatch(line)
+        if match is None:
+            raise ValueError("every Containerfile FROM must be digest pinned")
+        if match.group("digest") != match.group("digest").lower():
+            raise ValueError("Containerfile sha256 pins must use lowercase hex")
+        materials.append(
+            {
+                "source": match.group("source"),
+                "sha256": f"sha256:{match.group('digest')}",
+            }
+        )
+    if not materials:
+        raise ValueError("Containerfile contains no pinned base image materials")
+    digests = [entry["sha256"] for entry in materials]
+    if len(set(digests)) != len(digests):
+        raise ValueError("Containerfile base image material digests must be unique")
+    return _digest_bytes(raw), len(raw), materials
+
+
+def _validate_metadata(
+    *,
+    path: Path,
+    image_descriptor: dict,
+    materials: list[dict[str, str]],
+    version: str,
+    source_sha: str,
+    repository: str,
+) -> tuple[str, str, int]:
+    path = _require_regular(path, "buildx metadata")
+    raw = path.read_bytes()
+    metadata = _object(_load_json_bytes(raw, "buildx metadata"), "buildx metadata")
+    digest = image_descriptor["digest"]
+    if metadata.get("containerimage.digest") != digest:
+        raise ValueError("buildx metadata digest does not match the OCI image manifest")
+    descriptor = _object(
+        metadata.get("containerimage.descriptor"), "buildx image descriptor"
+    )
+    if (
+        descriptor.get("digest") != digest
+        or descriptor.get("mediaType") != image_descriptor["mediaType"]
+        or type(descriptor.get("size")) is not int
+        or descriptor["size"] != image_descriptor["size"]
+    ):
+        raise ValueError("buildx image descriptor does not match the OCI image manifest")
+    provenance = _object(
+        metadata.get("buildx.build.provenance"), "buildx metadata provenance"
+    )
+    if provenance.get("buildType") != "https://mobyproject.org/buildkit@v1":
+        raise ValueError("buildx metadata provenance build type mismatch")
+    raw_materials = _array(provenance.get("materials"), "buildx materials")
+    actual_materials: dict[str, str] = {}
+    for position, value in enumerate(raw_materials):
+        item = _object(value, f"buildx material {position}")
+        if set(item) != {"uri", "digest"} or type(item["uri"]) is not str:
+            raise ValueError("buildx material schema mismatch")
+        item_digest = _object(item["digest"], "buildx material digest")
+        if set(item_digest) != {"sha256"}:
+            raise ValueError("buildx material must contain exactly one sha256 digest")
+        sha = item_digest["sha256"]
+        if type(sha) is not str or not SHA256.fullmatch(sha) or sha in actual_materials:
+            raise ValueError("buildx material sha256 digest is malformed or duplicated")
+        actual_materials[sha] = item["uri"]
+    expected_digests = {entry["sha256"][7:] for entry in materials}
+    if set(actual_materials) != expected_digests:
+        raise ValueError("buildx materials do not match Containerfile base image digests")
+    for entry in materials:
+        sha = entry["sha256"][7:]
+        package = entry["source"].removeprefix("docker.io/library/")
+        expected_uri = (
+            f"pkg:docker/{package}?digest=sha256:{sha}&platform=linux%2Famd64"
+        )
+        if actual_materials[sha] != expected_uri:
+            raise ValueError("buildx material URI does not match its Containerfile source")
+
+    invocation = _object(provenance.get("invocation"), "buildx invocation")
+    config_source = _object(invocation.get("configSource"), "buildx config source")
+    if config_source.get("entryPoint") != "Containerfile":
+        raise ValueError("buildx provenance did not use Containerfile")
+    environment = _object(invocation.get("environment"), "buildx environment")
+    if environment.get("platform") != "linux/amd64":
+        raise ValueError("buildx platform must be exactly linux/amd64")
+    parameters = _object(invocation.get("parameters"), "buildx parameters")
+    args = _object(parameters.get("args"), "buildx build arguments")
+    if (
+        args.get("build-arg:TCI_REVISION") != source_sha
+        or args.get("build-arg:TCI_VERSION") != version
+    ):
+        raise ValueError("buildx build arguments do not match candidate identity")
+    root = _object(parameters.get("root"), "buildx root parameters")
+    root_source = _object(root.get("configSource"), "buildx root config source")
+    if root_source.get("path") != "Containerfile":
+        raise ValueError("buildx root config source is not Containerfile")
+    request = _object(root.get("request"), "buildx root request")
+    request_args = _object(request.get("args"), "buildx root request arguments")
+    source_urls = {
+        f"https://github.com/{repository}",
+        f"https://github.com/{repository}.git",
+    }
+    if (
+        request_args.get("vcs:revision") != source_sha
+        or request_args.get("vcs:source") not in source_urls
+        or request_args.get("build-arg:TCI_REVISION") != source_sha
+        or request_args.get("build-arg:TCI_VERSION") != version
+    ):
+        raise ValueError("buildx VCS identity does not match the exact candidate source")
+    return _digest_bytes(raw), path.name, len(raw)
+
+
+def _inspect_oci(
+    *,
+    archive_path: Path,
+    metadata_path: Path,
+    containerfile_path: Path,
+    version: str,
+    source_sha: str,
+    repository: str,
+) -> dict:
+    if type(version) is not str or not SEMVER.fullmatch(version):
+        raise ValueError("OCI candidate version must be SemVer")
+    containerfile_sha, containerfile_size, materials = _parse_containerfile(
+        containerfile_path
+    )
+    archive_path = _require_regular(archive_path, "OCI archive")
+    archive_size = archive_path.stat().st_size
+    archive_sha = sha256_file(archive_path)
+    referenced: set[str] = set()
+    with _OciArchive(archive_path) as archive:
+        layout_raw = archive.read("oci-layout")
+        layout = _object(_load_json_bytes(layout_raw, "oci-layout"), "oci-layout")
+        if layout != {"imageLayoutVersion": "1.0.0"}:
+            raise ValueError("OCI layout version/schema mismatch")
+        index_raw = archive.read("index.json")
+        layout_index = _object(
+            _load_json_bytes(index_raw, "OCI layout index"), "OCI layout index"
+        )
+        if set(layout_index) != {"schemaVersion", "mediaType", "manifests"}:
+            raise ValueError("OCI layout index has an unexpected schema")
+        if (
+            type(layout_index["schemaVersion"]) is not int
+            or layout_index["schemaVersion"] != 2
+            or layout_index["mediaType"] != OCI_INDEX
+        ):
+            raise ValueError("OCI layout index identity mismatch")
+        roots = _array(layout_index["manifests"], "OCI layout descriptors")
+        if len(roots) != 1:
+            raise ValueError(
+                "detached provenance mode requires exactly one image manifest"
+            )
+        manifest_descriptor = _descriptor(
+            roots[0],
+            "OCI image manifest descriptor",
+            media_type=OCI_MANIFEST,
+            require_platform=True,
+        )
+        referenced.add(manifest_descriptor["digest"][7:])
+        manifest, _ = _read_descriptor_json(
+            archive, manifest_descriptor, "OCI image manifest"
+        )
+        allowed_manifest = {"schemaVersion", "mediaType", "config", "layers"}
+        if (
+            not {"schemaVersion", "mediaType", "config", "layers"} <= manifest.keys()
+            or not manifest.keys() <= allowed_manifest
+            or type(manifest["schemaVersion"]) is not int
+            or manifest["schemaVersion"] != 2
+            or manifest["mediaType"] != OCI_MANIFEST
+        ):
+            raise ValueError("OCI image manifest schema mismatch")
+        config_descriptor = _descriptor(
+            manifest["config"], "OCI config descriptor", media_type=OCI_CONFIG
+        )
+        referenced.add(config_descriptor["digest"][7:])
+        config, _ = _read_descriptor_json(archive, config_descriptor, "OCI config")
+        layers = _array(manifest["layers"], "OCI layers")
+        if not layers:
+            raise ValueError("OCI image manifest contains no layers")
+        for position, value in enumerate(layers):
+            layer = _descriptor(value, f"OCI layer {position}")
+            if not layer["mediaType"].startswith("application/vnd.oci.image.layer.v1."):
+                raise ValueError(f"OCI layer {position} has an unsupported media type")
+            referenced.add(layer["digest"][7:])
+            archive.blob(layer["digest"])
+            layer_member = archive.members[f"blobs/sha256/{layer['digest'][7:]}"]
+            if layer_member.size != layer["size"]:
+                raise ValueError(f"OCI layer {position} descriptor size mismatch")
+
+        if config.get("architecture") != "amd64" or config.get("os") != "linux":
+            raise ValueError("OCI config platform must be exactly linux/amd64")
+        rootfs = _object(config.get("rootfs"), "OCI rootfs config")
+        diff_ids = _array(rootfs.get("diff_ids"), "OCI rootfs diff IDs")
+        if (
+            rootfs.get("type") != "layers"
+            or len(diff_ids) != len(layers)
+            or any(
+                type(value) is not str
+                or not value.startswith("sha256:")
+                or not SHA256.fullmatch(value[7:])
+                for value in diff_ids
+            )
+        ):
+            raise ValueError("OCI rootfs diff IDs do not match the layer inventory")
+        runtime = _object(config.get("config"), "OCI runtime config")
+        labels = _object(runtime.get("Labels"), "OCI image labels")
+        expected_source = f"https://github.com/{repository}"
+        expected_labels = {
+            "org.opencontainers.image.version": version,
+            "org.opencontainers.image.revision": source_sha,
+            "org.opencontainers.image.source": expected_source,
+        }
+        if any(
+            type(labels.get(name)) is not str or labels.get(name) != value
+            for name, value in expected_labels.items()
+        ):
+            raise ValueError("OCI version/revision/source labels do not match candidate identity")
+        if type(runtime.get("User")) is not str or runtime["User"] != "65532:65532":
+            raise ValueError("OCI runtime user must be exactly 65532:65532")
+        entrypoint = runtime.get("Entrypoint")
+        if (
+            type(entrypoint) is not list
+            or entrypoint != ["/usr/local/bin/tomorrowci"]
+            or any(type(item) is not str for item in entrypoint)
+        ):
+            raise ValueError("OCI entrypoint must be the TomorrowCI binary")
+
+        actual_blobs = {
+            name.removeprefix("blobs/sha256/")
+            for name, member in archive.members.items()
+            if member.isreg() and name.startswith("blobs/sha256/")
+        }
+        if any(not SHA256.fullmatch(value) for value in actual_blobs):
+            raise ValueError("OCI blob filenames must be lowercase sha256 values")
+        for value in actual_blobs:
+            if archive.hash(f"blobs/sha256/{value}") != value:
+                raise ValueError("OCI blob filename/content sha256 mismatch")
+        if actual_blobs != referenced:
+            raise ValueError("OCI archive contains missing or unreferenced blobs")
+        expected_files = {
+            "blobs",
+            "blobs/sha256",
+            "index.json",
+            "oci-layout",
+            *(f"blobs/sha256/{value}" for value in actual_blobs),
+        }
+        if set(archive.members) != expected_files:
+            raise ValueError("OCI archive contains unexpected extra members")
+
+    if (
+        archive_path.stat().st_size != archive_size
+        or sha256_file(archive_path) != archive_sha
+    ):
+        raise ValueError("OCI archive changed while it was being inspected")
+
+    metadata_sha, metadata_name, metadata_size = _validate_metadata(
+        path=metadata_path,
+        image_descriptor=manifest_descriptor,
+        materials=materials,
+        version=version,
+        source_sha=source_sha,
+        repository=repository,
+    )
+    return {
+        "archive": {
+            "name": archive_path.name,
+            "sha256": f"sha256:{archive_sha}",
+            "size": archive_size,
+        },
+        "layout_index": {"sha256": f"sha256:{_digest_bytes(index_raw)}"},
+        "manifest": {
+            "digest": manifest_descriptor["digest"],
+            "media_type": manifest_descriptor["mediaType"],
+            "size": manifest_descriptor["size"],
+        },
+        "config": {
+            "digest": config_descriptor["digest"],
+            "media_type": config_descriptor["mediaType"],
+            "size": config_descriptor["size"],
+        },
+        "platform": {"architecture": "amd64", "os": "linux"},
+        "runtime": {
+            "entrypoint": ["/usr/local/bin/tomorrowci"],
+            "user": "65532:65532",
+        },
+        "build": {
+            "containerfile": {
+                "name": "Containerfile",
+                "sha256": f"sha256:{containerfile_sha}",
+                "size": containerfile_size,
+            },
+            "metadata": {
+                "name": metadata_name,
+                "sha256": f"sha256:{metadata_sha}",
+                "size": metadata_size,
+            },
+            "materials": materials,
+        },
+    }
+
+
+def _candidate_document(
+    *,
+    inspection: dict,
+    version: str,
+    source_sha: str,
+    repository: str,
+    run_id: str,
+    run_attempt: int,
+    server_url: str,
+) -> dict:
+    _validate_identity(
+        source_sha=source_sha,
+        repository=repository,
+        run_id=run_id,
+        run_attempt=run_attempt,
+    )
+    if type(server_url) is not str or server_url != "https://github.com":
+        raise ValueError("candidate server URL must be exactly https://github.com")
+    run_url = f"{server_url}/{repository}/actions/runs/{run_id}/attempts/{run_attempt}"
+    return {
+        "schema_version": 1,
+        "kind": KIND,
+        "status": STATUS,
+        "version": version,
+        "source": {
+            "commit": source_sha,
+            "repository": repository,
+            "url": f"https://github.com/{repository}",
+        },
+        "workflow": {
+            "run_attempt": run_attempt,
+            "run_id": int(run_id),
+            "run_url": run_url,
+        },
+        "oci": {key: value for key, value in inspection.items() if key != "build"},
+        "build": inspection["build"],
+        "promotion": {
+            "authorization_source": None,
+            "authorized": False,
+            "instruction": (
+                "Bind independent exact-SHA authorization to this provenance digest "
+                "before any release or registry publication."
+            ),
+        },
+    }
+
+
+def create_candidate(
+    *,
+    archive: Path,
+    metadata: Path,
+    containerfile: Path,
+    provenance: Path = DEFAULT_PROVENANCE,
+    version: str,
+    source_sha: str,
+    repository: str,
+    run_id: str,
+    run_attempt: int,
+    server_url: str = "https://github.com",
+) -> dict:
+    _validate_identity(
+        source_sha=source_sha,
+        repository=repository,
+        run_id=run_id,
+        run_attempt=run_attempt,
+    )
+    inspection = _inspect_oci(
+        archive_path=archive,
+        metadata_path=metadata,
+        containerfile_path=containerfile,
+        version=version,
+        source_sha=source_sha,
+        repository=repository,
+    )
+    document = _candidate_document(
+        inspection=inspection,
+        version=version,
+        source_sha=source_sha,
+        repository=repository,
+        run_id=run_id,
+        run_attempt=run_attempt,
+        server_url=server_url,
+    )
+    provenance = provenance.absolute()
+    if provenance.exists() or provenance.is_symlink():
+        raise ValueError("detached provenance output already exists")
+    if not provenance.parent.is_dir():
+        raise ValueError("detached provenance parent directory does not exist")
+    with provenance.open("xb") as handle:
+        handle.write(_canonical_bytes(document))
+    verify_candidate(
+        archive=archive,
+        metadata=metadata,
+        containerfile=containerfile,
+        provenance=provenance,
+        expected_source_sha=source_sha,
+        expected_repository=repository,
+        expected_run_id=run_id,
+        expected_run_attempt=run_attempt,
+    )
+    return document
+
+
+def verify_candidate(
+    *,
+    archive: Path,
+    metadata: Path,
+    containerfile: Path,
+    provenance: Path = DEFAULT_PROVENANCE,
+    expected_source_sha: str | None = None,
+    expected_repository: str | None = None,
+    expected_run_id: str | None = None,
+    expected_run_attempt: int | None = None,
+) -> dict:
+    provenance = _require_regular(provenance, "detached provenance")
+    raw = provenance.read_bytes()
+    document = _object(
+        _load_json_bytes(raw, "detached provenance"), "detached provenance"
+    )
+    if raw != _canonical_bytes(document):
+        raise ValueError("detached provenance is not canonical JSON")
+    if set(document) != {
+        "schema_version",
+        "kind",
+        "status",
+        "version",
+        "source",
+        "workflow",
+        "oci",
+        "build",
+        "promotion",
+    }:
+        raise ValueError("detached provenance has an unexpected top-level schema")
+    if (
+        type(document["schema_version"]) is not int
+        or document["schema_version"] != 1
+        or type(document["kind"]) is not str
+        or document["kind"] != KIND
+        or type(document["status"]) is not str
+        or document["status"] != STATUS
+        or type(document["version"]) is not str
+    ):
+        raise ValueError("detached provenance identity mismatch")
+    source = _object(document["source"], "detached source")
+    workflow = _object(document["workflow"], "detached workflow")
+    if set(source) != {"commit", "repository", "url"} or set(workflow) != {
+        "run_attempt",
+        "run_id",
+        "run_url",
+    }:
+        raise ValueError("detached source/workflow schema mismatch")
+    if type(workflow["run_id"]) is not int or type(workflow["run_attempt"]) is not int:
+        raise ValueError("detached workflow identity must use strict integers")
+    run_id = str(workflow["run_id"])
+    _validate_identity(
+        source_sha=source["commit"],
+        repository=source["repository"],
+        run_id=run_id,
+        run_attempt=workflow["run_attempt"],
+    )
+    if expected_source_sha is not None and source["commit"] != expected_source_sha:
+        raise ValueError("detached provenance source SHA does not match expected SHA")
+    if expected_repository is not None and source["repository"] != expected_repository:
+        raise ValueError("detached provenance repository does not match expected repository")
+    if expected_run_id is not None and run_id != expected_run_id:
+        raise ValueError("detached provenance run ID does not match expected run")
+    if (
+        expected_run_attempt is not None
+        and workflow["run_attempt"] != expected_run_attempt
+    ):
+        raise ValueError("detached provenance run attempt does not match expected attempt")
+    inspection = _inspect_oci(
+        archive_path=archive,
+        metadata_path=metadata,
+        containerfile_path=containerfile,
+        version=document["version"],
+        source_sha=source["commit"],
+        repository=source["repository"],
+    )
+    expected = _candidate_document(
+        inspection=inspection,
+        version=document["version"],
+        source_sha=source["commit"],
+        repository=source["repository"],
+        run_id=run_id,
+        run_attempt=workflow["run_attempt"],
+        server_url="https://github.com",
+    )
+    if not _strict_equal(document, expected):
+        raise ValueError("detached provenance does not match the exact OCI candidate inputs")
+    return document
+
+
+def _add_common(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--archive", type=Path, required=True)
+    parser.add_argument("--metadata", type=Path, required=True)
+    parser.add_argument("--containerfile", type=Path, required=True)
+    parser.add_argument("--provenance", type=Path, default=DEFAULT_PROVENANCE)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="command", required=True)
+    create = commands.add_parser("create")
+    _add_common(create)
+    create.add_argument("--version", required=True)
+    create.add_argument("--source-sha", required=True)
+    create.add_argument("--repository", required=True)
+    create.add_argument("--run-id", required=True)
+    create.add_argument("--run-attempt", type=int, required=True)
+    create.add_argument("--server-url", default="https://github.com")
+    verify = commands.add_parser("verify")
+    _add_common(verify)
+    verify.add_argument("--expected-source-sha")
+    verify.add_argument("--expected-repository")
+    verify.add_argument("--expected-run-id")
+    verify.add_argument("--expected-run-attempt", type=int)
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "create":
+            create_candidate(
+                archive=args.archive,
+                metadata=args.metadata,
+                containerfile=args.containerfile,
+                provenance=args.provenance,
+                version=args.version,
+                source_sha=args.source_sha,
+                repository=args.repository,
+                run_id=args.run_id,
+                run_attempt=args.run_attempt,
+                server_url=args.server_url,
+            )
+        else:
+            verify_candidate(
+                archive=args.archive,
+                metadata=args.metadata,
+                containerfile=args.containerfile,
+                provenance=args.provenance,
+                expected_source_sha=args.expected_source_sha,
+                expected_repository=args.expected_repository,
+                expected_run_id=args.expected_run_id,
+                expected_run_attempt=args.expected_run_attempt,
+            )
+        print(f"oci-candidate: PASS: sha256:{sha256_file(args.provenance.absolute())}")
+    except (OSError, TypeError, ValueError, tarfile.TarError) as exc:
+        print(f"oci-candidate: FAIL: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
