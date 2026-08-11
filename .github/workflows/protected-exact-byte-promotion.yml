@@ -1,0 +1,318 @@
+name: protected-exact-byte-promotion
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_source_sha:
+        description: Exact final master candidate commit
+        required: true
+        type: string
+      ci_run_id:
+        description: Exact successful master push CI run ID
+        required: true
+        type: string
+      ci_run_attempt:
+        description: Exact successful master push CI run attempt
+        required: true
+        type: string
+      candidate_run_id:
+        description: Exact successful release-candidate run ID
+        required: true
+        type: string
+      candidate_run_attempt:
+        description: Exact successful release-candidate run attempt
+        required: true
+        type: string
+      candidate_artifact_sha256:
+        description: Exact GitHub API digest of the final candidate artifact
+        required: true
+        type: string
+      candidate_manifest_sha256:
+        description: Exact digest of candidate-manifest.json
+        required: true
+        type: string
+      oci_manifest_digest:
+        description: Exact OCI image manifest digest
+        required: true
+        type: string
+      authorization_artifact_id:
+        description: Artifact ID containing independently signed authorization files
+        required: true
+        type: string
+      authorization_artifact_sha256:
+        description: Exact GitHub API digest of the authorization bundle artifact
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: protected-exact-byte-promotion
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Guard exact final default branch and immutable input syntax
+        env:
+          CANDIDATE_ARTIFACT_SHA256: ${{ inputs.candidate_artifact_sha256 }}
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/master
+          test "$CANDIDATE_SOURCE_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          [[ "$CANDIDATE_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CI_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CI_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CANDIDATE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CANDIDATE_ARTIFACT_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$CANDIDATE_MANIFEST_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$OCI_MANIFEST_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+      - name: Snapshot default branch, exact CI, candidate run, and artifact APIs
+        id: candidate-api
+        env:
+          CANDIDATE_ARTIFACT_SHA256: ${{ inputs.candidate_artifact_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/promotion-api"
+          test ! -e "$metadata"
+          mkdir "$metadata"
+          gh api "/repos/$GITHUB_REPOSITORY" > "$metadata/repository.json"
+          gh api "/repos/$GITHUB_REPOSITORY/git/ref/heads/master" > "$metadata/master.json"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" > "$metadata/ci-run.json"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" > "$metadata/candidate-run.json"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" \
+            > "$metadata/candidate-artifacts.json"
+          python3 - "$metadata/repository.json" "$metadata/master.json" "$GITHUB_REPOSITORY" "$GITHUB_SHA" <<'PY'
+          import json
+          import sys
+
+          repository = json.load(open(sys.argv[1], encoding="utf-8"))
+          branch = json.load(open(sys.argv[2], encoding="utf-8"))
+          assert repository.get("full_name") == sys.argv[3]
+          assert repository.get("default_branch") == "master"
+          assert branch.get("ref") == "refs/heads/master"
+          assert branch.get("object", {}).get("type") == "commit"
+          assert branch.get("object", {}).get("sha") == sys.argv[4]
+          PY
+          python3 scripts/promotion_preflight.py inspect-ci-api \
+            --metadata "$metadata/ci-run.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-sha "$CANDIDATE_SOURCE_SHA" \
+            --run-id "$CI_RUN_ID" --run-attempt "$CI_RUN_ATTEMPT"
+          python3 scripts/validate_external_evidence.py inspect-candidate-api \
+            --run-metadata "$metadata/candidate-run.json" \
+            --artifact-metadata "$metadata/candidate-artifacts.json" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --project-repository "$GITHUB_REPOSITORY" \
+            | tee "$metadata/candidate-validated.txt"
+          artifact_id="$(sed -n 's/^artifact_id: //p' "$metadata/candidate-validated.txt")"
+          artifact_digest="$(sed -n 's/^artifact_digest: //p' "$metadata/candidate-validated.txt")"
+          artifact_size="$(sed -n 's/^artifact_size: //p' "$metadata/candidate-validated.txt")"
+          test "$artifact_digest" = "$CANDIDATE_ARTIFACT_SHA256"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" \
+            > "$metadata/candidate-artifact.zip"
+          test "$(stat -c '%s' "$metadata/candidate-artifact.zip")" = "$artifact_size"
+          test "sha256:$(sha256sum "$metadata/candidate-artifact.zip" | cut -d ' ' -f 1)" = \
+            "$artifact_digest"
+      - name: Download exact candidate artifact without rebuilding
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-candidate-dist-attempt-${{ inputs.candidate_run_attempt }}
+          path: ${{ runner.temp }}/candidate-dist
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Download authorization bundle and verify its API archive bytes
+        env:
+          ARTIFACT_ID: ${{ inputs.authorization_artifact_id }}
+          ARTIFACT_SHA256: ${{ inputs.authorization_artifact_sha256 }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/authorization-artifact.json"
+          archive="$RUNNER_TEMP/authorization-artifact.zip"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" > "$metadata"
+          python3 scripts/promotion_preflight.py inspect-authorization-artifact \
+            --metadata "$metadata" --artifact-id "$ARTIFACT_ID" \
+            --artifact-sha256 "$ARTIFACT_SHA256" \
+            | tee "$RUNNER_TEMP/authorization-validated.txt"
+          size="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["size_in_bytes"])' "$metadata")"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > "$archive"
+          test "$(stat -c '%s' "$archive")" = "$size"
+          test "sha256:$(sha256sum "$archive" | cut -d ' ' -f 1)" = "$ARTIFACT_SHA256"
+          python3 scripts/promotion_preflight.py extract-authorization \
+            --archive "$archive" --destination "$RUNNER_TEMP/authorization"
+      - name: Reverify candidate archives and OCI bytes
+        env:
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+        run: |
+          set -euo pipefail
+          dist="$RUNNER_TEMP/candidate-dist"
+          version="$(python3 scripts/version_contract.py --tag "v$(python3 scripts/version_contract.py)" --release)"
+          python3 scripts/candidate_manifest.py verify --dist "$dist" \
+            --expected-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$CANDIDATE_RUN_ID" \
+            --expected-run-attempt "$CANDIDATE_RUN_ATTEMPT"
+          test "sha256:$(sha256sum "$dist/candidate-manifest.json" | cut -d ' ' -f 1)" = \
+            "$CANDIDATE_MANIFEST_SHA256"
+          for target in x86_64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin; do
+            python3 scripts/package_release.py verify \
+              --archive "$dist/tomorrowci-v${version}-${target}.tar.gz" \
+              --version "$version" --target "$target"
+          done
+          python3 scripts/package_release.py verify \
+            --archive "$dist/tomorrowci-v${version}-x86_64-pc-windows-msvc.zip" \
+            --version "$version" --target x86_64-pc-windows-msvc
+          python3 scripts/oci_candidate.py verify \
+            --archive "$dist/tomorrowci-oci-linux-amd64.tar" \
+            --metadata "$dist/build-metadata.json" \
+            --containerfile "$dist/Containerfile" \
+            --provenance "$dist/image-provenance.json" \
+            --expected-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$CANDIDATE_RUN_ID" \
+            --expected-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            | tee "$RUNNER_TEMP/oci-verified.txt"
+          python3 scripts/promotion_preflight.py inspect-oci-manifest \
+            --provenance "$dist/image-provenance.json" \
+            --expected-digest "$OCI_MANIFEST_DIGEST"
+      - name: Require immutable repository trust material and verify authorization
+        env:
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+        run: |
+          set -euo pipefail
+          trust=.github/release-trust
+          test -f "$trust/allowed_signers"
+          test -f "$trust/expected-policy-sha256.txt"
+          expected_policy="$(tr -d '\r\n' < "$trust/expected-policy-sha256.txt")"
+          [[ "$expected_policy" =~ ^sha256:[0-9a-f]{64}$ ]]
+          authorization="$RUNNER_TEMP/authorization"
+          dist="$RUNNER_TEMP/candidate-dist"
+          python3 scripts/external_authorization.py \
+            --authorization "$authorization/external-authorization.json" \
+            --signature "$authorization/external-authorization.json.sig" \
+            --policy "$authorization/preregistered-policy.json" \
+            --expected-policy-sha256 "$expected_policy" \
+            --allowed-signers "$trust/allowed_signers" \
+            --candidate-manifest "$dist/candidate-manifest.json" \
+            --oci-provenance "$dist/image-provenance.json" \
+            --evidence "$authorization/external-qualification-evidence.json" \
+            > "$RUNNER_TEMP/external-authorization-receipt.json"
+          test -s "$RUNNER_TEMP/external-authorization-receipt.json"
+          test "$CANDIDATE_SOURCE_SHA" = "$GITHUB_SHA"
+      - name: Create local Git-native annotated refs and verify tag qualification
+        env:
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+        run: |
+          set -euo pipefail
+          authorization="$RUNNER_TEMP/authorization"
+          dist="$RUNNER_TEMP/candidate-dist"
+          trust=.github/release-trust
+          version="$(python3 scripts/version_contract.py)"
+          authorization_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["external"]["authorization_id"])' "$authorization/preregistered-policy.json")"
+          [[ "$authorization_id" =~ ^[0-9a-f]{64}$ ]]
+          export GIT_COMMITTER_NAME="TomorrowCI Release Bot"
+          export GIT_COMMITTER_EMAIL="release@tomorrowci.invalid"
+          export GIT_COMMITTER_DATE="@0 +0000"
+          version_ref="refs/tags/v$version"
+          marker_ref="refs/tags/tomorrowci-authorization/$authorization_id"
+          if ! git show-ref --verify --quiet "$version_ref"; then
+            git tag --no-sign --annotate "v$version" "$CANDIDATE_SOURCE_SHA" \
+              --message "TomorrowCI protected exact-byte promotion preflight"
+          fi
+          if ! git show-ref --verify --quiet "$marker_ref"; then
+            git tag --no-sign --annotate "tomorrowci-authorization/$authorization_id" \
+              "$CANDIDATE_SOURCE_SHA" \
+              --message "Consume TomorrowCI external authorization $authorization_id"
+          fi
+          expected_policy="$(tr -d '\r\n' < "$trust/expected-policy-sha256.txt")"
+          python3 scripts/tag_promotion_attestation.py \
+            --attestation "$authorization/tag-promotion-attestation.json" \
+            --git-repo . --candidate-dir "$dist" \
+            --authorization "$authorization/external-authorization.json" \
+            --signature "$authorization/external-authorization.json.sig" \
+            --policy "$authorization/preregistered-policy.json" \
+            --expected-policy-sha256 "$expected_policy" \
+            --allowed-signers "$trust/allowed_signers" \
+            --evidence "$authorization/external-qualification-evidence.json"
+          tag_oid="$(git rev-parse "$version_ref")"
+          python3 scripts/promotion_preflight.py inspect-authorization-marker \
+            --git-repo . --marker-ref "$marker_ref" \
+            --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --authorization-id "$authorization_id" \
+            > "$RUNNER_TEMP/authorization-marker-identity.json"
+          marker_oid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["object_sha"])' "$RUNNER_TEMP/authorization-marker-identity.json")"
+          git ls-remote --refs origin "$version_ref" "$marker_ref" \
+            > "$RUNNER_TEMP/remote-refs.txt"
+          state_root="$RUNNER_TEMP/promotion-preflight-state"
+          mkdir "$state_root"
+          python3 scripts/promotion_preflight.py inspect-remote-refs \
+            --observation "$RUNNER_TEMP/remote-refs.txt" \
+            --version-ref "$version_ref" --version-oid "$tag_oid" \
+            --marker-ref "$marker_ref" --marker-oid "$marker_oid" \
+            --output "$state_root/remote-state.json"
+          cp "$authorization/tag-promotion-attestation.json" "$state_root/"
+          cp "$RUNNER_TEMP/external-authorization-receipt.json" "$state_root/"
+          cp "$RUNNER_TEMP/authorization-marker-identity.json" "$state_root/"
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Upload prepared-only state
+        id: state
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: protected-promotion-preflight-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/promotion-preflight-state/*
+          if-no-files-found: error
+          retention-days: 90
+
+  write:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: release
+    permissions:
+      actions: read
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Permanent fail-closed publication boundary
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/master
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 scripts/promotion_preflight.py assert-publication-disabled

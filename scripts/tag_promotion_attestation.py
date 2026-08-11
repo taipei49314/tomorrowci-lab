@@ -27,6 +27,7 @@ CHECKSUMS_NAME = candidate_manifest.CHECKSUMS_NAME
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 ASSET_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$")
+TAG_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$")
 TAGGER = re.compile(r"^tagger .+ <[^<>\r\n]+> [0-9]+ [+-][0-9]{4}$")
 MAX_FILE = 1024 * 1024 * 1024
 MAX_FILES = 64
@@ -269,16 +270,23 @@ def _tag_object_header(repo: Path, object_sha: str, expected_name: str) -> dict:
     }
 
 
-def _annotated_tag_identity(repo: Path, version: str) -> dict:
+def _annotated_tag_ref_identity(repo: Path, name: str) -> dict:
+    """Capture one exact direct annotated-tag ref without following aliases."""
+
     repo = _require_directory(repo, "Git repository")
-    if not is_semver(version):
-        raise ValueError(f"candidate version is not SemVer: {version!r}")
+    if (
+        type(name) is not str
+        or not TAG_NAME.fullmatch(name)
+        or name.endswith((".", "/"))
+        or "//" in name
+        or any(part in {".", ".."} for part in name.split("/"))
+    ):
+        raise ValueError(f"annotated tag name is not canonical: {name!r}")
     if _git(repo, "rev-parse", "--is-inside-work-tree") != "true":
         raise ValueError("tag repository is not a Git work tree")
-    name = f"v{version}"
     ref = f"refs/tags/{name}"
     if _git(repo, "for-each-ref", "--format=%(symref)", ref):
-        raise ValueError("annotated version tag ref must not be a symbolic alias")
+        raise ValueError("annotated tag ref must not be a symbolic alias")
     object_sha = _git(repo, "show-ref", "--verify", "--hash", ref)
     if not SHA.fullmatch(object_sha):
         raise ValueError("tag object ID must be a 40-character lowercase Git SHA")
@@ -296,13 +304,19 @@ def _annotated_tag_identity(repo: Path, version: str) -> dict:
     if _git(repo, "show-ref", "--verify", "--hash", ref) != object_sha:
         raise ValueError("annotated tag ref changed while its identity was captured")
     if _git(repo, "for-each-ref", "--format=%(symref)", ref):
-        raise ValueError("annotated version tag ref became a symbolic alias")
+        raise ValueError("annotated tag ref became a symbolic alias")
     return {
         **header,
         "name": name,
         "object_sha": object_sha,
         "peeled_commit": peeled_commit,
     }
+
+
+def _annotated_tag_identity(repo: Path, version: str) -> dict:
+    if not is_semver(version):
+        raise ValueError(f"candidate version is not SemVer: {version!r}")
+    return _annotated_tag_ref_identity(repo, f"v{version}")
 
 
 def _materialize_candidate(
