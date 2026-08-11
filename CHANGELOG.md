@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0-alpha.1] - 2026-08-11
+
 ### Added
 
 - Add content-addressed dependency manifests, exact resolved dependency sets,
@@ -15,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add a Linux Docker CI qualification gate that scans each dependency fixture,
   verifies its current-v2 evidence, and replays the minimal failing scenario
   twice with matching exit and normalized failure signature.
+- Add bounded Node and Rust runtime qualification, the interactive report UI,
+  and exact-commit GitHub source materialization with fail-closed controls.
+- Add deterministic four-platform release-candidate archives, a reproducible
+  OCI candidate, exact SBOM and vulnerability evidence, and detached candidate
+  provenance without granting publication authority.
+- Add strict independent-authorization and annotated-tag qualification
+  verifiers. These contracts validate externally signed evidence and exact
+  candidate bytes but do not publish a tag, release, or container image.
 
 ### Changed
 
