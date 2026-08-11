@@ -11,7 +11,10 @@
 
 Candidate construction is not platform support acceptance. A `NOT_RUN` or
 `BLOCKED` row remains a required qualification gate; see the run-bound
-[qualification status](docs/qualification/STATUS.md).
+[qualification status](docs/qualification/STATUS.md). The dedicated
+[platform protocol](docs/qualification/PLATFORM_PROTOCOL.md) defines the
+fail-closed self-hosted execution and hosted read-back needed to change those
+rows; merging that workflow alone is not a qualification result.
 
 ## Supported ecosystems
 

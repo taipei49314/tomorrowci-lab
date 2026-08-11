@@ -1,0 +1,407 @@
+name: platform-qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful release-candidate workflow run ID at this exact master SHA
+        required: true
+        type: string
+      candidate_run_attempt:
+        description: Exact positive release-candidate run attempt
+        required: true
+        type: string
+      candidate_manifest_sha256:
+        description: Exact sha256 digest of candidate-manifest.json, including sha256 prefix
+        required: true
+        type: string
+      candidate_source_sha:
+        description: Exact 40-hex candidate source SHA; must equal this qualification head
+        required: true
+        type: string
+      oci_manifest_digest:
+        description: Exact sha256 OCI image-manifest digest from detached provenance
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: tomorrowci-platform-qualification
+  cancel-in-progress: false
+
+jobs:
+  candidate-binding:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Guard exact master and candidate API identity
+        env:
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          GH_TOKEN: ${{ github.token }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/master"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CANDIDATE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CANDIDATE_MANIFEST_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$CANDIDATE_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$OCI_MANIFEST_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$CANDIDATE_SOURCE_SHA" = "$GITHUB_SHA"
+          metadata="$RUNNER_TEMP/candidate-api"
+          test ! -e "$metadata"
+          mkdir "$metadata"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" \
+            > "$metadata/run.json"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" \
+            > "$metadata/artifacts.json"
+          python3 scripts/validate_external_evidence.py inspect-candidate-api \
+            --run-metadata "$metadata/run.json" \
+            --artifact-metadata "$metadata/artifacts.json" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --project-repository "$GITHUB_REPOSITORY" \
+            | tee "$metadata/validated.txt"
+          artifact_id="$(sed -n 's/^artifact_id: //p' "$metadata/validated.txt")"
+          artifact_digest="$(sed -n 's/^artifact_digest: //p' "$metadata/validated.txt")"
+          artifact_size="$(sed -n 's/^artifact_size: //p' "$metadata/validated.txt")"
+          [[ "$artifact_id" =~ ^[1-9][0-9]*$ ]]
+          [[ "$artifact_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$artifact_size" =~ ^[1-9][0-9]*$ ]]
+          archive="$metadata/candidate-artifact.zip"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$archive"
+          test "$(stat -c '%s' "$archive")" = "$artifact_size"
+          test "sha256:$(sha256sum "$archive" | cut -d ' ' -f 1)" = "$artifact_digest"
+      - name: Download exact candidate artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-candidate-dist-attempt-${{ inputs.candidate_run_attempt }}
+          path: ${{ runner.temp }}/candidate-dist
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Verify frozen candidate and OCI bytes before scheduling private machines
+        env:
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+        run: |
+          set -euo pipefail
+          dist="$RUNNER_TEMP/candidate-dist"
+          python3 scripts/candidate_manifest.py verify \
+            --dist "$dist" \
+            --expected-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$CANDIDATE_RUN_ID" \
+            --expected-run-attempt "$CANDIDATE_RUN_ATTEMPT"
+          test "sha256:$(sha256sum "$dist/candidate-manifest.json" | cut -d ' ' -f 1)" = \
+            "$CANDIDATE_MANIFEST_SHA256"
+          python3 scripts/oci_candidate.py verify \
+            --archive "$dist/tomorrowci-oci-linux-amd64.tar" \
+            --metadata "$dist/build-metadata.json" \
+            --containerfile "$dist/Containerfile" \
+            --provenance "$dist/image-provenance.json" \
+            --expected-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$CANDIDATE_RUN_ID" \
+            --expected-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            | tee "$RUNNER_TEMP/oci-verified.txt"
+          python3 - "$dist/image-provenance.json" "$OCI_MANIFEST_DIGEST" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          def reject_duplicate(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ValueError(f"duplicate key: {key}")
+                  result[key] = value
+              return result
+
+          path = Path(sys.argv[1])
+          value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=reject_duplicate)
+          if value["oci"]["manifest"]["digest"] != sys.argv[2]:
+              raise SystemExit("OCI manifest digest input mismatch")
+          PY
+
+  windows-x86_64:
+    needs: candidate-binding
+    runs-on: [self-hosted, Windows, X64, tomorrowci-ephemeral, tomorrowci-docker-desktop-linux]
+    timeout-minutes: 150
+    steps:
+      - name: Initialize Windows fail-only workflow observation
+        env:
+          ARTIFACT_ROOT: ${{ runner.temp }}/platform-qualification-windows-x86_64-docker-desktop-linux-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path -LiteralPath $env:ARTIFACT_ROOT) {
+            throw 'platform workflow observation root already exists'
+          }
+          New-Item -ItemType Directory -Path $env:ARTIFACT_ROOT | Out-Null
+          $lines = @(
+            'kind: tomorrowci.platform-workflow-preflight/v1',
+            'status: FAIL_ONLY',
+            'platform_id: windows-x86_64-docker-desktop-linux',
+            "repository: $env:GITHUB_REPOSITORY",
+            "source_sha: $env:GITHUB_SHA",
+            "workflow_run_id: $env:GITHUB_RUN_ID",
+            "workflow_run_attempt: $env:GITHUB_RUN_ATTEMPT"
+          )
+          $utf8 = [System.Text.UTF8Encoding]::new($false)
+          [IO.File]::WriteAllText(
+            (Join-Path $env:ARTIFACT_ROOT 'workflow-preflight.txt'),
+            (($lines -join "`n") + "`n"),
+            $utf8
+          )
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          clean: true
+          persist-credentials: false
+      - name: Download exact candidate artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-candidate-dist-attempt-${{ inputs.candidate_run_attempt }}
+          path: ${{ runner.temp }}/candidate-dist
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Qualify Windows Docker Desktop Linux engine with frozen candidate
+        env:
+          ARTIFACT_ROOT: ${{ runner.temp }}/platform-qualification-windows-x86_64-docker-desktop-linux-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $arguments = @(
+            '--repository-root', $env:GITHUB_WORKSPACE,
+            '--fixture', (Join-Path $env:GITHUB_WORKSPACE 'fixtures/python-runtime-break'),
+            '--config', (Join-Path $env:GITHUB_WORKSPACE 'fixtures/python-runtime-break/.tomorrowci-platform.yml'),
+            '--artifact-root', $env:ARTIFACT_ROOT,
+            '--candidate-dist', (Join-Path $env:RUNNER_TEMP 'candidate-dist'),
+            '--candidate-run-id', '${{ inputs.candidate_run_id }}',
+            '--candidate-run-attempt', '${{ inputs.candidate_run_attempt }}',
+            '--candidate-manifest-sha256', '${{ inputs.candidate_manifest_sha256 }}',
+            '--candidate-source-sha', '${{ inputs.candidate_source_sha }}',
+            '--oci-manifest-digest', '${{ inputs.oci_manifest_digest }}',
+            '--platform-id', 'windows-x86_64-docker-desktop-linux',
+            '--project-repository', $env:GITHUB_REPOSITORY,
+            '--project-source-sha', $env:GITHUB_SHA,
+            '--project-source-ref', $env:GITHUB_REF,
+            '--workflow-run-id', $env:GITHUB_RUN_ID,
+            '--workflow-run-attempt', $env:GITHUB_RUN_ATTEMPT
+          )
+          & python scripts/run_platform_qualification.py @arguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain Windows platform evidence or exact failure observation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: platform-qualification-windows-x86_64-docker-desktop-linux-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/platform-qualification-windows-x86_64-docker-desktop-linux-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+  macos-x86_64:
+    needs: candidate-binding
+    runs-on: [self-hosted, macOS, X64, tomorrowci-ephemeral, tomorrowci-colima]
+    timeout-minutes: 150
+    steps:
+      - name: Initialize macOS x86_64 fail-only workflow observation
+        env:
+          ARTIFACT_ROOT: ${{ runner.temp }}/platform-qualification-macos-x86_64-colima-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test ! -e "$ARTIFACT_ROOT"
+          mkdir "$ARTIFACT_ROOT"
+          {
+            printf '%s\n' 'kind: tomorrowci.platform-workflow-preflight/v1'
+            printf '%s\n' 'status: FAIL_ONLY'
+            printf '%s\n' 'platform_id: macos-x86_64-colima'
+            printf 'repository: %s\n' "$GITHUB_REPOSITORY"
+            printf 'source_sha: %s\n' "$GITHUB_SHA"
+            printf 'workflow_run_id: %s\n' "$GITHUB_RUN_ID"
+            printf 'workflow_run_attempt: %s\n' "$GITHUB_RUN_ATTEMPT"
+          } > "$ARTIFACT_ROOT/workflow-preflight.txt"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          clean: true
+          persist-credentials: false
+      - name: Download exact candidate artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-candidate-dist-attempt-${{ inputs.candidate_run_attempt }}
+          path: ${{ runner.temp }}/candidate-dist
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Qualify macOS x86_64 Colima with frozen candidate
+        env:
+          ARTIFACT_ROOT: ${{ runner.temp }}/platform-qualification-macos-x86_64-colima-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/run_platform_qualification.py \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --fixture "$GITHUB_WORKSPACE/fixtures/python-runtime-break" \
+            --config "$GITHUB_WORKSPACE/fixtures/python-runtime-break/.tomorrowci-platform.yml" \
+            --artifact-root "$ARTIFACT_ROOT" \
+            --candidate-dist "$RUNNER_TEMP/candidate-dist" \
+            --candidate-run-id '${{ inputs.candidate_run_id }}' \
+            --candidate-run-attempt '${{ inputs.candidate_run_attempt }}' \
+            --candidate-manifest-sha256 '${{ inputs.candidate_manifest_sha256 }}' \
+            --candidate-source-sha '${{ inputs.candidate_source_sha }}' \
+            --oci-manifest-digest '${{ inputs.oci_manifest_digest }}' \
+            --platform-id macos-x86_64-colima \
+            --project-repository "$GITHUB_REPOSITORY" \
+            --project-source-sha "$GITHUB_SHA" \
+            --project-source-ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
+      - name: Retain macOS x86_64 platform evidence or exact failure observation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: platform-qualification-macos-x86_64-colima-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/platform-qualification-macos-x86_64-colima-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+  macos-aarch64:
+    needs: candidate-binding
+    runs-on: [self-hosted, macOS, ARM64, tomorrowci-ephemeral, tomorrowci-colima]
+    timeout-minutes: 150
+    steps:
+      - name: Initialize macOS arm64 fail-only workflow observation
+        env:
+          ARTIFACT_ROOT: ${{ runner.temp }}/platform-qualification-macos-aarch64-colima-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test ! -e "$ARTIFACT_ROOT"
+          mkdir "$ARTIFACT_ROOT"
+          {
+            printf '%s\n' 'kind: tomorrowci.platform-workflow-preflight/v1'
+            printf '%s\n' 'status: FAIL_ONLY'
+            printf '%s\n' 'platform_id: macos-aarch64-colima'
+            printf 'repository: %s\n' "$GITHUB_REPOSITORY"
+            printf 'source_sha: %s\n' "$GITHUB_SHA"
+            printf 'workflow_run_id: %s\n' "$GITHUB_RUN_ID"
+            printf 'workflow_run_attempt: %s\n' "$GITHUB_RUN_ATTEMPT"
+          } > "$ARTIFACT_ROOT/workflow-preflight.txt"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          clean: true
+          persist-credentials: false
+      - name: Download exact candidate artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-candidate-dist-attempt-${{ inputs.candidate_run_attempt }}
+          path: ${{ runner.temp }}/candidate-dist
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Qualify macOS arm64 Colima with frozen candidate
+        env:
+          ARTIFACT_ROOT: ${{ runner.temp }}/platform-qualification-macos-aarch64-colima-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/run_platform_qualification.py \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --fixture "$GITHUB_WORKSPACE/fixtures/python-runtime-break" \
+            --config "$GITHUB_WORKSPACE/fixtures/python-runtime-break/.tomorrowci-platform.yml" \
+            --artifact-root "$ARTIFACT_ROOT" \
+            --candidate-dist "$RUNNER_TEMP/candidate-dist" \
+            --candidate-run-id '${{ inputs.candidate_run_id }}' \
+            --candidate-run-attempt '${{ inputs.candidate_run_attempt }}' \
+            --candidate-manifest-sha256 '${{ inputs.candidate_manifest_sha256 }}' \
+            --candidate-source-sha '${{ inputs.candidate_source_sha }}' \
+            --oci-manifest-digest '${{ inputs.oci_manifest_digest }}' \
+            --platform-id macos-aarch64-colima \
+            --project-repository "$GITHUB_REPOSITORY" \
+            --project-source-sha "$GITHUB_SHA" \
+            --project-source-ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
+      - name: Retain macOS arm64 platform evidence or exact failure observation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: platform-qualification-macos-aarch64-colima-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/platform-qualification-macos-aarch64-colima-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+  readback:
+    needs: [windows-x86_64, macos-x86_64, macos-aarch64]
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform_id: windows-x86_64-docker-desktop-linux
+            runner: windows-2025
+            python: python
+          - platform_id: macos-x86_64-colima
+            runner: macos-15-intel
+            python: python3
+          - platform_id: macos-aarch64-colima
+            runner: macos-15
+            python: python3
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Download exact candidate artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-candidate-dist-attempt-${{ inputs.candidate_run_attempt }}
+          path: ${{ runner.temp }}/candidate-dist
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Download retained platform artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: platform-qualification-${{ matrix.platform_id }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/platform-artifact
+      - name: Reverify current-v2 evidence with the matching frozen platform CLI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $arguments = @(
+            'scripts/platform_qualification.py', 'verify-artifact',
+            '--artifact-root', (Join-Path $env:RUNNER_TEMP 'platform-artifact'),
+            '--candidate-dist', (Join-Path $env:RUNNER_TEMP 'candidate-dist'),
+            '--candidate-run-id', '${{ inputs.candidate_run_id }}',
+            '--candidate-run-attempt', '${{ inputs.candidate_run_attempt }}',
+            '--candidate-manifest-sha256', '${{ inputs.candidate_manifest_sha256 }}',
+            '--candidate-source-sha', '${{ inputs.candidate_source_sha }}',
+            '--oci-manifest-digest', '${{ inputs.oci_manifest_digest }}',
+            '--platform-id', '${{ matrix.platform_id }}',
+            '--fixture-source', (Join-Path $env:GITHUB_WORKSPACE 'fixtures/python-runtime-break'),
+            '--project-repository', $env:GITHUB_REPOSITORY,
+            '--project-source-sha', $env:GITHUB_SHA,
+            '--project-source-ref', $env:GITHUB_REF,
+            '--workflow-run-id', $env:GITHUB_RUN_ID,
+            '--workflow-run-attempt', $env:GITHUB_RUN_ATTEMPT
+          )
+          & '${{ matrix.python }}' @arguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
