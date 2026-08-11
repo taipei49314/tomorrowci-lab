@@ -4,9 +4,11 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test test/sort.test.js",
+    "test:baseline-invalid": "node negative/baseline-invalid.js",
+    "test:flaky": "node negative/flaky.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }

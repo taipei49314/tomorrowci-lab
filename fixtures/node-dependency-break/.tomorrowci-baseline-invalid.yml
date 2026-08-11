@@ -1,9 +1,9 @@
 version: 1
 project:
-  ecosystem: rust
-  test_command: cargo test --locked
+  ecosystem: node
+  test_command: npm run test:baseline-invalid
 baseline:
-  runtime: "1.83"
+  runtime: "20"
   dependencies: locked
 candidates:
   runtime:
@@ -13,14 +13,14 @@ candidates:
     latest_allowed: false
     prerelease: false
 execution:
-  max_scenarios: 6
-  timeout_seconds: 600
+  max_scenarios: 2
+  timeout_seconds: 180
   reruns_on_failure: 3
 sandbox:
   engine: docker
-  memory_mb: 4096
-  cpus: 2
-  pids_limit: 512
+  memory_mb: 1024
+  cpus: 1
+  pids_limit: 128
 report:
   html: true
   json: true

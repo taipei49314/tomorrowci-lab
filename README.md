@@ -5,8 +5,9 @@
 TomorrowCI aims to find the earliest **concrete** future environment in which a
 repository stops building or passing tests, isolate the smallest
 breakage-inducing change, and emit **replayable evidence**. The currently
-demonstrated public slice is the Python runtime path described below; wider
-product surfaces remain explicit qualification work.
+demonstrated public slices are the Python runtime path and a bounded Linux
+Docker dependency-reduction path for pip, npm, and cargo; wider product
+surfaces remain explicit qualification work.
 
 ```text
 No forecast without an executable scenario.
@@ -20,7 +21,9 @@ No breakage claim without replayable evidence.
 still in progress.**
 
 Current source is the unreleased `0.2.0-alpha.1` trust-core development line.
-That source version is not a release, support, or external-qualification claim.
+Its M2 dependency/ddmin slice passed at exact master commit
+`456a36edb1e8547612cd13ee7a30be3479d33bab`; that observation is not a
+release, broad platform-support, or external-qualification claim.
 
 The current live baseline, historical tag identities, clean-download checks,
 and honest blockers are recorded in
@@ -35,8 +38,8 @@ qualification work is machine-readable in
 | Action dogfood + consumer | **PASS** (alpha.2 demonstrated) | `uses: ./action`; public CI evidence in the claim ledger |
 | Evidence integrity + exact replay | **PASS** (bounded alpha.2 scope) | `verify` plus two independent replay attempts passed |
 | Release gate | **PASS** (alpha.2 scope) | Three platform archives, checksums, and CycloneDX SBOM published |
-| Node / Rust live adapters | **NOT_RUN** | Out of alpha.2 scope |
-| Dependency axis / real ddmin | **NOT_RUN** | Out of alpha.2 scope |
+| Linux Docker dependency axis / observed ddmin | **PASS** (bounded M2 scope) | Native pip/npm/cargo fixtures; scan, verify, minimal replay x2, and downloaded-artifact read-back passed at exact master `456a36e...`; see [M2 qualification](docs/qualification/M2.md) |
+| M3 Node/Rust runtime + Podman/platform expansion | **NOT_RUN** | The M2 dependency fixtures do not qualify these broader surfaces |
 | React/TypeScript interactive report | **NOT_RUN** | Out of alpha.2 scope |
 | Remote GitHub URL scan | **NOT_RUN** | Out of alpha.2 scope |
 | Container image publish | **NOT_RUN** | Must not be implied by release |

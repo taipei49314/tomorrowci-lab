@@ -27,17 +27,19 @@ fn node_runtime_break_horizon() {
     let mut cfg = Config::default();
     cfg.baseline.runtime = "20".into();
     cfg.baseline.dependencies = "locked".into();
-    cfg.candidates.runtime.max_versions = 2;
+    cfg.candidates.runtime.max_versions = 1;
+    cfg.candidates.runtime.channels = vec!["stable".into()];
     cfg.candidates.dependencies.latest_allowed = false;
-    cfg.execution.reruns_on_failure = 2;
+    cfg.execution.reruns_on_failure = 3;
     cfg.execution.max_scenarios = 6;
 
     let mut map = HashMap::new();
     map.insert("baseline".into(), vec![0]);
-    map.insert("node18-locked".into(), vec![1, 1]); // first ordered cand after skip 20
-    map.insert("node22-locked".into(), vec![0, 0]);
-    // candidates order: 18, 22, 24 — 20 skipped as baseline
-    let exec = ScriptedExecutor::new(map).with_stderr("TypeError: arr.toSorted is not a function");
+    map.insert("node22-locked".into(), vec![1, 1, 1]);
+    map.insert("node24-locked".into(), vec![0, 0]);
+    // Candidates are strictly newer than the Node 20 baseline: 22, then 24.
+    let exec =
+        ScriptedExecutor::new(map).with_stderr("TypeError: crypto.createCipher is not a function");
 
     let out = scan_with_executor(d.path(), &adapter, cfg, &exec, det.detection).unwrap();
     assert!(out.manifest.frontier.observed, "{}", out.terminal_summary);
@@ -47,6 +49,7 @@ fn node_runtime_break_horizon() {
     );
     assert!(out.evidence_root.join("report.html").exists());
     assert!(out.terminal_summary.contains("Observed breakage horizon"));
+    assert_eq!(out.manifest.frontier.horizon_label.as_deref(), Some("22"));
 }
 
 #[test]
@@ -72,14 +75,14 @@ fn rust_msrv_break_horizon() {
     cfg.baseline.runtime = "1.83".into();
     cfg.candidates.runtime.max_versions = 2;
     cfg.candidates.dependencies.latest_allowed = false;
-    cfg.execution.reruns_on_failure = 2;
+    cfg.execution.reruns_on_failure = 3;
     cfg.execution.max_scenarios = 6;
 
-    // candidates: 1.74, beta (nightly may be truncated by max)
+    // The 1.74 probe is a declared MSRV compatibility gate. Preview images are
+    // selected only when the preview channel is explicitly enabled.
     let mut map = HashMap::new();
     map.insert("baseline".into(), vec![0]);
-    map.insert("rust-174".into(), vec![1, 1]);
-    map.insert("rust-beta".into(), vec![0, 0]);
+    map.insert("rust-174".into(), vec![1, 1, 1]);
     let exec = ScriptedExecutor::new(map)
         .with_stderr("error[E0658]: use of unstable library feature `lazy_cell` (MSRV)");
 
@@ -97,7 +100,7 @@ fn rust_msrv_break_horizon() {
 
 #[test]
 fn scan_local_auto_detects_node_without_execution_when_no_docker() {
-    // Detection path only — ensures Node is not left as NOT_RUN stub in CLI routing.
+    // Detection path only: ensures Node is not left as a NOT_RUN stub in CLI routing.
     let d = tempdir().unwrap();
     std::fs::write(d.path().join("package.json"), r#"{"name":"x"}"#).unwrap();
     assert!(NodeAdapter.detect(d.path()).supported);

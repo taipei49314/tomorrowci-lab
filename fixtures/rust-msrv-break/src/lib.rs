@@ -4,8 +4,8 @@
 use std::cell::LazyCell;
 
 pub fn answer() -> i32 {
-    static VAL: LazyCell<i32> = LazyCell::new(|| 42);
-    *VAL
+    let val: LazyCell<i32> = LazyCell::new(|| 42);
+    *val
 }
 
 #[cfg(test)]

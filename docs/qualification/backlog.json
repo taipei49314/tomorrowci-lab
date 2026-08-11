@@ -1,42 +1,72 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-08-09T00:00:00+08:00",
-  "baseline_sha": "1e23b40157e55e5763e3360b667d10a003b50ff9",
+  "recorded_at": "2026-08-11T00:00:00+08:00",
+  "baseline_sha": "456a36edb1e8547612cd13ee7a30be3479d33bab",
   "items": [
     {
       "id": "TRUST-001",
       "phase": 1,
-      "status": "OPEN",
+      "status": "PASS",
       "summary": "Enforce a canonical recursive exact evidence inventory and reject mutation, deletion, unlisted files, aliases, duplicate entries, and path traversal.",
-      "blocks_release": true
+      "blocks_release": false,
+      "evidence": {
+        "source_sha": "d971353b181d2135ee7708aa3ab6f3ce2237bad9",
+        "ci_run_id": 31312867856
+      }
     },
     {
       "id": "TRUST-002",
       "phase": 1,
-      "status": "OPEN",
+      "status": "PASS",
       "summary": "Make replay attempts append-only and make every finalization failure fatal.",
-      "blocks_release": true
+      "blocks_release": false,
+      "evidence": {
+        "source_sha": "d971353b181d2135ee7708aa3ab6f3ce2237bad9",
+        "ci_run_id": 31312867856
+      }
     },
     {
       "id": "TRUST-003",
       "phase": 1,
-      "status": "OPEN",
+      "status": "PASS",
       "summary": "Finalize an honest, verifiable BLOCKED bundle when no container engine is available.",
-      "blocks_release": true
+      "blocks_release": false,
+      "evidence": {
+        "source_sha": "d971353b181d2135ee7708aa3ab6f3ce2237bad9",
+        "ci_run_id": 31312867856
+      }
     },
     {
       "id": "PORT-001",
       "phase": 5,
-      "status": "OPEN",
-      "summary": "Add and test a cross-platform checkout EOL contract; the encoding gate currently fails on Windows with core.autocrlf=true.",
-      "blocks_release": true
+      "status": "PASS",
+      "summary": "Cross-platform checkout EOL contract is enforced and tested, including the Windows autocrlf checkout boundary.",
+      "blocks_release": false,
+      "evidence": {
+        "source_sha": "d971353b181d2135ee7708aa3ab6f3ce2237bad9",
+        "ci_run_id": 31312867856
+      }
     },
     {
       "id": "M2-DEPENDENCY-DDMIN",
       "phase": 2,
-      "status": "NOT_RUN",
-      "summary": "Qualify live dependency axes and real evidence-producing ddmin for Python, Node, and Rust.",
-      "blocks_release": true
+      "status": "PASS",
+      "summary": "Bounded Linux Docker dependency-axis and observed minimal-change reduction qualified for the checked-in pip, npm, and cargo fixtures.",
+      "blocks_release": false,
+      "evidence": {
+        "source_sha": "456a36edb1e8547612cd13ee7a30be3479d33bab",
+        "ci_run_id": 31316809823,
+        "run_ids": {
+          "python": "04054e94457a",
+          "node": "c8781bdadb33",
+          "rust": "45c8b2fa6b57"
+        },
+        "artifact": {
+          "id": 9039044133,
+          "digest": "sha256:402c5085be7890fa57b930f6ea9744b28d5e351b78ef0e78857ad365ac0fd2f3",
+          "expires_on": "2026-11-07"
+        }
+      }
     },
     {
       "id": "M3-NODE-LIVE",

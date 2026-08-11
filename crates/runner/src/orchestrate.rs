@@ -196,6 +196,7 @@ fn scan_with_adapter(
         // into a later candidate or mutate the replay authority snapshot.
         let scenario_workspace = DisposableWorkspace::capture(&work)?;
         prepare_scenario_state(scenario_workspace.path())?;
+        prepare_runtime_workspace(scenario_workspace.path(), eco)?;
         prepare_dependency_materialization_root(scenario_workspace.path(), scenario)?;
         let scenario_work = scenario_workspace.path();
 
@@ -1441,7 +1442,9 @@ fn normalize_image(eco: Ecosystem, runtime: &str) -> String {
             }
         }
         Ecosystem::Rust => {
-            if runtime.starts_with("rust:") {
+            if runtime == "nightly" || runtime == "rust:nightly" {
+                "rustlang/rust:nightly".into()
+            } else if runtime.starts_with("rust:") {
                 runtime.to_string()
             } else {
                 format!("rust:{runtime}-bookworm")
@@ -2021,6 +2024,25 @@ fn prepare_dependency_materialization_root(workspace: &Path, scenario: &Scenario
     Ok(())
 }
 
+fn prepare_runtime_workspace(workspace: &Path, ecosystem: Ecosystem) -> Result<()> {
+    if ecosystem != Ecosystem::Node {
+        return Ok(());
+    }
+
+    // The official Node images run this adapter as the unprivileged `node`
+    // account. npm writes node_modules only inside this disposable scenario
+    // snapshot; the recorded workspace and target source remain immutable.
+    let modules = workspace.join("node_modules");
+    std::fs::create_dir_all(&modules)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(workspace, std::fs::Permissions::from_mode(0o777))?;
+        std::fs::set_permissions(&modules, std::fs::Permissions::from_mode(0o777))?;
+    }
+    Ok(())
+}
+
 struct DisposableWorkspace {
     path: PathBuf,
 }
@@ -2478,6 +2500,7 @@ fn replay_scenario_with_verified_evidence(
 
     let replay_workspace = DisposableWorkspace::capture(&work)?;
     prepare_scenario_state(replay_workspace.path())?;
+    prepare_runtime_workspace(replay_workspace.path(), m.detection.ecosystem)?;
     prepare_dependency_materialization_root(replay_workspace.path(), &scenario)?;
     verify_replay_evidence(root)?;
 
