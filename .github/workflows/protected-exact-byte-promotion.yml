@@ -56,8 +56,6 @@ jobs:
   prepare:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    outputs:
-      state_artifact: ${{ steps.state.outputs.artifact_name }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -207,7 +205,9 @@ jobs:
             --expected-run-id "$CANDIDATE_RUN_ID" \
             --expected-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
             | tee "$RUNNER_TEMP/oci-verified.txt"
-          grep -Fq "$OCI_MANIFEST_DIGEST" "$dist/image-provenance.json"
+          python3 scripts/promotion_preflight.py inspect-oci-manifest \
+            --provenance "$dist/image-provenance.json" \
+            --expected-digest "$OCI_MANIFEST_DIGEST"
       - name: Require immutable repository trust material and verify authorization
         env:
           CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
@@ -249,11 +249,11 @@ jobs:
           version_ref="refs/tags/v$version"
           marker_ref="refs/tags/tomorrowci-authorization/$authorization_id"
           if ! git show-ref --verify --quiet "$version_ref"; then
-            git tag --annotate "v$version" "$CANDIDATE_SOURCE_SHA" \
+            git tag --no-sign --annotate "v$version" "$CANDIDATE_SOURCE_SHA" \
               --message "TomorrowCI protected exact-byte promotion preflight"
           fi
           if ! git show-ref --verify --quiet "$marker_ref"; then
-            git tag --annotate "tomorrowci-authorization/$authorization_id" \
+            git tag --no-sign --annotate "tomorrowci-authorization/$authorization_id" \
               "$CANDIDATE_SOURCE_SHA" \
               --message "Consume TomorrowCI external authorization $authorization_id"
           fi
@@ -268,7 +268,12 @@ jobs:
             --allowed-signers "$trust/allowed_signers" \
             --evidence "$authorization/external-qualification-evidence.json"
           tag_oid="$(git rev-parse "$version_ref")"
-          marker_oid="$(git rev-parse "$marker_ref")"
+          python3 scripts/promotion_preflight.py inspect-authorization-marker \
+            --git-repo . --marker-ref "$marker_ref" \
+            --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --authorization-id "$authorization_id" \
+            > "$RUNNER_TEMP/authorization-marker-identity.json"
+          marker_oid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["object_sha"])' "$RUNNER_TEMP/authorization-marker-identity.json")"
           git ls-remote --refs origin "$version_ref" "$marker_ref" \
             > "$RUNNER_TEMP/remote-refs.txt"
           state_root="$RUNNER_TEMP/promotion-preflight-state"
@@ -280,6 +285,7 @@ jobs:
             --output "$state_root/remote-state.json"
           cp "$authorization/tag-promotion-attestation.json" "$state_root/"
           cp "$RUNNER_TEMP/external-authorization-receipt.json" "$state_root/"
+          cp "$RUNNER_TEMP/authorization-marker-identity.json" "$state_root/"
           test -z "$(git status --porcelain --untracked-files=all)"
       - name: Upload prepared-only state
         id: state

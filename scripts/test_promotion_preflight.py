@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import subprocess
 import sys
 import tempfile
@@ -86,6 +87,124 @@ class PromotionStateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "permanently disabled"):
             preflight.refuse_publication()
 
+    def test_oci_input_binds_only_authoritative_manifest_digest(self) -> None:
+        authoritative = "sha256:" + "1" * 64
+        decoy = "sha256:" + "2" * 64
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "image-provenance.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "build": {"decoy_digest": decoy},
+                        "oci": {"manifest": {"digest": authoritative}},
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                preflight.inspect_oci_manifest_digest(path, authoritative),
+                authoritative,
+            )
+            with self.assertRaisesRegex(ValueError, "digest mismatch"):
+                preflight.inspect_oci_manifest_digest(path, decoy)
+
+    def test_oci_manifest_parse_rejects_duplicate_digest_keys(self) -> None:
+        digest = "sha256:" + "1" * 64
+        replacement = "sha256:" + "2" * 64
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "image-provenance.json"
+            path.write_text(
+                '{"oci":{"manifest":{"digest":"'
+                + digest
+                + '","digest":"'
+                + replacement
+                + '"}}}\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
+                preflight.inspect_oci_manifest_digest(path, digest)
+
+
+class AuthorizationMarkerTests(unittest.TestCase):
+    AUTHORIZATION_ID = "b" * 64
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temporary.name) / "repo"
+        self.repo.mkdir()
+        self._git("init", "-q")
+        self._git("config", "user.name", "Fixture")
+        self._git("config", "user.email", "fixture@example.invalid")
+        (self.repo / "tracked.txt").write_text("candidate\n", encoding="utf-8")
+        self._git("add", "tracked.txt")
+        self._git("commit", "-q", "-m", "candidate")
+        self.commit = self._git("rev-parse", "HEAD")
+        self.marker_name = f"tomorrowci-authorization/{self.AUTHORIZATION_ID}"
+        self.marker_ref = f"refs/tags/{self.marker_name}"
+        self._annotated(self.marker_name, self.commit)
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def _git(self, *arguments: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(self.repo), *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+
+    def _annotated(self, name: str, target: str) -> None:
+        self._git(
+            "tag",
+            "--no-sign",
+            "--annotate",
+            "--message",
+            f"Consume authorization {self.AUTHORIZATION_ID}",
+            name,
+            target,
+        )
+
+    def inspect(self) -> dict:
+        return preflight.inspect_authorization_marker(
+            git_repo=self.repo,
+            marker_ref=self.marker_ref,
+            candidate_source_sha=self.commit,
+            authorization_id=self.AUTHORIZATION_ID,
+        )
+
+    def test_accepts_exact_direct_annotated_marker(self) -> None:
+        identity = self.inspect()
+        self.assertEqual(identity["internal_name"], self.marker_name)
+        self.assertEqual(identity["target_sha"], self.commit)
+        self.assertEqual(identity["peeled_commit"], self.commit)
+
+    def test_rejects_lightweight_marker(self) -> None:
+        self._git("tag", "-d", self.marker_name)
+        self._git("tag", self.marker_name, self.commit)
+        with self.assertRaisesRegex(ValueError, "lightweight tag"):
+            self.inspect()
+
+    def test_rejects_marker_targeting_another_commit(self) -> None:
+        self._git("tag", "-d", self.marker_name)
+        (self.repo / "other.txt").write_text("other\n", encoding="utf-8")
+        self._git("add", "other.txt")
+        self._git("commit", "-q", "-m", "other")
+        other = self._git("rev-parse", "HEAD")
+        self._annotated(self.marker_name, other)
+        with self.assertRaisesRegex(ValueError, "exact candidate commit"):
+            self.inspect()
+
+    def test_rejects_tag_object_with_an_alias_internal_name(self) -> None:
+        self._annotated("authorization-alias", self.commit)
+        alias_oid = self._git("rev-parse", "refs/tags/authorization-alias")
+        self._git("update-ref", self.marker_ref, alias_oid)
+        with self.assertRaisesRegex(ValueError, "internal name"):
+            self.inspect()
+
 
 class PromotionWorkflowStaticTests(unittest.TestCase):
     ROOT = Path(__file__).resolve().parents[1]
@@ -118,6 +237,11 @@ class PromotionWorkflowStaticTests(unittest.TestCase):
         self.assertIn("contents: write", text)
         self.assertIn("packages: write", text)
         self.assertIn("assert-publication-disabled", text)
+        self.assertIn("inspect-authorization-marker", text)
+        self.assertIn("inspect-oci-manifest", text)
+        self.assertIn("git tag --no-sign --annotate", text)
+        self.assertNotIn("state_artifact:", text)
+        self.assertNotIn('grep -Fq "$OCI_MANIFEST_DIGEST"', text)
         self.assertNotIn("expected_policy_sha256:", text)
         self.assertNotIn("allowed_signers:", text.split("jobs:", 1)[0])
         for forbidden in (

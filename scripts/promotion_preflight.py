@@ -17,6 +17,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+import tag_promotion_attestation
+
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -120,6 +122,22 @@ def inspect_artifact(
     return {"artifact_id": expected_id, "digest": artifact_sha256, "size": size}
 
 
+def inspect_oci_manifest_digest(provenance: Path, expected_digest: str) -> str:
+    """Read strict JSON and bind only the authoritative OCI manifest field."""
+
+    if not SHA256.fullmatch(expected_digest):
+        raise ValueError("expected OCI manifest digest is malformed")
+    document = _load_json(provenance, "OCI detached provenance")
+    oci = document.get("oci")
+    manifest = oci.get("manifest") if type(oci) is dict else None
+    actual = manifest.get("digest") if type(manifest) is dict else None
+    if type(actual) is not str or not SHA256.fullmatch(actual):
+        raise ValueError("OCI detached provenance manifest digest is malformed")
+    if actual != expected_digest:
+        raise ValueError("OCI detached provenance manifest digest mismatch")
+    return actual
+
+
 def safe_extract_authorization(archive: Path, destination: Path) -> None:
     destination = destination.absolute()
     if destination.exists():
@@ -196,6 +214,39 @@ def remote_state(
     }
 
 
+def inspect_authorization_marker(
+    *,
+    git_repo: Path,
+    marker_ref: str,
+    candidate_source_sha: str,
+    authorization_id: str,
+) -> dict:
+    """Require a direct annotated marker binding one authorization to one commit."""
+
+    if not SHA.fullmatch(candidate_source_sha):
+        raise ValueError("candidate source SHA is malformed")
+    if not AUTHORIZATION_ID.fullmatch(authorization_id):
+        raise ValueError("authorization ID is malformed")
+    marker_name = f"tomorrowci-authorization/{authorization_id}"
+    expected_ref = f"refs/tags/{marker_name}"
+    if marker_ref != expected_ref:
+        raise ValueError("authorization marker ref does not match its exact ID")
+    identity = tag_promotion_attestation._annotated_tag_ref_identity(
+        git_repo, marker_name
+    )
+    if (
+        identity.get("target_type") != "commit"
+        or identity.get("target_sha") != candidate_source_sha
+        or identity.get("peeled_commit") != candidate_source_sha
+        or identity.get("internal_name") != marker_name
+        or identity.get("name") != marker_name
+    ):
+        raise ValueError(
+            "authorization marker annotated tag does not bind the exact candidate commit"
+        )
+    return identity
+
+
 def canonical_bytes(value: object) -> bytes:
     return (
         json.dumps(value, ensure_ascii=False, allow_nan=False, indent=2, sort_keys=True)
@@ -233,6 +284,14 @@ def main(argv: list[str] | None = None) -> int:
     refs.add_argument("--marker-ref", required=True)
     refs.add_argument("--marker-oid", required=True)
     refs.add_argument("--output", type=Path, required=True)
+    marker = commands.add_parser("inspect-authorization-marker")
+    marker.add_argument("--git-repo", type=Path, required=True)
+    marker.add_argument("--marker-ref", required=True)
+    marker.add_argument("--candidate-source-sha", required=True)
+    marker.add_argument("--authorization-id", required=True)
+    oci = commands.add_parser("inspect-oci-manifest")
+    oci.add_argument("--provenance", type=Path, required=True)
+    oci.add_argument("--expected-digest", required=True)
     commands.add_parser("assert-publication-disabled")
     args = parser.parse_args(argv)
     try:
@@ -266,6 +325,19 @@ def main(argv: list[str] | None = None) -> int:
             with args.output.open("xb") as handle:
                 handle.write(canonical_bytes(value))
             print(f"promotion remote state: PASS: {value['state']}")
+        elif args.command == "inspect-authorization-marker":
+            value = inspect_authorization_marker(
+                git_repo=args.git_repo,
+                marker_ref=args.marker_ref,
+                candidate_source_sha=args.candidate_source_sha,
+                authorization_id=args.authorization_id,
+            )
+            sys.stdout.buffer.write(canonical_bytes(value))
+        elif args.command == "inspect-oci-manifest":
+            digest = inspect_oci_manifest_digest(
+                args.provenance, args.expected_digest
+            )
+            print(f"OCI authoritative manifest digest: PASS: {digest}")
         else:
             refuse_publication()
     except (OSError, ValueError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
