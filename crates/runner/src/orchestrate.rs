@@ -28,8 +28,9 @@ use tomorrowci_core::{
     TestExecutionStatus, Verdict,
 };
 use tomorrowci_evidence::{
-    metadata_is_alias, validate_identifier, write_checksums, write_run_manifest,
-    write_workspace_manifest, ChecksumCompatibility, EvidenceLayout, WorkspaceManifest,
+    metadata_is_alias, validate_existing_ancestors, validate_identifier, write_checksums,
+    write_run_manifest, write_workspace_manifest, ChecksumCompatibility, EvidenceLayout,
+    WorkspaceManifest,
 };
 use tomorrowci_metrics::{ClaimLedger, ClaimStatus, ScanMetrics};
 use tomorrowci_report::{write_github_job_summary, write_html_report, write_json_report};
@@ -263,7 +264,7 @@ fn scan_with_adapter(
             install_synthetic_git_index(scenario_workspace.path(), prepared)?;
         }
         prepare_scenario_state(scenario_workspace.path())?;
-        prepare_runtime_workspace(scenario_workspace.path(), eco)?;
+        scenario_workspace.prepare_runtime(eco)?;
         prepare_dependency_materialization_root(scenario_workspace.path(), scenario)?;
         let scenario_work = scenario_workspace.path();
 
@@ -2150,23 +2151,119 @@ fn prepare_dependency_materialization_root(workspace: &Path, scenario: &Scenario
     Ok(())
 }
 
-fn prepare_runtime_workspace(workspace: &Path, ecosystem: Ecosystem) -> Result<()> {
-    if ecosystem != Ecosystem::Node {
-        return Ok(());
-    }
+fn prepare_node_runtime_workspace(workspace: &Path) -> Result<()> {
+    let workspace = validate_existing_ancestors(workspace)?;
 
     // The official Node images run this adapter as the unprivileged `node`
-    // account. npm writes node_modules only inside this disposable scenario
-    // snapshot; the recorded workspace and target source remain immutable.
+    // account. Project test suites can install packages below existing nested
+    // package roots, so every plain directory in this disposable scenario copy
+    // must be writable. This preparation step does not rewrite regular-file
+    // bytes or modes, and the recorded authority is never passed here. Aliases
+    // and special filesystem entries fail closed.
+    let mut directories = collect_plain_workspace_directories(&workspace)?;
     let modules = workspace.join("node_modules");
-    std::fs::create_dir_all(&modules)?;
+    match std::fs::symlink_metadata(&modules) {
+        Ok(metadata) => {
+            if metadata_is_alias(&metadata) || !metadata.is_dir() {
+                return Err(TcError::InvalidState(format!(
+                    "Node dependency root is not a plain directory: {}",
+                    modules.display()
+                )));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir(&modules)?;
+            directories.push(modules.clone());
+        }
+        Err(error) => return Err(error.into()),
+    }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(workspace, std::fs::Permissions::from_mode(0o777))?;
-        std::fs::set_permissions(&modules, std::fs::Permissions::from_mode(0o777))?;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        directories.sort_by(|left, right| {
+            right
+                .components()
+                .count()
+                .cmp(&left.components().count())
+                .then_with(|| left.cmp(right))
+        });
+
+        // Open and validate every directory before changing any mode. fchmod on
+        // the stable handles cannot follow a path swapped to an outside alias.
+        let mut handles = Vec::with_capacity(directories.len());
+        for directory in directories {
+            let directory = validate_existing_ancestors(&directory)?;
+            let expected = std::fs::symlink_metadata(&directory)?;
+            if metadata_is_alias(&expected) || !expected.is_dir() {
+                return Err(TcError::InvalidState(format!(
+                    "Node disposable workspace directory changed during preparation: {}",
+                    directory.display()
+                )));
+            }
+
+            let handle = std::fs::File::open(&directory)?;
+            let opened = handle.metadata()?;
+            if !opened.is_dir() || expected.dev() != opened.dev() || expected.ino() != opened.ino()
+            {
+                return Err(TcError::InvalidState(format!(
+                    "Node disposable workspace directory changed while opening: {}",
+                    directory.display()
+                )));
+            }
+            handles.push((directory, handle));
+        }
+        for (_, handle) in handles {
+            handle.set_permissions(std::fs::Permissions::from_mode(0o777))?;
+        }
     }
     Ok(())
+}
+
+fn collect_plain_workspace_directories(workspace: &Path) -> Result<Vec<PathBuf>> {
+    let workspace = validate_existing_ancestors(workspace)?;
+    let metadata = std::fs::symlink_metadata(&workspace)?;
+    if metadata_is_alias(&metadata) || !metadata.is_dir() {
+        return Err(TcError::InvalidState(format!(
+            "Node disposable workspace is not a plain directory: {}",
+            workspace.display()
+        )));
+    }
+
+    let mut pending = vec![workspace];
+    let mut directories = Vec::new();
+    while let Some(directory) = pending.pop() {
+        let metadata = std::fs::symlink_metadata(&directory)?;
+        if metadata_is_alias(&metadata) || !metadata.is_dir() {
+            return Err(TcError::InvalidState(format!(
+                "Node disposable workspace directory is not plain: {}",
+                directory.display()
+            )));
+        }
+        directories.push(directory.clone());
+
+        let mut entries = std::fs::read_dir(&directory)?.collect::<std::io::Result<Vec<_>>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries.into_iter().rev() {
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)?;
+            if metadata_is_alias(&metadata) {
+                return Err(TcError::InvalidState(format!(
+                    "refusing symlink/reparse point in Node disposable workspace: {}",
+                    path.display()
+                )));
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if !metadata.is_file() {
+                return Err(TcError::InvalidState(format!(
+                    "unsupported entry in Node disposable workspace: {}",
+                    path.display()
+                )));
+            }
+        }
+    }
+    Ok(directories)
 }
 
 struct DisposableWorkspace {
@@ -2177,23 +2274,44 @@ impl DisposableWorkspace {
     fn capture(recorded_workspace: &Path) -> Result<Self> {
         let root =
             std::env::temp_dir().join(format!("tomorrowci-replay-{}", Uuid::new_v4().simple()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            let mut builder = std::fs::DirBuilder::new();
+            builder.mode(0o700).create(&root)?;
+        }
+        #[cfg(not(unix))]
         std::fs::create_dir(&root)?;
+
         let path = root.join("workspace");
+        let disposable = Self { path };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
+        }
         let source_manifest =
             write_workspace_manifest(recorded_workspace, &root.join("source-manifest.json"))?;
-        make_disposable_copy(recorded_workspace, &path)?;
-        let copied_manifest = write_workspace_manifest(&path, &root.join("copy-manifest.json"))?;
+        make_disposable_copy(recorded_workspace, disposable.path())?;
+        let copied_manifest =
+            write_workspace_manifest(disposable.path(), &root.join("copy-manifest.json"))?;
         if source_manifest != copied_manifest {
-            let _ = std::fs::remove_dir_all(&root);
             return Err(TcError::Blocked(
                 "recorded workspace changed while replay snapshot was captured".into(),
             ));
         }
-        Ok(Self { path })
+        Ok(disposable)
     }
 
     fn path(&self) -> &Path {
         &self.path
+    }
+
+    fn prepare_runtime(&self, ecosystem: Ecosystem) -> Result<()> {
+        if ecosystem == Ecosystem::Node {
+            prepare_node_runtime_workspace(self.path())?;
+        }
+        Ok(())
     }
 }
 
@@ -2630,7 +2748,7 @@ fn replay_scenario_with_verified_evidence(
         install_synthetic_git_index(replay_workspace.path(), prepared)?;
     }
     prepare_scenario_state(replay_workspace.path())?;
-    prepare_runtime_workspace(replay_workspace.path(), m.detection.ecosystem)?;
+    replay_workspace.prepare_runtime(m.detection.ecosystem)?;
     prepare_dependency_materialization_root(replay_workspace.path(), &scenario)?;
     verify_replay_evidence(root)?;
 
@@ -2980,19 +3098,277 @@ mod hardening_tests {
     fn replay_workspace_prepares_container_writable_state() {
         let source = tempdir().unwrap();
         std::fs::write(source.path().join("source.txt"), "focused\n").unwrap();
+        let nested = source
+            .path()
+            .join("test/project-setups/javascript-commonjs");
+        std::fs::create_dir_all(&nested).unwrap();
+        let nested_source = nested.join("package.json");
+        std::fs::write(&nested_source, "{}\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o555)).unwrap();
+            std::fs::set_permissions(&nested_source, std::fs::Permissions::from_mode(0o444))
+                .unwrap();
+        }
         let replay = DisposableWorkspace::capture(source.path()).unwrap();
         let state = prepare_scenario_state(replay.path()).unwrap();
+        replay.prepare_runtime(Ecosystem::Node).unwrap();
 
         assert!(state.join("venv").is_dir());
         assert!(state.join("cache/pip").is_dir());
+        assert!(replay.path().join("node_modules").is_dir());
+        assert_eq!(
+            std::fs::read_to_string(
+                replay
+                    .path()
+                    .join("test/project-setups/javascript-commonjs/package.json")
+            )
+            .unwrap(),
+            "{}\n"
+        );
+        assert!(!source.path().join("node_modules").exists());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(
+                std::fs::metadata(replay.path().parent().unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+            assert_eq!(
                 std::fs::metadata(&state).unwrap().permissions().mode() & 0o777,
                 0o777
             );
+            assert_eq!(
+                std::fs::metadata(
+                    replay
+                        .path()
+                        .join("test/project-setups/javascript-commonjs")
+                )
+                .unwrap()
+                .permissions()
+                .mode()
+                    & 0o777,
+                0o777
+            );
+            assert_eq!(
+                std::fs::metadata(
+                    replay
+                        .path()
+                        .join("test/project-setups/javascript-commonjs/package.json")
+                )
+                .unwrap()
+                .permissions()
+                .mode()
+                    & 0o777,
+                0o444
+            );
+            assert_eq!(
+                std::fs::metadata(&nested).unwrap().permissions().mode() & 0o777,
+                0o555
+            );
+            assert_eq!(
+                std::fs::metadata(&nested_source)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o444
+            );
+            std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::set_permissions(&nested_source, std::fs::Permissions::from_mode(0o644))
+                .unwrap();
         }
+    }
+
+    #[test]
+    fn non_node_runtime_workspace_is_unchanged() {
+        let source = tempdir().unwrap();
+        std::fs::write(source.path().join("source.txt"), "focused\n").unwrap();
+        let disposable = DisposableWorkspace::capture(source.path()).unwrap();
+        let before = std::fs::read(disposable.path().join("source.txt")).unwrap();
+        #[cfg(unix)]
+        let before_mode = {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::metadata(disposable.path())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777
+        };
+
+        disposable.prepare_runtime(Ecosystem::Python).unwrap();
+
+        assert_eq!(
+            std::fs::read(disposable.path().join("source.txt")).unwrap(),
+            before
+        );
+        assert!(!disposable.path().join("node_modules").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(disposable.path())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                before_mode
+            );
+        }
+    }
+
+    #[test]
+    fn node_runtime_workspace_prepares_all_nested_directories_without_changing_files() {
+        let workspace = tempdir().unwrap();
+        let nested = workspace
+            .path()
+            .join("test/project-setups/javascript-commonjs/deeper");
+        std::fs::create_dir_all(&nested).unwrap();
+        let source = nested.join("package.json");
+        std::fs::write(&source, "{\"private\":true}\n").unwrap();
+        let before = std::fs::read(&source).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o555)).unwrap();
+            std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o440)).unwrap();
+        }
+
+        prepare_node_runtime_workspace(workspace.path()).unwrap();
+        prepare_node_runtime_workspace(workspace.path()).unwrap();
+
+        assert_eq!(std::fs::read(&source).unwrap(), before);
+        assert!(workspace.path().join("node_modules").is_dir());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for directory in [
+                workspace.path().to_path_buf(),
+                workspace.path().join("test"),
+                workspace.path().join("test/project-setups"),
+                workspace
+                    .path()
+                    .join("test/project-setups/javascript-commonjs"),
+                nested,
+                workspace.path().join("node_modules"),
+            ] {
+                assert_eq!(
+                    std::fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+                    0o777,
+                    "{}",
+                    directory.display()
+                );
+            }
+            assert_eq!(
+                std::fs::metadata(&source).unwrap().permissions().mode() & 0o777,
+                0o440
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn node_runtime_workspace_rejects_alias_before_changing_permissions() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let workspace = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let root_mode = std::fs::metadata(workspace.path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        symlink(outside.path(), workspace.path().join("nested-alias")).unwrap();
+
+        let error = prepare_node_runtime_workspace(workspace.path()).unwrap_err();
+        assert!(error.to_string().contains("symlink/reparse point"));
+        assert!(!workspace.path().join("node_modules").exists());
+        assert_eq!(
+            std::fs::metadata(workspace.path())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            root_mode
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn node_runtime_workspace_rejects_alias_ancestor_without_touching_outside_tree() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let holder = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let outside_workspace = outside.path().join("workspace");
+        std::fs::create_dir(&outside_workspace).unwrap();
+        std::fs::set_permissions(&outside_workspace, std::fs::Permissions::from_mode(0o555))
+            .unwrap();
+        symlink(outside.path(), holder.path().join("alias")).unwrap();
+
+        let aliased_workspace = holder.path().join("alias/workspace");
+        let error = prepare_node_runtime_workspace(&aliased_workspace).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("refusing path with symlink/reparse ancestor"));
+        assert!(!outside_workspace.join("node_modules").exists());
+        assert_eq!(
+            std::fs::metadata(&outside_workspace)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o555
+        );
+    }
+
+    #[test]
+    fn node_runtime_workspace_rejects_preexisting_node_modules_file() {
+        let workspace = tempdir().unwrap();
+        let modules = workspace.path().join("node_modules");
+        std::fs::write(&modules, "not a directory\n").unwrap();
+
+        let error = prepare_node_runtime_workspace(workspace.path()).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Node dependency root is not a plain directory"));
+        assert_eq!(
+            std::fs::read_to_string(modules).unwrap(),
+            "not a directory\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn node_runtime_workspace_rejects_special_entry_before_changing_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::net::UnixListener;
+
+        let workspace = tempdir().unwrap();
+        let socket = workspace.path().join("target.sock");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        std::fs::set_permissions(workspace.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let error = prepare_node_runtime_workspace(workspace.path()).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("unsupported entry in Node disposable workspace"));
+        assert!(!workspace.path().join("node_modules").exists());
+        assert_eq!(
+            std::fs::metadata(workspace.path())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o555
+        );
+
+        std::fs::set_permissions(workspace.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     fn write_completed_attempt(root: &Path, number: usize) {
