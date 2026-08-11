@@ -67,6 +67,9 @@ For current-v2 evidence, verification binds:
 
 - source URI/local identity, canonical Git object ID when available, dirty-tree state, and the recursive workspace snapshot;
 - normalized configuration content to `config_hash` in both the run and identity record;
+- for bounded remote scans, the canonical GitHub origin, requested and resolved
+  40-hex commit, clean detached checkout, prohibited Git capabilities, source
+  budgets, and captured workspace-manifest digest in `remote-source.json`;
 - the exact detected manifest set and each manifest hash;
 - tool version, detected ecosystem, adapter name, and adapter version;
 - run start/finish timestamps;
@@ -88,6 +91,12 @@ Headerless legacy checksum evidence is read-compatible only for the exact histor
 ## What the checksums do not prove
 
 The checksum graph provides integrity and tamper detection for an evidence bundle. It is not a signature, MAC, transparency-log proof, or independent attestation. An attacker who can rewrite the complete bundle can also recompute unsigned checksums; a digest identifies content but does not authenticate who produced or approved it. Release authority therefore requires a trust root outside the bundle.
+
+Repository-owned authorization-verifier tests, public-target workflow runs,
+candidate downloads, and operator read-back remain inside the project trust
+boundary. Even when internally valid, none can substitute for a genuine
+independent signer, a separately provisioned trust root, or protected
+single-consumption remote promotion.
 
 ## Bounded M2 qualification observation
 
@@ -116,10 +125,13 @@ M3 Node/Rust runtime matrix. See the [M2 record](../qualification/M2.md).
 - Container-engine, kernel, and isolation defects remain in the trusted computing base.
 - Malicious base images, compromised registries, dependency registries, and fetch-time network exfiltration remain supply-chain risks. Digest equality alone is not publisher or provenance verification.
 - Local concurrent filesystem mutation and platform-specific alias behavior are reduced by pre/post verification and no-follow checks, but the host OS remains trusted.
-- External independent qualification, artifact signing/attestation, and release authorization remain outside this Phase-1 trust core.
+- External independent qualification, signing authority, protected promotion,
+  and published-output read-back remain outside this Phase-1 trust core.
 - Dependency-axis/ddmin behavior beyond the exact M2 Linux Docker fixtures,
-  M3 Node/Rust execution beyond the exact Linux Docker fixtures and Podman coverage, M4 Action/UI qualification,
-  and M5 public release qualification are not established by these controls.
+  M3 Node/Rust execution beyond the exact Linux Docker fixtures, public-remote
+  Docker/Podman execution, the wider platform matrix, and formal release
+  qualification are not established by these controls. The bounded M4 report
+  and exact-commit materialization engineering tests do not expand those claims.
 
 ## Out of scope
 
