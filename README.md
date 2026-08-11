@@ -21,11 +21,12 @@ No breakage claim without replayable evidence.
 still in progress.**
 
 Current source is the unreleased `0.2.0-alpha.1` development line. It has
-bounded M2/M3 Linux Docker observations, M4 engineering slices, and a
-downloaded and reverified deterministic release candidate. The candidate is
-explicitly `CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED`: it is not a tag, GitHub
-Release, published container image, platform-support claim, or independent
-external qualification.
+bounded M2/M3 Linux Docker observations, M4 engineering slices, a downloaded
+and reverified deterministic release candidate, and project-owned exact-SHA
+Python/Node/Rust observations on hosted Linux Docker and Podman. The candidate
+is explicitly `CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED`: it is not a tag, GitHub
+Release, published container image, platform-support claim, independent
+adoption, or external authorization.
 
 The current live baseline, historical tag identities, clean-download checks,
 and honest blockers are recorded in
@@ -45,9 +46,9 @@ machine-readable in
 | Linux Docker Node/Rust runtime slices | **PASS** (bounded M3 scope) | Node 20→22/24 and Rust 1.83→1.74 observations, fail-closed controls, verify, replay x2, and artifact read-back passed at exact master `a6af307...`; see [M3 qualification](docs/qualification/M3.md) |
 | React/TypeScript interactive report | **PASS** (bounded engineering slice) | PR #5, merge `f6efabf...`, and exact-master CI exercised generated assets, types, unit tests, Chromium accessibility/responsive/XSS/no-JS gates, and Rust rendering |
 | Exact-commit GitHub URL materialization | **PASS** (bounded engineering slice) | PR #5 added fail-closed exact-commit materialization; the later schema-v2 amendment adds manifest-derived index-only Git metadata for disposable scenarios without changing recorded source bytes |
-| Four-platform + OCI candidate | **PASS** (candidate construction/read-back only) | Exact source `d0e0c7b...`, candidate run `31456913989`, artifact `9088555822`; no support or publication authority |
-| Preregistered public targets (Python/Node/Rust × Docker/Podman) | **FAIL** | Run `31467337605` retained four Python/Rust success artifacts; frozen Helmet was `BASELINE_INVALID` on Docker and Podman, read-back was skipped, and the unchanged target/config awaits a clean amended rerun |
-| Podman and broader platform qualification | **BLOCKED** | Candidate builds and Linux Docker fixture observations do not qualify Podman, Windows Docker Desktop, or macOS container paths |
+| Four-platform + OCI candidate | **PASS** (candidate construction/read-back only) | Exact source `8ab6449...`, candidate run `31479363341`, artifact `9096821821`; no support or publication authority |
+| Preregistered public targets (Python/Node/Rust × Docker/Podman) | **PASS** (bounded, project-owned observation) | Exact-source run `31480491950` completed all six pairs, replayed each candidate twice, and passed downloaded current-v2 read-back; the two earlier failed runs remain immutable history |
+| Broader platform qualification | **BLOCKED** | Hosted Linux Docker/Podman target observations and reproducible archives do not qualify Windows Docker Desktop, macOS Docker Desktop/Colima, or a wider clean-machine support matrix |
 | Independent authorization and formal `0.2.0-alpha.1` publication | **BLOCKED** | Verification contracts exist, but no genuine independent signed authorization or protected remote promotion/read-back has passed |
 
 ### Tags (audit history)

@@ -90,25 +90,26 @@ Full details and retention limits: [qualification/M3.md](qualification/M3.md).
 
 ## M4 bounded engineering slices
 
-These PASS rows establish implementation and CI behavior, not public-target,
-Podman, platform-support, or independent qualification.
+The first three PASS rows establish implementation and CI behavior. The live
+row is a separate run-bound project-owned observation; none establishes broad
+platform support or independent qualification.
 
 | Claim | Status | Exact command / run | Exit / result | Artifact |
 |---|---|---|---|---|
 | PR and exact-master identity | **PASS** | [PR #5](https://github.com/taipei49314/tomorrowci-lab/pull/5) head `7c2534c7ec7a18bb18dc31a0864f7af5ae0807be`; merge `f6efabff0214ef02d2287ccb870a4e2a75c8e2f0`; exact-master [run 31451349743](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31451349743) | 9/9 jobs success | source + Actions |
 | Interactive report engineering | **PASS** | `report-ui` job [93656185178](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31451349743/job/93656185178) | generated assets, types, unit behavior, Chromium accessibility/responsive/XSS/no-JS, and Rust renderer passed | Actions |
 | Exact-commit remote materialization engineering | **PASS** | `rust` job [93656185352](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31451349743/job/93656185352) | canonical URL/40-hex commit, bounded checkout, semantic identity, cleanup, offline full-writer verify/replay, and fail-closed regressions passed | [remote contract](qualification/M4_REMOTE_EXACT_COMMIT.md) |
-| Live public-remote Python/Node/Rust × Docker/Podman | **NOT_RUN** | repository workflow exists but no accepted run-bound qualification record exists | — | [current status](qualification/STATUS.md) |
+| Live public-remote Python/Node/Rust × Docker/Podman | **PASS** | exact source `8ab64498add92360b92034333f056dc202396d24`; [run 31480491950](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31480491950), attempt 1 | all six target/engine pairs passed, each candidate replayed twice, six downloaded current-v2 bundles and the canonical summary reverified | summary artifact `9097092837`, digest `sha256:155a68da092b97467b74185e0233cc727901ac51d58e180bbcd31ecd4030324e`; project-owned only |
 | Independent adopter/auditor | **BLOCKED** | repository-owned CI is not independent authorization | external action required | — |
 
 ## Deterministic `0.2.0-alpha.1` candidate
 
 | Claim | Status | Exact command / run | Exit / result | Artifact |
 |---|---|---|---|---|
-| Candidate workflow | **PASS** | master `d0e0c7b5ffac1c644b09b249177da5f334249c15`; [run 31456913989](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31456913989), attempt 1 | 16/16 jobs success | artifact `9088555822` |
-| Actions artifact identity | **PASS** | API/download comparison | digest `sha256:1128eb3bc40fe91912bc476034d5cee6cfc2cb946a1f7644005e57b163863749`; size `90287375` | `release-candidate-dist-attempt-1`, expires `2026-11-09T03:56:28Z` |
-| Isolated clean builds and candidate inventory | **PASS** | two clean builds per platform plus two canonical OCI builds; downloaded exact-source verifier | all four archive hashes, OCI tar, `SHA256SUMS.txt`, manifest, SBOM/vulnerability data, and provenance matched | candidate manifest digest `sha256:9c37261063a64ae15317007f86978b5509d164884f69d8cce2180e2dd30add8c` |
-| OCI candidate | **PASS** | OCI archive/provenance verifier and Ubuntu load/smoke | archive `sha256:6a98962c71b0936a43bc17cd5f7641cd04a5d9134af7ba833fa9d71e22334162`; manifest `sha256:946435fdfab60092e4a558ab6e41263f4ae90da395e0aa0b173a5b2073274150`; non-root/labels/trust/doctor/SBOM/vulnerability gates passed | provenance `sha256:bf039017784a6757fbb1825aa6702b18d03e79d44a4da53d94fc3371532ab7af` |
+| Candidate workflow | **PASS** | master `8ab64498add92360b92034333f056dc202396d24`; [run 31479363341](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31479363341), attempt 1 | 16/16 jobs success | artifact `9096821821` |
+| Actions artifact identity | **PASS** | API/download comparison | digest `sha256:be8c08aad565fe7a24d049f8fe8ce8d43ca2478b52554107b68e04667d17f5d6`; size `90570524` | `release-candidate-dist-attempt-1`, expires `2026-11-09T09:48:27Z` |
+| Isolated clean builds and candidate inventory | **PASS** | two clean builds per platform plus two canonical OCI builds; downloaded exact-source verifier | all four archive hashes, OCI tar, `SHA256SUMS.txt`, manifest, SBOM/vulnerability data, and provenance matched | candidate manifest digest `sha256:ebc29db4f02a646a50e1ed73be197bb48a997de105e717595178160b35c7fdb6` |
+| OCI candidate | **PASS** | OCI archive/provenance verifier and downloaded Docker load/smoke | archive `sha256:609368b4b88304bcb69e08958ec9bb96cd286503f2822c0e5b22eb8a5149dbe5`; manifest `sha256:f9243f15c06ae48a2a03f868f7444789d92b058807aac03eba3dab0fc51e8f04`; non-root/labels/trust/doctor/SBOM/vulnerability gates passed | provenance `sha256:96554e8975935aef1a4ce07faca599b557598177ad100396e3562ebe6bca8b21` |
 | Formal release or container publish | **BLOCKED** | manifest status `CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED`; no tag/release/registry promotion or public read-back | publication forbidden until remaining gates pass | — |
 | Broad platform support | **BLOCKED** | archive construction is not Windows/macOS container-path qualification | clean-machine matrix required | — |
 
@@ -118,6 +119,11 @@ Podman, platform-support, or independent qualification.
 |---|---|---|---|---|
 | Authorization/tag-verifier contracts | **PASS** | PR #9 merge `d8af4f839eddb73178a9fcf1f22b24382ee08bad`; exact-master [run 31458777043](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31458777043) | repository-owned contract tests passed | no external authorization |
 | Result-blind preregistration/workflow | **PASS** | PR #10 merge `6e41da287e004802213cfdfbbeb124ed26fa6ae0`; exact-master [run 31463351526](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31463351526) success; preregistration digest `sha256:1f9dee08d03f5f07b8c7f4396d6a0d3ee3aeb2b3071914e26d0a32f6e8b79ace` | implementation contract passed | target result authority is separate |
-| Six target/engine executions | **FAIL** | [run 31467337605](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31467337605), exact source `6430b9796737406802f9dfadcdf84f7d9b7aaa2c` | Python/Rust Docker+Podman succeeded; Helmet Docker+Podman `BASELINE_INVALID`; read-back skipped | four success artifacts; Node artifacts absent; [immutable failed observation](qualification/external-targets/observations/2026-08-11-run-31467337605.json) |
+| Six target/engine executions | **PASS** | [run 31480491950](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31480491950), exact source `8ab64498add92360b92034333f056dc202396d24`, candidate run `31479363341` | Python/Node/Rust Docker+Podman all passed; each candidate replayed twice; canonical summary plus six evidence artifacts passed repository-outside current-v2 read-back | artifacts `9097085909`, `9097078440`, `9097020490`, `9097018493`, `9097055697`, `9097044023`; summary `9097092837`; status `OBSERVED_PROJECT_OWNED_ONLY` |
 | Genuine independent signed authorization/adoption | **BLOCKED** | fixtures, repository-owned workflows, and operator read-back cannot satisfy independence | external signer/auditor required | — |
 | Protected promotion and release download/pull read-back | **BLOCKED** | no consumed authorization, remote tag/Release/registry transaction, or public read-back | formal release gate remains closed | — |
+
+Runs [31467337605](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31467337605)
+and [31476579941](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31476579941)
+remain immutable failed observations; the later PASS does not rewrite their
+Git-index and disposable-directory permission findings.

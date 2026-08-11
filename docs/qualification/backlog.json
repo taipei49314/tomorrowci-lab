@@ -122,16 +122,34 @@
     {
       "id": "M3-NODE-LIVE",
       "phase": 3,
-      "status": "NOT_RUN",
-      "summary": "Complete the full Node Docker+Podman qualification; the bounded Linux Docker slice is PASS, but Podman remains NOT_RUN.",
-      "blocks_release": true
+      "status": "PASS",
+      "summary": "The preregistered Helmet exact-SHA target passed Node 20 and Node 22 on hosted Linux Docker and Podman, current-v2 verification, replay x2, and downloaded-artifact read-back; this is a bounded project-owned observation.",
+      "blocks_release": false,
+      "evidence": {
+        "source_sha": "8ab64498add92360b92034333f056dc202396d24",
+        "qualification_run_id": 31480491950,
+        "candidate_run_id": 31479363341,
+        "target_commit": "9315aac37eb69d8dd3fe81c67febcebe60d7e97e",
+        "run_ids": ["39df2baaa34c", "bea4aca21082"],
+        "artifact_ids": [9097085909, 9097078440],
+        "scope": "EXACT_PUBLIC_TARGET_HOSTED_LINUX_DOCKER_PODMAN_PROJECT_OWNED"
+      }
     },
     {
       "id": "M3-RUST-LIVE",
       "phase": 3,
-      "status": "NOT_RUN",
-      "summary": "Complete the full Rust Docker+Podman qualification; the bounded Linux Docker slice is PASS, but Podman remains NOT_RUN.",
-      "blocks_release": true
+      "status": "PASS",
+      "summary": "The preregistered human-panic exact-SHA target passed Rust 1.83 and 1.74 on hosted Linux Docker and Podman, current-v2 verification, replay x2, and downloaded-artifact read-back; this is a bounded project-owned observation.",
+      "blocks_release": false,
+      "evidence": {
+        "source_sha": "8ab64498add92360b92034333f056dc202396d24",
+        "qualification_run_id": 31480491950,
+        "candidate_run_id": 31479363341,
+        "target_commit": "b8915ed30fcfca3300e3796fa35ddd0a9a0a5db7",
+        "run_ids": ["eea6f03e9676", "40e82dd97a6f"],
+        "artifact_ids": [9097055697, 9097044023],
+        "scope": "EXACT_PUBLIC_TARGET_HOSTED_LINUX_DOCKER_PODMAN_PROJECT_OWNED"
+      }
     },
     {
       "id": "M4-REPORT",
@@ -165,7 +183,7 @@
       "id": "PLATFORM-MATRIX",
       "phase": 5,
       "status": "BLOCKED",
-      "summary": "Candidate archives are reproducible, but clean-machine Podman, Windows Docker Desktop, and macOS Docker Desktop or Colima support qualification is not established.",
+      "summary": "Candidate archives are reproducible and the three exact public targets passed hosted Linux Docker/Podman, but Windows Docker Desktop and macOS Docker Desktop or Colima clean-machine support qualification is not established.",
       "blocks_release": true
     },
     {
@@ -175,17 +193,17 @@
       "summary": "A reproducible non-root OCI candidate, exact SBOM/vulnerability output, detached provenance, and clean-load smoke passed and were downloaded and reverified without granting publication authority.",
       "blocks_release": false,
       "evidence": {
-        "source_sha": "d0e0c7b5ffac1c644b09b249177da5f334249c15",
-        "candidate_run_id": 31456913989,
+        "source_sha": "8ab64498add92360b92034333f056dc202396d24",
+        "candidate_run_id": 31479363341,
         "candidate_run_attempt": 1,
         "artifact": {
-          "id": 9088555822,
-          "digest": "sha256:1128eb3bc40fe91912bc476034d5cee6cfc2cb946a1f7644005e57b163863749",
-          "expires_at": "2026-11-09T03:56:28Z"
+          "id": 9096821821,
+          "digest": "sha256:be8c08aad565fe7a24d049f8fe8ce8d43ca2478b52554107b68e04667d17f5d6",
+          "expires_at": "2026-11-09T09:48:27Z"
         },
-        "candidate_manifest_sha256": "sha256:9c37261063a64ae15317007f86978b5509d164884f69d8cce2180e2dd30add8c",
-        "oci_archive_sha256": "sha256:6a98962c71b0936a43bc17cd5f7641cd04a5d9134af7ba833fa9d71e22334162",
-        "oci_manifest_digest": "sha256:946435fdfab60092e4a558ab6e41263f4ae90da395e0aa0b173a5b2073274150",
+        "candidate_manifest_sha256": "sha256:ebc29db4f02a646a50e1ed73be197bb48a997de105e717595178160b35c7fdb6",
+        "oci_archive_sha256": "sha256:609368b4b88304bcb69e08958ec9bb96cd286503f2822c0e5b22eb8a5149dbe5",
+        "oci_manifest_digest": "sha256:f9243f15c06ae48a2a03f868f7444789d92b058807aac03eba3dab0fc51e8f04",
         "promotion_status": "CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED"
       }
     },
@@ -212,7 +230,7 @@
       "id": "EXTERNAL-WORKFLOW-CONTRACT",
       "phase": 7,
       "status": "PASS",
-      "summary": "Result-blind exact-SHA target preregistration and the repository-owned Docker/Podman qualification workflow are merged; target results remain separately NOT_RUN.",
+      "summary": "Result-blind exact-SHA target preregistration and the repository-owned Docker/Podman qualification workflow are merged; the later six-pair result is recorded separately from this implementation contract.",
       "blocks_release": false,
       "evidence": {
         "merge_sha": "6e41da287e004802213cfdfbbeb124ed26fa6ae0",
@@ -224,9 +242,25 @@
     {
       "id": "EXTERNAL-TARGETS",
       "phase": 7,
-      "status": "FAIL",
-      "summary": "Run 31467337605 retained Python/Rust Docker+Podman successes but Helmet was BASELINE_INVALID on both engines because the exact snapshot omitted the Git index required by its frozen test; the target/config/command remain unchanged, an infrastructure amendment is implemented, and a clean six-pair rerun/read-back is pending.",
-      "blocks_release": true
+      "status": "PASS",
+      "summary": "Run 31480491950 passed all three preregistered exact-SHA targets on hosted Linux Docker and Podman, replayed every candidate twice, and passed canonical six-artifact repository-outside current-v2 read-back; this remains project-owned and cannot satisfy independent adoption.",
+      "blocks_release": false,
+      "evidence": {
+        "source_sha": "8ab64498add92360b92034333f056dc202396d24",
+        "qualification_run_id": 31480491950,
+        "qualification_run_attempt": 1,
+        "candidate_run_id": 31479363341,
+        "candidate_manifest_sha256": "sha256:ebc29db4f02a646a50e1ed73be197bb48a997de105e717595178160b35c7fdb6",
+        "oci_manifest_digest": "sha256:f9243f15c06ae48a2a03f868f7444789d92b058807aac03eba3dab0fc51e8f04",
+        "artifact_ids": [9097085909, 9097078440, 9097020490, 9097018493, 9097055697, 9097044023],
+        "summary_artifact": {
+          "id": 9097092837,
+          "digest": "sha256:155a68da092b97467b74185e0233cc727901ac51d58e180bbcd31ecd4030324e",
+          "expires_at": "2026-11-09T10:03:26Z"
+        },
+        "status": "OBSERVED_PROJECT_OWNED_ONLY",
+        "historical_failed_run_ids": [31467337605, 31476579941]
+      }
     },
     {
       "id": "INDEPENDENT-ADOPTION",
