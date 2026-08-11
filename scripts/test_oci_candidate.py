@@ -24,6 +24,7 @@ REPOSITORY = "example/tomorrowci-lab"
 VERSION = "0.2.0-alpha.1"
 RUN_ID = "123456"
 RUN_ATTEMPT = 3
+DOCKER_TAG = f"tomorrowci-candidate:v{VERSION}-{SOURCE_SHA}"
 MATERIALS = (
     ("docker.io/library/rust", "1" * 64),
     ("docker.io/library/docker", "2" * 64),
@@ -47,6 +48,7 @@ class OciCandidateTests(unittest.TestCase):
         self.metadata = self.root / "build-metadata.json"
         self.containerfile = self.root / "Containerfile"
         self.provenance = self.root / "image-provenance.json"
+        self.docker_archive = self.root / "tomorrowci-docker-smoke.tar"
         self.containerfile.write_text(
             "\n".join(
                 f"FROM {source}@sha256:{material} AS stage{position}"
@@ -64,8 +66,7 @@ class OciCandidateTests(unittest.TestCase):
         self.temp.cleanup()
 
     def _oci_files(self, *, extra_manifest: bool = False) -> tuple[dict[str, bytes], dict]:
-        layer = b"small deterministic layer"
-        layer_digest = digest(layer)
+        layers = [b"small deterministic layer", b"second deterministic layer"]
         config = json_bytes(
             {
                 "architecture": "amd64",
@@ -81,7 +82,10 @@ class OciCandidateTests(unittest.TestCase):
                         "org.opencontainers.image.version": VERSION,
                     },
                 },
-                "rootfs": {"type": "layers", "diff_ids": [f"sha256:{digest(layer)}"]},
+                "rootfs": {
+                    "type": "layers",
+                    "diff_ids": [f"sha256:{digest(layer)}" for layer in layers],
+                },
             }
         )
         config_digest = digest(config)
@@ -97,9 +101,10 @@ class OciCandidateTests(unittest.TestCase):
                 "layers": [
                     {
                         "mediaType": "application/vnd.oci.image.layer.v1.tar",
-                        "digest": f"sha256:{layer_digest}",
+                        "digest": f"sha256:{digest(layer)}",
                         "size": len(layer),
                     }
+                    for layer in layers
                 ],
             }
         )
@@ -133,7 +138,7 @@ class OciCandidateTests(unittest.TestCase):
             "index.json": layout_index,
             f"blobs/sha256/{manifest_digest}": manifest,
             f"blobs/sha256/{config_digest}": config,
-            f"blobs/sha256/{layer_digest}": layer,
+            **{f"blobs/sha256/{digest(layer)}": layer for layer in layers},
         }
         return files, descriptors[0]
 
@@ -233,6 +238,51 @@ class OciCandidateTests(unittest.TestCase):
         arguments.update(overrides)
         return oci_candidate.verify_candidate(**arguments)
 
+    def _create_docker_archive(self) -> dict:
+        candidate = self._create()
+        return oci_candidate.create_docker_archive(
+            archive=self.archive,
+            docker_archive=self.docker_archive,
+            tag=DOCKER_TAG,
+            expected_oci_sha256=candidate["oci"]["archive"]["sha256"],
+        )
+
+    def _docker_files(self) -> dict[str, bytes]:
+        files: dict[str, bytes] = {}
+        with tarfile.open(self.docker_archive, "r:") as archive:
+            for member in archive.getmembers():
+                if member.isreg():
+                    handle = archive.extractfile(member)
+                    assert handle is not None
+                    files[member.name] = handle.read()
+        return files
+
+    def _write_docker_files(
+        self,
+        files: dict[str, bytes],
+        *,
+        special: list[tarfile.TarInfo] | None = None,
+        duplicate: str | None = None,
+    ) -> None:
+        self.docker_archive.unlink(missing_ok=True)
+        with tarfile.open(
+            self.docker_archive, "w", format=tarfile.USTAR_FORMAT
+        ) as archive:
+            for directory in ("blobs", "blobs/sha256"):
+                archive.addfile(
+                    oci_candidate._canonical_tar_info(directory, directory=True)
+                )
+            for name in sorted(files):
+                data = files[name]
+                info = oci_candidate._canonical_tar_info(
+                    name, directory=False, size=len(data)
+                )
+                archive.addfile(info, io.BytesIO(data))
+                if name == duplicate:
+                    archive.addfile(info, io.BytesIO(data))
+            for info in special or []:
+                archive.addfile(info)
+
     def test_create_and_verify_canonical_detached_provenance(self) -> None:
         created = self._create()
         verified = self._verify()
@@ -256,6 +306,107 @@ class OciCandidateTests(unittest.TestCase):
         self.assertEqual(
             self.provenance.read_bytes(), oci_candidate._canonical_bytes(decoded)
         )
+
+    def test_docker_28_smoke_archive_binds_exact_config_layers_tag_and_bytes(self) -> None:
+        created = self._create_docker_archive()
+        manifest_blob = self.files[
+            f"blobs/sha256/{self.index_descriptor['digest'][7:]}"
+        ]
+        oci_manifest = json.loads(manifest_blob.decode("utf-8"))
+        config_path = f"blobs/sha256/{oci_manifest['config']['digest'][7:]}"
+        layer_paths = [
+            f"blobs/sha256/{layer['digest'][7:]}"
+            for layer in oci_manifest["layers"]
+        ]
+        expected_manifest = [
+            {
+                "Config": config_path,
+                "Layers": layer_paths,
+                "RepoTags": [DOCKER_TAG],
+            }
+        ]
+        files = self._docker_files()
+        self.assertEqual(
+            set(files), {"manifest.json", config_path, *layer_paths}
+        )
+        self.assertEqual(
+            files["manifest.json"], oci_candidate._canonical_bytes(expected_manifest)
+        )
+        for name in (config_path, *layer_paths):
+            self.assertEqual(files[name], self.files[name])
+        self.assertEqual(created["config"], config_path)
+        self.assertEqual(created["layers"], layer_paths)
+        self.assertEqual(created["tag"], DOCKER_TAG)
+
+        second = self.root / "tomorrowci-docker-smoke-second.tar"
+        repeated = oci_candidate.create_docker_archive(
+            archive=self.archive,
+            docker_archive=second,
+            tag=DOCKER_TAG,
+            expected_oci_sha256=created["oci_archive"]["sha256"],
+        )
+        self.assertEqual(self.docker_archive.read_bytes(), second.read_bytes())
+        self.assertEqual(
+            repeated["docker_archive"]["sha256"],
+            created["docker_archive"]["sha256"],
+        )
+
+    def test_docker_smoke_archive_rejects_manifest_contract_mutations(self) -> None:
+        created = self._create_docker_archive()
+        files = self._docker_files()
+        original = json.loads(files["manifest.json"].decode("utf-8"))
+        mutations = []
+        wrong_config = json.loads(json.dumps(original))
+        wrong_config[0]["Config"] = f"blobs/sha256/{'f' * 64}"
+        mutations.append(("config", wrong_config))
+        wrong_layers = json.loads(json.dumps(original))
+        wrong_layers[0]["Layers"].reverse()
+        mutations.append(("layers", wrong_layers))
+        wrong_tag = json.loads(json.dumps(original))
+        wrong_tag[0]["RepoTags"] = ["tomorrowci-candidate:wrong"]
+        mutations.append(("tag", wrong_tag))
+        for label, manifest in mutations:
+            with self.subTest(label):
+                mutated = dict(files)
+                mutated["manifest.json"] = oci_candidate._canonical_bytes(manifest)
+                self._write_docker_files(mutated)
+                with self.assertRaisesRegex(
+                    ValueError, "config, layers, or tag do not match"
+                ):
+                    oci_candidate.verify_docker_archive(
+                        archive=self.archive,
+                        docker_archive=self.docker_archive,
+                        tag=DOCKER_TAG,
+                        expected_oci_sha256=created["oci_archive"]["sha256"],
+                    )
+
+    def test_docker_smoke_archive_rejects_path_symlink_duplicate_and_extra(self) -> None:
+        created = self._create_docker_archive()
+        files = self._docker_files()
+        traversal = tarfile.TarInfo("../escape")
+        traversal.size = 0
+        traversal.mode = 0o644
+        symlink = tarfile.TarInfo(f"blobs/sha256/{'e' * 64}")
+        symlink.type = tarfile.SYMTYPE
+        symlink.linkname = "../../manifest.json"
+        cases = (
+            ("path", files, [traversal], None, "unsafe"),
+            ("symlink", files, [symlink], None, "not a regular"),
+            ("duplicate", files, None, "manifest.json", "duplicate"),
+            ("extra", files | {"unexpected.txt": b""}, None, None, "extra"),
+        )
+        for label, payload, special, duplicate, message in cases:
+            with self.subTest(label):
+                self._write_docker_files(
+                    payload, special=special, duplicate=duplicate
+                )
+                with self.assertRaisesRegex(ValueError, message):
+                    oci_candidate.verify_docker_archive(
+                        archive=self.archive,
+                        docker_archive=self.docker_archive,
+                        tag=DOCKER_TAG,
+                        expected_oci_sha256=created["oci_archive"]["sha256"],
+                    )
 
     def test_pack_layout_is_reproducible_and_rejects_noncanonical_tar_metadata(self) -> None:
         archives = []
