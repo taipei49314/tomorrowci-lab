@@ -43,7 +43,17 @@ class ContainerContractTests(unittest.TestCase):
             self.containerfile,
         )
         self.assertIn("--no-install-recommends", self.containerfile)
-        self.assertIn("rm -rf /var/lib/apt/lists/*", self.containerfile)
+        self.assertIn("/var/lib/apt/lists/*", self.containerfile)
+
+    def test_runtime_layer_removes_package_manager_wall_clock_state(self) -> None:
+        for path in (
+            "/var/cache/apt/*",
+            "/var/cache/ldconfig/aux-cache",
+            "/var/log/alternatives.log",
+            "/var/log/apt",
+            "/var/log/dpkg.log",
+        ):
+            self.assertIn(path, self.containerfile)
 
     def test_image_identity_and_entrypoint_are_explicit(self) -> None:
         for label in (
@@ -70,6 +80,16 @@ class ContainerContractTests(unittest.TestCase):
             "7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c",
             self.candidate_workflow,
         )
+        for exporter_option in (
+            "tar=false",
+            "rewrite-timestamp=true",
+            "oci-mediatypes=true",
+            "compression=gzip",
+            "compression-level=9",
+            "force-compression=true",
+            "compatibility-version=30",
+        ):
+            self.assertIn(exporter_option, self.candidate_workflow)
         self.assertIn("permissions:\n  contents: read", self.candidate_workflow)
         self.assertNotIn("docker push", self.candidate_workflow)
         self.assertNotIn("gh release", self.candidate_workflow)

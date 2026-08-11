@@ -2,6 +2,8 @@
 """Create and verify a detached, explicitly unauthorized OCI candidate record.
 
 The OCI archive is inspected in place.  Nothing from the archive is extracted.
+BuildKit directory exports are repacked with fixed tar metadata so the outer
+archive bytes are reproducible as well as the OCI descriptors they contain.
 """
 
 from __future__ import annotations
@@ -40,6 +42,110 @@ FROM = re.compile(
 MAX_JSON = 32 * 1024 * 1024
 MAX_MEMBERS = 4096
 MAX_ARCHIVE_MEMBER = 8 * 1024 * 1024 * 1024
+TAR_BLOCK_SIZE = 512
+TAR_RECORD_SIZE = 20 * TAR_BLOCK_SIZE
+
+
+def _require_directory(path: Path, label: str) -> Path:
+    path = path.absolute()
+    try:
+        mode = path.lstat().st_mode
+    except OSError as exc:
+        raise ValueError(f"{label} is missing or inaccessible") from exc
+    if not stat.S_ISDIR(mode):
+        raise ValueError(f"{label} must be a real directory")
+    return path.resolve(strict=True)
+
+
+def _layout_files(layout: Path) -> list[tuple[str, Path]]:
+    layout = _require_directory(layout, "OCI layout")
+    root_entries = {entry.name: entry for entry in layout.iterdir()}
+    required_root = {"blobs", "index.json", "oci-layout"}
+    if not required_root <= set(root_entries) or not (
+        set(root_entries) - required_root
+    ) <= {"ingest"}:
+        raise ValueError("OCI layout directory has an unexpected root inventory")
+    if "ingest" in root_entries:
+        ingest = root_entries["ingest"]
+        if not stat.S_ISDIR(ingest.lstat().st_mode) or any(ingest.iterdir()):
+            raise ValueError("OCI layout ingest directory must be a real empty directory")
+
+    blobs = root_entries["blobs"]
+    sha_root = blobs / "sha256"
+    if (
+        not stat.S_ISDIR(blobs.lstat().st_mode)
+        or {entry.name for entry in blobs.iterdir()} != {"sha256"}
+        or not stat.S_ISDIR(sha_root.lstat().st_mode)
+    ):
+        raise ValueError("OCI layout blob directory is not canonical")
+
+    files: list[tuple[str, Path]] = []
+    for name in ("index.json", "oci-layout"):
+        path = root_entries[name]
+        if not stat.S_ISREG(path.lstat().st_mode):
+            raise ValueError(f"OCI layout member is not a regular file: {name}")
+        files.append((name, path))
+    for path in sha_root.iterdir():
+        mode = path.lstat().st_mode
+        if not stat.S_ISREG(mode) or not SHA256.fullmatch(path.name):
+            raise ValueError("OCI layout contains an unsafe blob entry")
+        if path.stat().st_size <= 0 or path.stat().st_size > MAX_ARCHIVE_MEMBER:
+            raise ValueError(f"OCI layout blob has an unsafe size: {path.name}")
+        files.append((f"blobs/sha256/{path.name}", path))
+    if len(files) + 2 > MAX_MEMBERS:
+        raise ValueError("OCI layout contains too many members")
+    return sorted(files)
+
+
+def _canonical_tar_info(name: str, *, directory: bool, size: int = 0) -> tarfile.TarInfo:
+    info = tarfile.TarInfo(name)
+    info.type = tarfile.DIRTYPE if directory else tarfile.REGTYPE
+    info.mode = 0o755 if directory else 0o644
+    info.size = 0 if directory else size
+    info.uid = 0
+    info.gid = 0
+    info.uname = ""
+    info.gname = ""
+    info.mtime = 0
+    info.pax_headers = {}
+    return info
+
+
+def pack_layout(*, layout: Path, archive: Path) -> Path:
+    """Create one canonical USTAR archive from a BuildKit OCI directory export."""
+
+    files = _layout_files(layout)
+    archive = archive.absolute()
+    parent = _require_directory(archive.parent, "OCI archive parent")
+    archive = parent / archive.name
+    if archive.exists() or archive.is_symlink():
+        raise ValueError("OCI archive output must not already exist")
+    created = False
+    try:
+        with archive.open("xb") as output:
+            created = True
+            with tarfile.open(
+                fileobj=output,
+                mode="w",
+                format=tarfile.USTAR_FORMAT,
+            ) as destination:
+                for directory in ("blobs", "blobs/sha256"):
+                    destination.addfile(_canonical_tar_info(directory, directory=True))
+                for name, source in files:
+                    info = _canonical_tar_info(
+                        name,
+                        directory=False,
+                        size=source.stat().st_size,
+                    )
+                    with source.open("rb") as handle:
+                        destination.addfile(info, handle)
+        with _OciArchive(archive):
+            pass
+        return archive
+    except Exception:
+        if created:
+            archive.unlink(missing_ok=True)
+        raise
 
 
 def sha256_file(path: Path) -> str:
@@ -189,11 +295,39 @@ class _OciArchive:
                     raise ValueError(
                         f"OCI archive member is not a regular file: {member.name}"
                     )
+                expected_mode = 0o755 if member.isdir() else 0o644
+                if (
+                    member.mode != expected_mode
+                    or member.uid != 0
+                    or member.gid != 0
+                    or member.uname != ""
+                    or member.gname != ""
+                    or member.mtime != 0
+                    or member.linkname != ""
+                    or member.pax_headers
+                    or member.devmajor != 0
+                    or member.devminor != 0
+                ):
+                    raise ValueError(
+                        f"OCI archive member metadata is not canonical: {member.name}"
+                    )
                 if member.size < 0 or member.size > MAX_ARCHIVE_MEMBER:
                     raise ValueError(
                         f"OCI archive member has an unsafe size: {member.name}"
                     )
                 self.members[member.name] = member
+            expected_order = [
+                "blobs",
+                "blobs/sha256",
+                *sorted(
+                    member.name
+                    for member in members
+                    if member.name not in {"blobs", "blobs/sha256"}
+                ),
+            ]
+            if [member.name for member in members] != expected_order:
+                raise ValueError("OCI archive member order is not canonical")
+            self._verify_canonical_ustar_bytes(members)
             if {"blobs", "blobs/sha256"} - self.members.keys():
                 raise ValueError("OCI archive is missing its blob directories")
             if not all(
@@ -205,6 +339,51 @@ class _OciArchive:
             self.tar = None
             raise
         return self
+
+    def _verify_canonical_ustar_bytes(self, members: list[tarfile.TarInfo]) -> None:
+        if not members:
+            raise ValueError("OCI archive contains no members")
+        with self.path.open("rb") as raw:
+            for member in members:
+                if member.offset % TAR_BLOCK_SIZE != 0:
+                    raise ValueError("OCI archive has a non-aligned tar header")
+                raw.seek(member.offset)
+                header = raw.read(TAR_BLOCK_SIZE)
+                if (
+                    len(header) != TAR_BLOCK_SIZE
+                    or header[257:263] != b"ustar\0"
+                    or header[263:265] != b"00"
+                ):
+                    raise ValueError("OCI archive must use canonical uncompressed USTAR")
+                expected_header = _canonical_tar_info(
+                    member.name,
+                    directory=member.isdir(),
+                    size=member.size,
+                ).tobuf(
+                    format=tarfile.USTAR_FORMAT,
+                    encoding="utf-8",
+                    errors="strict",
+                )
+                if header != expected_header:
+                    raise ValueError(
+                        f"OCI archive has a non-canonical USTAR header: {member.name}"
+                    )
+
+            last = members[-1]
+            data_end = last.offset_data + (
+                (last.size + TAR_BLOCK_SIZE - 1) // TAR_BLOCK_SIZE
+            ) * TAR_BLOCK_SIZE
+            minimum_end = data_end + 2 * TAR_BLOCK_SIZE
+            expected_size = (
+                (minimum_end + TAR_RECORD_SIZE - 1) // TAR_RECORD_SIZE
+            ) * TAR_RECORD_SIZE
+            raw.seek(0, 2)
+            if raw.tell() != expected_size:
+                raise ValueError("OCI archive has non-canonical EOF length")
+            raw.seek(data_end)
+            for chunk in iter(lambda: raw.read(1024 * 1024), b""):
+                if any(chunk):
+                    raise ValueError("OCI archive EOF blocks and padding must be zero")
 
     def __exit__(self, *_: object) -> None:
         if self.tar is not None:
@@ -817,6 +996,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
+    pack = commands.add_parser("pack-layout")
+    pack.add_argument("--layout", type=Path, required=True)
+    pack.add_argument("--archive", type=Path, required=True)
     create = commands.add_parser("create")
     _add_common(create)
     create.add_argument("--version", required=True)
@@ -833,6 +1015,10 @@ def main(argv: list[str] | None = None) -> int:
     verify.add_argument("--expected-run-attempt", type=int)
     args = parser.parse_args(argv)
     try:
+        if args.command == "pack-layout":
+            packed = pack_layout(layout=args.layout, archive=args.archive)
+            print(f"oci-layout: PASS: sha256:{sha256_file(packed)}")
+            return 0
         if args.command == "create":
             create_candidate(
                 archive=args.archive,
