@@ -34,7 +34,12 @@ HTML_BLOCK_OPEN = re.compile(
     r"(?:[ \t]|/?>|$)",
     re.IGNORECASE,
 )
-HTML_TAG_OPEN = re.compile(r"^</?[A-Za-z][A-Za-z0-9-]*(?:[ \t][^>]*)?/?>[ \t]*$")
+HTML_TAG_OPEN = re.compile(
+    r"^</?[A-Za-z][A-Za-z0-9-]*"
+    r"(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*"
+    r"(?:[ \t]*=[ \t]*(?:[^ \t\"'=<>]+|'[^']*'|\"[^\"]*\"))?)*"
+    r"[ \t]*/?>[ \t]*$"
+)
 
 
 def is_semver(value: object) -> bool:
@@ -88,7 +93,8 @@ def changelog_sections(changelog: str) -> list[tuple[str, date | None]]:
     fence_character: str | None = None
     fence_length = 0
     html_terminator: str | None = None
-    for line in changelog.splitlines():
+    lines = changelog.split("\n")
+    for index, line in enumerate(lines):
         if fence_character is not None:
             closing = re.fullmatch(
                 rf" {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*",
@@ -146,6 +152,13 @@ def changelog_sections(changelog: str) -> list[tuple[str, date | None]]:
 
         heading = CHANGELOG_HEADING.fullmatch(line)
         if not heading:
+            continue
+        if (
+            index == 0
+            or lines[index - 1].strip()
+            or index + 1 >= len(lines)
+            or lines[index + 1].strip()
+        ):
             continue
         release_date = heading.group("date")
         parsed_date: date | None = None
