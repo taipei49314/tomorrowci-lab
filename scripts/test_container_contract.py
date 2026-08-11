@@ -94,6 +94,25 @@ class ContainerContractTests(unittest.TestCase):
         self.assertNotIn("docker push", self.candidate_workflow)
         self.assertNotIn("gh release", self.candidate_workflow)
 
+    def test_candidate_smoke_keeps_reproducibility_gates_fail_closed(self) -> None:
+        self.assertIn(
+            '$env:RUSTFLAGS = "-C link-arg=/Brepro"', self.candidate_workflow
+        )
+        self.assertIn(
+            "python3 scripts/oci_candidate.py docker-archive",
+            self.candidate_workflow,
+        )
+        self.assertIn(
+            '--archive "$upload/tomorrowci-oci-linux-amd64.tar"',
+            self.candidate_workflow,
+        )
+        self.assertIn('--docker-archive "$docker_smoke"', self.candidate_workflow)
+        self.assertIn('docker load --input "$docker_smoke"', self.candidate_workflow)
+        self.assertNotIn(
+            'docker load --input "$upload/tomorrowci-oci-linux-amd64.tar"',
+            self.candidate_workflow,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

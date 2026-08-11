@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import re
 import stat
@@ -25,6 +26,11 @@ DEFAULT_PROVENANCE = Path("image-provenance.json")
 OCI_INDEX = "application/vnd.oci.image.index.v1+json"
 OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 OCI_CONFIG = "application/vnd.oci.image.config.v1+json"
+DOCKER_TAG = re.compile(
+    r"^(?=.{1,255}$)[a-z0-9]+(?:[._-][a-z0-9]+)*"
+    r"(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*:"
+    r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
+)
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SLUG = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -483,6 +489,114 @@ def _read_descriptor_json(
     return _object(_load_json_bytes(data, label), label), data
 
 
+def _validate_oci_graph(archive: _OciArchive) -> dict:
+    """Validate the complete canonical single-platform OCI payload graph."""
+
+    referenced: set[str] = set()
+    layout_raw = archive.read("oci-layout")
+    layout = _object(_load_json_bytes(layout_raw, "oci-layout"), "oci-layout")
+    if layout != {"imageLayoutVersion": "1.0.0"}:
+        raise ValueError("OCI layout version/schema mismatch")
+    index_raw = archive.read("index.json")
+    layout_index = _object(
+        _load_json_bytes(index_raw, "OCI layout index"), "OCI layout index"
+    )
+    if set(layout_index) != {"schemaVersion", "mediaType", "manifests"}:
+        raise ValueError("OCI layout index has an unexpected schema")
+    if (
+        type(layout_index["schemaVersion"]) is not int
+        or layout_index["schemaVersion"] != 2
+        or layout_index["mediaType"] != OCI_INDEX
+    ):
+        raise ValueError("OCI layout index identity mismatch")
+    roots = _array(layout_index["manifests"], "OCI layout descriptors")
+    if len(roots) != 1:
+        raise ValueError("detached provenance mode requires exactly one image manifest")
+    manifest_descriptor = _descriptor(
+        roots[0],
+        "OCI image manifest descriptor",
+        media_type=OCI_MANIFEST,
+        require_platform=True,
+    )
+    referenced.add(manifest_descriptor["digest"][7:])
+    manifest, _ = _read_descriptor_json(
+        archive, manifest_descriptor, "OCI image manifest"
+    )
+    allowed_manifest = {"schemaVersion", "mediaType", "config", "layers"}
+    if (
+        not {"schemaVersion", "mediaType", "config", "layers"} <= manifest.keys()
+        or not manifest.keys() <= allowed_manifest
+        or type(manifest["schemaVersion"]) is not int
+        or manifest["schemaVersion"] != 2
+        or manifest["mediaType"] != OCI_MANIFEST
+    ):
+        raise ValueError("OCI image manifest schema mismatch")
+    config_descriptor = _descriptor(
+        manifest["config"], "OCI config descriptor", media_type=OCI_CONFIG
+    )
+    referenced.add(config_descriptor["digest"][7:])
+    config, _ = _read_descriptor_json(archive, config_descriptor, "OCI config")
+    raw_layers = _array(manifest["layers"], "OCI layers")
+    if not raw_layers:
+        raise ValueError("OCI image manifest contains no layers")
+    layers: list[dict] = []
+    for position, value in enumerate(raw_layers):
+        layer = _descriptor(value, f"OCI layer {position}")
+        if not layer["mediaType"].startswith("application/vnd.oci.image.layer.v1."):
+            raise ValueError(f"OCI layer {position} has an unsupported media type")
+        referenced.add(layer["digest"][7:])
+        archive.blob(layer["digest"])
+        layer_member = archive.members[f"blobs/sha256/{layer['digest'][7:]}"]
+        if layer_member.size != layer["size"]:
+            raise ValueError(f"OCI layer {position} descriptor size mismatch")
+        layers.append(layer)
+
+    if config.get("architecture") != "amd64" or config.get("os") != "linux":
+        raise ValueError("OCI config platform must be exactly linux/amd64")
+    rootfs = _object(config.get("rootfs"), "OCI rootfs config")
+    diff_ids = _array(rootfs.get("diff_ids"), "OCI rootfs diff IDs")
+    if (
+        rootfs.get("type") != "layers"
+        or len(diff_ids) != len(layers)
+        or any(
+            type(value) is not str
+            or not value.startswith("sha256:")
+            or not SHA256.fullmatch(value[7:])
+            for value in diff_ids
+        )
+    ):
+        raise ValueError("OCI rootfs diff IDs do not match the layer inventory")
+
+    actual_blobs = {
+        name.removeprefix("blobs/sha256/")
+        for name, member in archive.members.items()
+        if member.isreg() and name.startswith("blobs/sha256/")
+    }
+    if any(not SHA256.fullmatch(value) for value in actual_blobs):
+        raise ValueError("OCI blob filenames must be lowercase sha256 values")
+    for value in actual_blobs:
+        if archive.hash(f"blobs/sha256/{value}") != value:
+            raise ValueError("OCI blob filename/content sha256 mismatch")
+    if actual_blobs != referenced:
+        raise ValueError("OCI archive contains missing or unreferenced blobs")
+    expected_files = {
+        "blobs",
+        "blobs/sha256",
+        "index.json",
+        "oci-layout",
+        *(f"blobs/sha256/{value}" for value in actual_blobs),
+    }
+    if set(archive.members) != expected_files:
+        raise ValueError("OCI archive contains unexpected extra members")
+    return {
+        "config": config,
+        "config_descriptor": config_descriptor,
+        "index_raw": index_raw,
+        "layers": layers,
+        "manifest_descriptor": manifest_descriptor,
+    }
+
+
 def _parse_containerfile(path: Path) -> tuple[str, int, list[dict[str, str]]]:
     path = _require_regular(path, "Containerfile")
     if path.name != "Containerfile":
@@ -621,82 +735,9 @@ def _inspect_oci(
     archive_path = _require_regular(archive_path, "OCI archive")
     archive_size = archive_path.stat().st_size
     archive_sha = sha256_file(archive_path)
-    referenced: set[str] = set()
     with _OciArchive(archive_path) as archive:
-        layout_raw = archive.read("oci-layout")
-        layout = _object(_load_json_bytes(layout_raw, "oci-layout"), "oci-layout")
-        if layout != {"imageLayoutVersion": "1.0.0"}:
-            raise ValueError("OCI layout version/schema mismatch")
-        index_raw = archive.read("index.json")
-        layout_index = _object(
-            _load_json_bytes(index_raw, "OCI layout index"), "OCI layout index"
-        )
-        if set(layout_index) != {"schemaVersion", "mediaType", "manifests"}:
-            raise ValueError("OCI layout index has an unexpected schema")
-        if (
-            type(layout_index["schemaVersion"]) is not int
-            or layout_index["schemaVersion"] != 2
-            or layout_index["mediaType"] != OCI_INDEX
-        ):
-            raise ValueError("OCI layout index identity mismatch")
-        roots = _array(layout_index["manifests"], "OCI layout descriptors")
-        if len(roots) != 1:
-            raise ValueError(
-                "detached provenance mode requires exactly one image manifest"
-            )
-        manifest_descriptor = _descriptor(
-            roots[0],
-            "OCI image manifest descriptor",
-            media_type=OCI_MANIFEST,
-            require_platform=True,
-        )
-        referenced.add(manifest_descriptor["digest"][7:])
-        manifest, _ = _read_descriptor_json(
-            archive, manifest_descriptor, "OCI image manifest"
-        )
-        allowed_manifest = {"schemaVersion", "mediaType", "config", "layers"}
-        if (
-            not {"schemaVersion", "mediaType", "config", "layers"} <= manifest.keys()
-            or not manifest.keys() <= allowed_manifest
-            or type(manifest["schemaVersion"]) is not int
-            or manifest["schemaVersion"] != 2
-            or manifest["mediaType"] != OCI_MANIFEST
-        ):
-            raise ValueError("OCI image manifest schema mismatch")
-        config_descriptor = _descriptor(
-            manifest["config"], "OCI config descriptor", media_type=OCI_CONFIG
-        )
-        referenced.add(config_descriptor["digest"][7:])
-        config, _ = _read_descriptor_json(archive, config_descriptor, "OCI config")
-        layers = _array(manifest["layers"], "OCI layers")
-        if not layers:
-            raise ValueError("OCI image manifest contains no layers")
-        for position, value in enumerate(layers):
-            layer = _descriptor(value, f"OCI layer {position}")
-            if not layer["mediaType"].startswith("application/vnd.oci.image.layer.v1."):
-                raise ValueError(f"OCI layer {position} has an unsupported media type")
-            referenced.add(layer["digest"][7:])
-            archive.blob(layer["digest"])
-            layer_member = archive.members[f"blobs/sha256/{layer['digest'][7:]}"]
-            if layer_member.size != layer["size"]:
-                raise ValueError(f"OCI layer {position} descriptor size mismatch")
-
-        if config.get("architecture") != "amd64" or config.get("os") != "linux":
-            raise ValueError("OCI config platform must be exactly linux/amd64")
-        rootfs = _object(config.get("rootfs"), "OCI rootfs config")
-        diff_ids = _array(rootfs.get("diff_ids"), "OCI rootfs diff IDs")
-        if (
-            rootfs.get("type") != "layers"
-            or len(diff_ids) != len(layers)
-            or any(
-                type(value) is not str
-                or not value.startswith("sha256:")
-                or not SHA256.fullmatch(value[7:])
-                for value in diff_ids
-            )
-        ):
-            raise ValueError("OCI rootfs diff IDs do not match the layer inventory")
-        runtime = _object(config.get("config"), "OCI runtime config")
+        graph = _validate_oci_graph(archive)
+        runtime = _object(graph["config"].get("config"), "OCI runtime config")
         labels = _object(runtime.get("Labels"), "OCI image labels")
         expected_source = f"https://github.com/{repository}"
         expected_labels = {
@@ -719,28 +760,6 @@ def _inspect_oci(
         ):
             raise ValueError("OCI entrypoint must be the TomorrowCI binary")
 
-        actual_blobs = {
-            name.removeprefix("blobs/sha256/")
-            for name, member in archive.members.items()
-            if member.isreg() and name.startswith("blobs/sha256/")
-        }
-        if any(not SHA256.fullmatch(value) for value in actual_blobs):
-            raise ValueError("OCI blob filenames must be lowercase sha256 values")
-        for value in actual_blobs:
-            if archive.hash(f"blobs/sha256/{value}") != value:
-                raise ValueError("OCI blob filename/content sha256 mismatch")
-        if actual_blobs != referenced:
-            raise ValueError("OCI archive contains missing or unreferenced blobs")
-        expected_files = {
-            "blobs",
-            "blobs/sha256",
-            "index.json",
-            "oci-layout",
-            *(f"blobs/sha256/{value}" for value in actual_blobs),
-        }
-        if set(archive.members) != expected_files:
-            raise ValueError("OCI archive contains unexpected extra members")
-
     if (
         archive_path.stat().st_size != archive_size
         or sha256_file(archive_path) != archive_sha
@@ -749,7 +768,7 @@ def _inspect_oci(
 
     metadata_sha, metadata_name, metadata_size = _validate_metadata(
         path=metadata_path,
-        image_descriptor=manifest_descriptor,
+        image_descriptor=graph["manifest_descriptor"],
         materials=materials,
         version=version,
         source_sha=source_sha,
@@ -761,16 +780,16 @@ def _inspect_oci(
             "sha256": f"sha256:{archive_sha}",
             "size": archive_size,
         },
-        "layout_index": {"sha256": f"sha256:{_digest_bytes(index_raw)}"},
+        "layout_index": {"sha256": f"sha256:{_digest_bytes(graph['index_raw'])}"},
         "manifest": {
-            "digest": manifest_descriptor["digest"],
-            "media_type": manifest_descriptor["mediaType"],
-            "size": manifest_descriptor["size"],
+            "digest": graph["manifest_descriptor"]["digest"],
+            "media_type": graph["manifest_descriptor"]["mediaType"],
+            "size": graph["manifest_descriptor"]["size"],
         },
         "config": {
-            "digest": config_descriptor["digest"],
-            "media_type": config_descriptor["mediaType"],
-            "size": config_descriptor["size"],
+            "digest": graph["config_descriptor"]["digest"],
+            "media_type": graph["config_descriptor"]["mediaType"],
+            "size": graph["config_descriptor"]["size"],
         },
         "platform": {"architecture": "amd64", "os": "linux"},
         "runtime": {
@@ -791,6 +810,190 @@ def _inspect_oci(
             "materials": materials,
         },
     }
+
+
+def _validate_docker_tag(tag: str) -> None:
+    if type(tag) is not str or not DOCKER_TAG.fullmatch(tag):
+        raise ValueError("Docker smoke tag must be one canonical name:tag reference")
+
+
+def _docker_manifest(*, graph: dict, tag: str) -> tuple[bytes, str, list[str]]:
+    _validate_docker_tag(tag)
+    config_path = f"blobs/sha256/{graph['config_descriptor']['digest'][7:]}"
+    layer_paths = [
+        f"blobs/sha256/{layer['digest'][7:]}" for layer in graph["layers"]
+    ]
+    document = [
+        {
+            "Config": config_path,
+            "Layers": layer_paths,
+            "RepoTags": [tag],
+        }
+    ]
+    return _canonical_bytes(document), config_path, layer_paths
+
+
+def verify_docker_archive(
+    *,
+    archive: Path,
+    docker_archive: Path,
+    tag: str,
+    expected_oci_sha256: str,
+) -> dict:
+    """Verify an exact-payload Docker-load carrier derived from canonical OCI."""
+
+    _validate_docker_tag(tag)
+    if (
+        type(expected_oci_sha256) is not str
+        or not expected_oci_sha256.startswith("sha256:")
+        or not SHA256.fullmatch(expected_oci_sha256[7:])
+    ):
+        raise ValueError("expected OCI archive digest must be one sha256 digest")
+    archive = _require_regular(archive, "OCI archive")
+    source_size = archive.stat().st_size
+    source_sha = sha256_file(archive)
+    if f"sha256:{source_sha}" != expected_oci_sha256:
+        raise ValueError("OCI archive digest does not match the verified candidate")
+    with _OciArchive(archive) as source:
+        graph = _validate_oci_graph(source)
+        expected_manifest, config_path, layer_paths = _docker_manifest(
+            graph=graph, tag=tag
+        )
+        payload_paths = sorted({config_path, *layer_paths})
+        payload_sizes = {
+            name: source.members[name].size for name in payload_paths
+        }
+        payload_hashes = {name: source.hash(name) for name in payload_paths}
+    if archive.stat().st_size != source_size or sha256_file(archive) != source_sha:
+        raise ValueError("OCI archive changed while deriving the Docker smoke archive")
+
+    docker_archive = _require_regular(docker_archive, "Docker smoke archive")
+    docker_size = docker_archive.stat().st_size
+    docker_sha = sha256_file(docker_archive)
+    with _OciArchive(docker_archive) as derived:
+        expected_members = {
+            "blobs",
+            "blobs/sha256",
+            "manifest.json",
+            *payload_paths,
+        }
+        if set(derived.members) != expected_members:
+            raise ValueError("Docker smoke archive contains unexpected extra members")
+        manifest_raw = derived.read("manifest.json")
+        manifest = _array(
+            _load_json_bytes(manifest_raw, "Docker manifest"), "Docker manifest"
+        )
+        if manifest_raw != _canonical_bytes(manifest):
+            raise ValueError("Docker manifest is not canonical JSON")
+        if len(manifest) != 1:
+            raise ValueError("Docker manifest must contain exactly one image")
+        entry = _object(manifest[0], "Docker manifest image")
+        if set(entry) != {"Config", "Layers", "RepoTags"}:
+            raise ValueError("Docker manifest image has an unexpected schema")
+        if manifest_raw != expected_manifest:
+            raise ValueError(
+                "Docker manifest config, layers, or tag do not match the OCI payload"
+            )
+        for name in payload_paths:
+            if (
+                derived.members[name].size != payload_sizes[name]
+                or derived.hash(name) != payload_hashes[name]
+            ):
+                raise ValueError(
+                    f"Docker smoke payload is not byte-identical to OCI: {name}"
+                )
+    if (
+        docker_archive.stat().st_size != docker_size
+        or sha256_file(docker_archive) != docker_sha
+    ):
+        raise ValueError("Docker smoke archive changed while it was being verified")
+    return {
+        "config": config_path,
+        "docker_archive": {
+            "sha256": f"sha256:{docker_sha}",
+            "size": docker_size,
+        },
+        "layers": layer_paths,
+        "oci_archive": {
+            "sha256": f"sha256:{source_sha}",
+            "size": source_size,
+        },
+        "tag": tag,
+    }
+
+
+def create_docker_archive(
+    *,
+    archive: Path,
+    docker_archive: Path,
+    tag: str,
+    expected_oci_sha256: str,
+) -> dict:
+    """Create a deterministic, non-shipping Docker-load smoke carrier."""
+
+    _validate_docker_tag(tag)
+    if (
+        type(expected_oci_sha256) is not str
+        or not expected_oci_sha256.startswith("sha256:")
+        or not SHA256.fullmatch(expected_oci_sha256[7:])
+    ):
+        raise ValueError("expected OCI archive digest must be one sha256 digest")
+    archive = _require_regular(archive, "OCI archive")
+    source_size = archive.stat().st_size
+    source_sha = sha256_file(archive)
+    if f"sha256:{source_sha}" != expected_oci_sha256:
+        raise ValueError("OCI archive digest does not match the verified candidate")
+    docker_archive = docker_archive.absolute()
+    parent = _require_directory(docker_archive.parent, "Docker archive parent")
+    docker_archive = parent / docker_archive.name
+    if docker_archive.exists() or docker_archive.is_symlink():
+        raise ValueError("Docker smoke archive output must not already exist")
+
+    created = False
+    try:
+        with _OciArchive(archive) as source:
+            graph = _validate_oci_graph(source)
+            manifest_raw, config_path, layer_paths = _docker_manifest(
+                graph=graph, tag=tag
+            )
+            payload_paths = sorted({config_path, *layer_paths})
+            with docker_archive.open("xb") as output:
+                created = True
+                with tarfile.open(
+                    fileobj=output,
+                    mode="w",
+                    format=tarfile.USTAR_FORMAT,
+                ) as destination:
+                    for directory in ("blobs", "blobs/sha256"):
+                        destination.addfile(
+                            _canonical_tar_info(directory, directory=True)
+                        )
+                    for name in payload_paths:
+                        info = _canonical_tar_info(
+                            name,
+                            directory=False,
+                            size=source.members[name].size,
+                        )
+                        with source._stream(name) as handle:
+                            destination.addfile(info, handle)
+                    destination.addfile(
+                        _canonical_tar_info(
+                            "manifest.json", directory=False, size=len(manifest_raw)
+                        ),
+                        io.BytesIO(manifest_raw),
+                    )
+        if archive.stat().st_size != source_size or sha256_file(archive) != source_sha:
+            raise ValueError("OCI archive changed while deriving the Docker smoke archive")
+        return verify_docker_archive(
+            archive=archive,
+            docker_archive=docker_archive,
+            tag=tag,
+            expected_oci_sha256=expected_oci_sha256,
+        )
+    except Exception:
+        if created:
+            docker_archive.unlink(missing_ok=True)
+        raise
 
 
 def _candidate_document(
@@ -1013,6 +1216,14 @@ def main(argv: list[str] | None = None) -> int:
     verify.add_argument("--expected-repository")
     verify.add_argument("--expected-run-id")
     verify.add_argument("--expected-run-attempt", type=int)
+    docker = commands.add_parser("docker-archive")
+    _add_common(docker)
+    docker.add_argument("--docker-archive", type=Path, required=True)
+    docker.add_argument("--tag", required=True)
+    docker.add_argument("--expected-source-sha", required=True)
+    docker.add_argument("--expected-repository", required=True)
+    docker.add_argument("--expected-run-id", required=True)
+    docker.add_argument("--expected-run-attempt", type=int, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "pack-layout":
@@ -1032,7 +1243,7 @@ def main(argv: list[str] | None = None) -> int:
                 run_attempt=args.run_attempt,
                 server_url=args.server_url,
             )
-        else:
+        elif args.command == "verify":
             verify_candidate(
                 archive=args.archive,
                 metadata=args.metadata,
@@ -1043,6 +1254,28 @@ def main(argv: list[str] | None = None) -> int:
                 expected_run_id=args.expected_run_id,
                 expected_run_attempt=args.expected_run_attempt,
             )
+        else:
+            document = verify_candidate(
+                archive=args.archive,
+                metadata=args.metadata,
+                containerfile=args.containerfile,
+                provenance=args.provenance,
+                expected_source_sha=args.expected_source_sha,
+                expected_repository=args.expected_repository,
+                expected_run_id=args.expected_run_id,
+                expected_run_attempt=args.expected_run_attempt,
+            )
+            result = create_docker_archive(
+                archive=args.archive,
+                docker_archive=args.docker_archive,
+                tag=args.tag,
+                expected_oci_sha256=document["oci"]["archive"]["sha256"],
+            )
+            print(
+                "docker-smoke-archive: PASS: "
+                f"{result['docker_archive']['sha256']}"
+            )
+            return 0
         print(f"oci-candidate: PASS: sha256:{sha256_file(args.provenance.absolute())}")
     except (OSError, TypeError, ValueError, tarfile.TarError) as exc:
         print(f"oci-candidate: FAIL: {exc}", file=sys.stderr)

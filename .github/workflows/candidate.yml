@@ -127,6 +127,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "version contract failed" }
           $env:CARGO_INCREMENTAL = "0"
           $env:SOURCE_DATE_EPOCH = "0"
+          # MSVC's linker otherwise records COFF/debug timestamps even when the
+          # Rust inputs and SOURCE_DATE_EPOCH are identical.
+          $env:RUSTFLAGS = "-C link-arg=/Brepro"
           foreach ($slot in @("a", "b")) {
             $targetDir = Join-Path $env:RUNNER_TEMP "tomorrowci-repro-$slot"
             if (Test-Path $targetDir) { throw "non-clean target directory: $targetDir" }
@@ -286,7 +289,20 @@ jobs:
             --expected-repository "$GITHUB_REPOSITORY" \
             --expected-run-id "$GITHUB_RUN_ID" \
             --expected-run-attempt "$GITHUB_RUN_ATTEMPT"
-          docker load --input "$upload/tomorrowci-oci-linux-amd64.tar"
+          docker_smoke="$RUNNER_TEMP/tomorrowci-docker-smoke.tar"
+          test ! -e "$docker_smoke"
+          python3 scripts/oci_candidate.py docker-archive \
+            --archive "$upload/tomorrowci-oci-linux-amd64.tar" \
+            --metadata "$upload/build-metadata.json" \
+            --containerfile "$upload/Containerfile" \
+            --provenance "$upload/image-provenance.json" \
+            --docker-archive "$docker_smoke" \
+            --tag "$IMAGE" \
+            --expected-source-sha "$GITHUB_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$GITHUB_RUN_ID" \
+            --expected-run-attempt "$GITHUB_RUN_ATTEMPT"
+          docker load --input "$docker_smoke"
           test "$(docker run --rm "$IMAGE" --version)" = "tomorrowci $VERSION"
           docker run --rm "$IMAGE" trust
           test "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = \
