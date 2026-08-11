@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-08-11T00:00:00+08:00",
-  "baseline_sha": "456a36edb1e8547612cd13ee7a30be3479d33bab",
+  "recorded_at": "2026-08-11T09:14:32+08:00",
+  "baseline_sha": "a6af3076ed3286d42c5ed7a386cb6812d8b76c50",
   "items": [
     {
       "id": "TRUST-001",
@@ -69,17 +69,68 @@
       }
     },
     {
+      "id": "M3-NODE-LINUX-DOCKER",
+      "phase": 3,
+      "status": "PASS",
+      "summary": "Bounded Node 20 to Node 22/24 runtime frontier qualified with immutable images, current-v2 verification, replay x2, and downloaded-artifact read-back on Linux Docker.",
+      "blocks_release": false,
+      "evidence": {
+        "source_sha": "a6af3076ed3286d42c5ed7a386cb6812d8b76c50",
+        "ci_run_id": 31447884019,
+        "run_id": "5c02e51bf30d",
+        "artifact": {
+          "id": 9085285817,
+          "digest": "sha256:50737a0bd8c946f9fc156e7ce52e616739c378be4f199400888af5245e96c9d0",
+          "expires_at": "2026-11-09T00:59:41Z"
+        }
+      }
+    },
+    {
+      "id": "M3-RUST-LINUX-DOCKER",
+      "phase": 3,
+      "status": "PASS",
+      "summary": "Bounded Rust 1.83 to 1.74 declared-MSRV frontier qualified with immutable images, current-v2 verification, replay x2, and downloaded-artifact read-back on Linux Docker.",
+      "blocks_release": false,
+      "evidence": {
+        "source_sha": "a6af3076ed3286d42c5ed7a386cb6812d8b76c50",
+        "ci_run_id": 31447884019,
+        "run_id": "10af99ea763c",
+        "artifact": {
+          "id": 9085282933,
+          "digest": "sha256:23a4b39c69386194adc1d6c649e482f9b5b7409a09cbca4405f2cce18910e648",
+          "expires_at": "2026-11-09T00:59:41Z"
+        }
+      }
+    },
+    {
+      "id": "M3-NEGATIVE-CONTROLS",
+      "phase": 3,
+      "status": "PASS",
+      "summary": "Baseline-invalid, flaky, and unavailable-engine controls remained fail-closed without an authorized horizon.",
+      "blocks_release": false,
+      "evidence": {
+        "source_sha": "a6af3076ed3286d42c5ed7a386cb6812d8b76c50",
+        "ci_run_id": 31447884019,
+        "run_ids": ["331ffe2feac9", "440458125b4f", "6d18736f4e9b"],
+        "artifact": {
+          "id": 9085315934,
+          "digest": "sha256:b21ed54a07e6b0031f3b01b2c35a68a1fb587691238238ed7f2f656c71c0487a",
+          "expires_at": "2026-11-09T00:59:41Z"
+        }
+      }
+    },
+    {
       "id": "M3-NODE-LIVE",
       "phase": 3,
       "status": "NOT_RUN",
-      "summary": "Qualify the Node adapter in real Docker and Podman execution with replay-equivalent evidence.",
+      "summary": "Complete the full Node Docker+Podman qualification; the bounded Linux Docker slice is PASS, but Podman remains NOT_RUN.",
       "blocks_release": true
     },
     {
       "id": "M3-RUST-LIVE",
       "phase": 3,
       "status": "NOT_RUN",
-      "summary": "Qualify the Rust adapter in real Docker and Podman execution with replay-equivalent evidence.",
+      "summary": "Complete the full Rust Docker+Podman qualification; the bounded Linux Docker slice is PASS, but Podman remains NOT_RUN.",
       "blocks_release": true
     },
     {

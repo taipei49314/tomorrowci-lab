@@ -5,9 +5,9 @@
 TomorrowCI aims to find the earliest **concrete** future environment in which a
 repository stops building or passing tests, isolate the smallest
 breakage-inducing change, and emit **replayable evidence**. The currently
-demonstrated public slices are the Python runtime path and a bounded Linux
-Docker dependency-reduction path for pip, npm, and cargo; wider product
-surfaces remain explicit qualification work.
+demonstrated public slices are the Python, Node, and Rust runtime paths plus a
+bounded Linux Docker dependency-reduction path for pip, npm, and cargo; wider
+product surfaces remain explicit qualification work.
 
 ```text
 No forecast without an executable scenario.
@@ -39,7 +39,8 @@ qualification work is machine-readable in
 | Evidence integrity + exact replay | **PASS** (bounded alpha.2 scope) | `verify` plus two independent replay attempts passed |
 | Release gate | **PASS** (alpha.2 scope) | Three platform archives, checksums, and CycloneDX SBOM published |
 | Linux Docker dependency axis / observed ddmin | **PASS** (bounded M2 scope) | Native pip/npm/cargo fixtures; scan, verify, minimal replay x2, and downloaded-artifact read-back passed at exact master `456a36e...`; see [M2 qualification](docs/qualification/M2.md) |
-| M3 Node/Rust runtime + Podman/platform expansion | **NOT_RUN** | The M2 dependency fixtures do not qualify these broader surfaces |
+| Linux Docker Node/Rust runtime slices | **PASS** (bounded M3 scope) | Node 20→22/24 and Rust 1.83→1.74 observations, fail-closed controls, verify, replay x2, and artifact read-back passed at exact master `a6af307...`; see [M3 qualification](docs/qualification/M3.md) |
+| M3 Podman/platform expansion | **NOT_RUN** | The Linux Docker observations do not qualify Podman or other hosts |
 | React/TypeScript interactive report | **NOT_RUN** | Out of alpha.2 scope |
 | Remote GitHub URL scan | **NOT_RUN** | Out of alpha.2 scope |
 | Container image publish | **NOT_RUN** | Must not be implied by release |
