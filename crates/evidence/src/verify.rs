@@ -12,13 +12,16 @@ use std::path::{Path, PathBuf};
 use tomorrowci_core::{
     canonical_image_digest_value, canonical_json_hash, classify_candidate_attempts,
     compute_breakage_frontier, dependency_materialization_commands, plan_scenarios, sha256_bytes,
-    sha256_tree_v1, validate_image_digest, BreakageFrontier, Candidate, CommandSpec, Config,
-    ContentHash, DependencyAdditionCheck, DependencyCandidateSet, DependencyChange,
-    DependencyExperimentManifest, DependencyMinimalityCheck, DependencyProbeEvidence,
-    DependencyProbeRecord, DependencyProbeVerdict, DependencyReduction, DependencyReductionStatus,
-    Ecosystem, EnvironmentAxis, EnvironmentSpec, EvidenceGrade, ExecutionPlan, ExecutionResult,
+    sha256_tree_v1, synthetic_git_blob_sha1, synthetic_git_index_v1, validate_image_digest,
+    BreakageFrontier, Candidate, CommandSpec, Config, ContentHash, DependencyAdditionCheck,
+    DependencyCandidateSet, DependencyChange, DependencyExperimentManifest,
+    DependencyMinimalityCheck, DependencyProbeEvidence, DependencyProbeRecord,
+    DependencyProbeVerdict, DependencyReduction, DependencyReductionStatus, Ecosystem,
+    EnvironmentAxis, EnvironmentSpec, EvidenceGrade, ExecutionPlan, ExecutionResult,
     FailureSignature, PlanDecision, RemoteSourceRecord, RepositorySnapshot, ResolvedDependencySet,
-    Result, RunManifest, Scenario, TcError, TestAttemptsSummary, TestExecutionStatus, Verdict,
+    Result, RunManifest, Scenario, SyntheticGitIndexEntry, SyntheticGitIndexRecord, TcError,
+    TestAttemptsSummary, TestExecutionStatus, Verdict, SYNTHETIC_GIT_ENV, SYNTHETIC_GIT_INDEX_KIND,
+    SYNTHETIC_GIT_INDEX_SOURCE,
 };
 
 pub const RUN_REQUIRED: &[&str] = &[
@@ -832,7 +835,7 @@ fn verify_remote_source_identity(
     else {
         return Ok(());
     };
-    if record.schema_version != 1 {
+    if !matches!(record.schema_version, 1 | 2) {
         errors.push(format!(
             "remote-source.json has unsupported schema_version {}",
             record.schema_version
@@ -913,8 +916,95 @@ fn verify_remote_source_identity(
         {
             errors.push("remote-source snapshot bounds do not match workspace-manifest".into());
         }
+        match (record.schema_version, &record.synthetic_git_index) {
+            (1, None) => {}
+            (1, Some(_)) => {
+                errors.push("remote-source schema v1 cannot claim a synthetic Git index".into())
+            }
+            (2, Some(actual)) => {
+                match derive_synthetic_git_index_record(
+                    run_root,
+                    &workspace,
+                    &record.workspace_manifest_sha256,
+                ) {
+                    Ok(expected) if actual == &expected => {
+                        let allowed_git_env: BTreeSet<&str> =
+                            SYNTHETIC_GIT_ENV.iter().map(|(key, _)| *key).collect();
+                        for result in &manifest.results {
+                            if result.environment.workdir != "/work"
+                                || SYNTHETIC_GIT_ENV.iter().any(|(key, value)| {
+                                    result.environment.env.get(*key).map(String::as_str)
+                                        != Some(*value)
+                                })
+                                || result.environment.env.keys().any(|key| {
+                                    key.starts_with("GIT_")
+                                        && !allowed_git_env.contains(key.as_str())
+                                })
+                            {
+                                errors.push(format!(
+                                    "scenario {} does not bind the synthetic Git environment",
+                                    result.scenario_id
+                                ));
+                            }
+                        }
+                    }
+                    Ok(_) => errors.push(
+                        "remote-source synthetic Git index does not match workspace-manifest"
+                            .into(),
+                    ),
+                    Err(error) => errors.push(format!(
+                        "could not derive remote synthetic Git index: {error}"
+                    )),
+                }
+            }
+            (2, None) => errors
+                .push("remote-source schema v2 requires a synthetic Git index contract".into()),
+            _ => {}
+        }
     }
     Ok(())
+}
+
+fn derive_synthetic_git_index_record(
+    run_root: &Path,
+    workspace: &WorkspaceManifest,
+    workspace_manifest_sha256: &str,
+) -> Result<SyntheticGitIndexRecord> {
+    let workspace_root = safe_join(run_root, "workspace")?;
+    let mut entries = Vec::with_capacity(workspace.files.len());
+    for (relative, expected) in &workspace.files {
+        let path = safe_join(&workspace_root, relative)?;
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if metadata_is_alias(&metadata) || !metadata.is_file() || metadata.len() != expected.size {
+            return Err(TcError::InvalidState(format!(
+                "synthetic Git workspace entry is not exact: {relative:?}"
+            )));
+        }
+        let bytes = std::fs::read(&path)?;
+        if sha256_bytes(&bytes) != expected.sha256 {
+            return Err(TcError::InvalidState(format!(
+                "synthetic Git workspace bytes changed: {relative:?}"
+            )));
+        }
+        entries.push(SyntheticGitIndexEntry {
+            path: relative.clone(),
+            size: expected.size,
+            blob_sha1: synthetic_git_blob_sha1(&bytes),
+        });
+    }
+    let index = synthetic_git_index_v1(&entries)?;
+    Ok(SyntheticGitIndexRecord {
+        kind: SYNTHETIC_GIT_INDEX_KIND.into(),
+        source: SYNTHETIC_GIT_INDEX_SOURCE.into(),
+        workspace_manifest_sha256: workspace_manifest_sha256.into(),
+        index_sha256: sha256_bytes(&index),
+        entry_count: workspace.files.len() as u64,
+        history_present: false,
+        hooks_present: false,
+        object_files_present: false,
+        ref_files_present: false,
+        remotes_present: false,
+    })
 }
 
 fn canonical_github_repository_url(raw: &str) -> bool {

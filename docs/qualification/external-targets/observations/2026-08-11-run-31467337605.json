@@ -1,0 +1,105 @@
+{
+  "candidate": {
+    "manifest_sha256": "sha256:d847108bb78eeeb9cce3e0a7b0d0cbd7600be33a24ce9cda90a84c655b94318d",
+    "oci_manifest_digest": "sha256:146b35768b39b1e567edcc9a6370e9a2827439c8b3f8e269ce6bcf3c70c464f4",
+    "run_attempt": 1,
+    "run_id": 31466529587,
+    "source_sha": "6430b9796737406802f9dfadcdf84f7d9b7aaa2c"
+  },
+  "failure": {
+    "affected_engines": [
+      "docker",
+      "podman"
+    ],
+    "artifact_uploaded": false,
+    "classification": "BASELINE_INVALID",
+    "diagnosis": "Helmet's frozen npm run test:node command invokes git ls-files from test/source-files.test.ts; the verified exact-remote disposable workspace intentionally omitted .git metadata, so 1 of 129 tests failed before this infrastructure amendment.",
+    "target_id": "node-helmet",
+    "test_argv": [
+      "npm",
+      "run",
+      "test:node"
+    ],
+    "upload_reason": "The qualification step failed before the original success-only upload step. GitHub job logs are retained; no target artifact is claimed."
+  },
+  "jobs": [
+    {
+      "artifact": {
+        "digest": "sha256:702961357369151175e9b8c8d73a525cffa344966492ea9b11dbc0d3f718f561",
+        "expires_at": "2026-11-09T07:02:11Z",
+        "id": 9092024985,
+        "name": "external-qualification-python-azure-flask-docker-attempt-1-source-6430b9796737406802f9dfadcdf84f7d9b7aaa2c",
+        "size_in_bytes": 1521314
+      },
+      "engine": "docker",
+      "job_id": 93702959153,
+      "result": "PASS",
+      "target_id": "python-azure-flask"
+    },
+    {
+      "artifact": {
+        "digest": "sha256:8e8ae71a2ed3b71c54a44bf9a16f1cac24bb51cb1afcc43a61f8cff94b19d547",
+        "expires_at": "2026-11-09T07:02:11Z",
+        "id": 9092024371,
+        "name": "external-qualification-python-azure-flask-podman-attempt-1-source-6430b9796737406802f9dfadcdf84f7d9b7aaa2c",
+        "size_in_bytes": 1521638
+      },
+      "engine": "podman",
+      "job_id": 93702959089,
+      "result": "PASS",
+      "target_id": "python-azure-flask"
+    },
+    {
+      "artifact": null,
+      "engine": "docker",
+      "job_id": 93702959115,
+      "result": "BASELINE_INVALID",
+      "target_id": "node-helmet"
+    },
+    {
+      "artifact": null,
+      "engine": "podman",
+      "job_id": 93702959073,
+      "result": "BASELINE_INVALID",
+      "target_id": "node-helmet"
+    },
+    {
+      "artifact": {
+        "digest": "sha256:b628836184ca08e580913b2871e79a8e4a28128058527a0fcddc06fa380daad9",
+        "expires_at": "2026-11-09T07:02:11Z",
+        "id": 9092044545,
+        "name": "external-qualification-rust-human-panic-docker-attempt-1-source-6430b9796737406802f9dfadcdf84f7d9b7aaa2c",
+        "size_in_bytes": 157823
+      },
+      "engine": "docker",
+      "job_id": 93702959079,
+      "result": "PASS",
+      "target_id": "rust-human-panic"
+    },
+    {
+      "artifact": {
+        "digest": "sha256:92cec45f506307cee85cc34c31b9e40af2e6d57c2fd655f4af49acdf36d4e83f",
+        "expires_at": "2026-11-09T07:02:11Z",
+        "id": 9092039636,
+        "name": "external-qualification-rust-human-panic-podman-attempt-1-source-6430b9796737406802f9dfadcdf84f7d9b7aaa2c",
+        "size_in_bytes": 158181
+      },
+      "engine": "podman",
+      "job_id": 93702959142,
+      "result": "PASS",
+      "target_id": "rust-human-panic"
+    }
+  ],
+  "kind": "tomorrowci.external-qualification-observation.v1",
+  "preregistration_sha256": "sha256:1f9dee08d03f5f07b8c7f4396d6a0d3ee3aeb2b3071914e26d0a32f6e8b79ace",
+  "run": {
+    "attempt": 1,
+    "conclusion": "failure",
+    "id": 31467337605,
+    "source_sha": "6430b9796737406802f9dfadcdf84f7d9b7aaa2c",
+    "url": "https://github.com/taipei49314/tomorrowci-lab/actions/runs/31467337605",
+    "workflow": ".github/workflows/external-qualification.yml"
+  },
+  "schema_version": 1,
+  "status": "FAILED_OBSERVATION_RETAINED"
+}

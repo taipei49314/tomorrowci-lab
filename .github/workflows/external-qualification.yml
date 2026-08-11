@@ -247,6 +247,59 @@ jobs:
           TARGET_ID: ${{ matrix.target_id }}
         run: |
           set -euo pipefail
+          raw_name="raw-external-observation-${TARGET_ID}-${ENGINE}-attempt-${GITHUB_RUN_ATTEMPT}-source-${GITHUB_SHA}"
+          raw_root="$RUNNER_TEMP/$raw_name"
+          test ! -e "$raw_root"
+          mkdir "$raw_root"
+          scan_log="$raw_root/scan.txt"
+          : > "$scan_log"
+          qualification_phase="preflight"
+          scan_attempted=0
+          scan_status=""
+          capture_raw_observation() {
+            step_status="$?"
+            trap - EXIT
+            set +e
+            if [ -n "${artifact_root:-}" ] && [ -d "$artifact_root/.tomorrowci" ]; then
+              cp -a "$artifact_root/.tomorrowci" "$raw_root/.tomorrowci"
+              evidence_copy_status="$?"
+              if [ "$step_status" -eq 0 ] && [ "$evidence_copy_status" -ne 0 ]; then
+                step_status="$evidence_copy_status"
+                qualification_phase="raw-evidence-copy"
+              fi
+            fi
+            scan_args=()
+            if [ "$scan_attempted" -eq 1 ]; then
+              scan_args=(--scan-attempted --scan-exit "$scan_status")
+            fi
+            python3 "$GITHUB_WORKSPACE/scripts/external_observation.py" create \
+              --target-id "$TARGET_ID" \
+              --engine "$ENGINE" \
+              --remote-repository "$REMOTE_REPOSITORY" \
+              --remote-commit "$REMOTE_COMMIT" \
+              --config-path "$CONFIG_PATH" \
+              --project-repository "$GITHUB_REPOSITORY" \
+              --project-source-sha "$GITHUB_SHA" \
+              --candidate-run-id "$CANDIDATE_RUN_ID" \
+              --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+              --candidate-manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+              --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
+              --oci-manifest-digest "$OCI_MANIFEST_DIGEST" \
+              --workflow-run-id "$GITHUB_RUN_ID" \
+              --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+              "${scan_args[@]}" \
+              --step-exit "$step_status" \
+              --phase "$qualification_phase" \
+              --scan-log "$scan_log" \
+              --output "$raw_root/observation.json"
+            observation_status="$?"
+            if [ "$step_status" -eq 0 ] && [ "$observation_status" -ne 0 ]; then
+              step_status="$observation_status"
+            fi
+            exit "$step_status"
+          }
+          trap capture_raw_observation EXIT
+          qualification_phase="input-verification"
           input="$RUNNER_TEMP/candidate-input"
           VERSION="$(python3 scripts/version_contract.py)"
           archive="$input/tomorrowci-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
@@ -278,6 +331,7 @@ jobs:
           )
           python3 scripts/validate_external_evidence.py verify-binding "${candidate_args[@]}"
           test "$($cli --version)" = "tomorrowci $VERSION"
+          qualification_phase="engine-probe"
           "$ENGINE" info
           set +e
           ENGINE_VERSION="$("$ENGINE" version --format '{{.Server.Version}}' 2>/dev/null)"
@@ -292,17 +346,27 @@ jobs:
           test ! -e "$artifact_root"
           mkdir "$artifact_root"
           cd "$artifact_root"
+          qualification_phase="scan"
+          scan_attempted=1
+          set +e
           "$cli" scan "https://github.com/$REMOTE_REPOSITORY" \
             --commit "$REMOTE_COMMIT" \
             --config "$GITHUB_WORKSPACE/$CONFIG_PATH" \
-            | tee "$RUNNER_TEMP/${TARGET_ID}-${ENGINE}-scan.txt"
-          mapfile -t run_ids < <(sed -n 's/^run_id: //p' "$RUNNER_TEMP/${TARGET_ID}-${ENGINE}-scan.txt")
+            2>&1 | tee "$scan_log"
+          scan_status="${PIPESTATUS[0]}"
+          set -e
+          if [ "$scan_status" -ne 0 ]; then
+            exit "$scan_status"
+          fi
+          mapfile -t run_ids < <(sed -n 's/^run_id: //p' "$scan_log")
           test "${#run_ids[@]}" -eq 1
           RUN_ID="${run_ids[0]}"
           [[ "$RUN_ID" =~ ^[0-9a-f]{12}$ ]]
           run_root="$artifact_root/.tomorrowci/runs/$RUN_ID"
           test -d "$run_root"
+          qualification_phase="verify-run"
           "$cli" verify "$RUN_ID"
+          qualification_phase="select-replay"
           replay_scenario="$(python3 "$GITHUB_WORKSPACE/scripts/validate_external_evidence.py" select-replay \
             --run-root "$run_root" \
             --target-id "$TARGET_ID" \
@@ -310,9 +374,13 @@ jobs:
             --engine-version "$ENGINE_VERSION" \
             --expected-tool-version "$VERSION")"
           [[ "$replay_scenario" =~ ^[a-z0-9][a-z0-9._-]{0,127}$ ]]
+          qualification_phase="replay-1"
           "$cli" replay "$RUN_ID" --scenario "$replay_scenario"
+          qualification_phase="replay-2"
           "$cli" replay "$RUN_ID" --scenario "$replay_scenario"
+          qualification_phase="final-verify"
           "$cli" verify "$RUN_ID"
+          qualification_phase="create-record"
           python3 "$GITHUB_WORKSPACE/scripts/validate_external_evidence.py" create-record \
             --run-root "$run_root" \
             --target-id "$TARGET_ID" \
@@ -320,17 +388,60 @@ jobs:
             --engine-version "$ENGINE_VERSION" \
             "${candidate_args[@]}" \
             --output "$artifact_root/qualification-record.json"
+          qualification_phase="verify-artifact"
           python3 "$GITHUB_WORKSPACE/scripts/validate_external_evidence.py" verify-artifact \
             --artifact-root "$artifact_root" \
             "${candidate_args[@]}"
+          qualification_phase="repository-clean-check"
           test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git -C "$GITHUB_WORKSPACE" status --porcelain --untracked-files=all)"
+          qualification_phase="complete"
+      - name: Upload raw target observation even when qualification fails
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: raw-external-observation-${{ matrix.target_id }}-${{ matrix.engine }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/raw-external-observation-${{ matrix.target_id }}-${{ matrix.engine }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
       - name: Upload isolated target and engine evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: external-qualification-${{ matrix.target_id }}-${{ matrix.engine }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
           path: ${{ runner.temp }}/external-qualification-${{ matrix.target_id }}-${{ matrix.engine }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/
           include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+  observation-readback:
+    if: ${{ always() }}
+    needs:
+      - candidate-binding
+      - qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Download six non-authoritative raw observations
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: raw-external-observation-*-*-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/raw-observations
+      - name: Build six-pair raw observation summary
+        run: |
+          set -euo pipefail
+          summary_name="raw-external-observation-summary-attempt-${GITHUB_RUN_ATTEMPT}-source-${GITHUB_SHA}"
+          summary_root="$RUNNER_TEMP/$summary_name"
+          test ! -e "$summary_root"
+          python3 scripts/external_observation.py summarize \
+            --observations-root "$RUNNER_TEMP/raw-observations" \
+            --output "$summary_root/summary.json"
+      - name: Upload non-authoritative raw observation summary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: raw-external-observation-summary-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/raw-external-observation-summary-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/summary.json
           if-no-files-found: error
           retention-days: 90
 

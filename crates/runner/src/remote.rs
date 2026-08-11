@@ -1,6 +1,7 @@
 //! Bounded, exact-commit materialization for remote GitHub scans.
 
 use crate::orchestrate::{scan_local_into, ScanOptions, ScanOutcome};
+use crate::synthetic_git::prepare_synthetic_git_index;
 use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -88,6 +89,7 @@ pub fn scan_remote_github(
             config,
             allow_scripted: false,
         },
+        true,
     )?;
     attach_remote_source_record(&materialized, &mut outcome)?;
     materialized.cleanup()?;
@@ -139,8 +141,14 @@ fn attach_remote_source_record(
         ));
     }
 
+    let workspace_manifest_sha256 = file_checksum(&workspace_manifest_path)?;
+    let synthetic_git_index = prepare_synthetic_git_index(
+        &outcome.evidence_root.join("workspace"),
+        &workspace_manifest,
+        &workspace_manifest_sha256,
+    )?;
     let record = RemoteSourceRecord {
-        schema_version: 1,
+        schema_version: 2,
         requested_url: materialized.spec.requested_url.clone(),
         canonical_origin: materialized.spec.canonical_origin.clone(),
         requested_commit: materialized.commit.clone(),
@@ -158,7 +166,8 @@ fn attach_remote_source_record(
         max_clone_disk_bytes: MAX_CLONE_DISK_BYTES,
         snapshot_file_count,
         snapshot_total_bytes,
-        workspace_manifest_sha256: file_checksum(&workspace_manifest_path)?,
+        workspace_manifest_sha256,
+        synthetic_git_index: Some(synthetic_git_index.record),
     };
     std::fs::write(
         outcome.evidence_root.join("remote-source.json"),
@@ -803,7 +812,7 @@ mod tests {
     use super::*;
     use crate::engine::{ExecutionContext, ScenarioExecutor};
     use crate::orchestrate::{replay_scenario_with_executor, scan_local_with_executor_into};
-    use tomorrowci_core::RawExecutionResult;
+    use tomorrowci_core::{RawExecutionResult, SYNTHETIC_GIT_ENV, SYNTHETIC_GIT_INDEX_KIND};
 
     struct ExactTestExecutor;
 
@@ -825,6 +834,32 @@ mod tests {
         }
 
         fn execute(&self, context: &ExecutionContext<'_>) -> Result<RawExecutionResult> {
+            let listed = Command::new("git")
+                .args(["ls-files", "-z"])
+                .current_dir(context.workspace)
+                .output()
+                .unwrap();
+            assert!(
+                listed.status.success(),
+                "{}",
+                String::from_utf8_lossy(&listed.stderr)
+            );
+            assert_eq!(
+                listed.stdout,
+                b"app.py\0requirements.txt\0tests/test_app.py\0".to_vec()
+            );
+            for (key, value) in SYNTHETIC_GIT_ENV {
+                assert_eq!(
+                    context.environment.env.get(*key).map(String::as_str),
+                    Some(*value)
+                );
+            }
+            assert!(context
+                .environment
+                .env
+                .keys()
+                .filter(|key| key.starts_with("GIT_"))
+                .all(|key| SYNTHETIC_GIT_ENV.iter().any(|(allowed, _)| key == allowed)));
             let fetch = context
                 .commands
                 .iter()
@@ -982,6 +1017,7 @@ mod tests {
         assert!(!staging.exists(), "temporary clone was not cleaned up");
 
         let workspace = outcome.evidence_root.join("workspace");
+        assert!(!workspace.join(".git").exists());
         assert_eq!(
             std::fs::read_to_string(workspace.join("app.py")).unwrap(),
             "VALUE = 'first'\n"
@@ -1004,7 +1040,69 @@ mod tests {
             ChecksumCompatibility::CurrentV2
         );
 
+        let run_path = outcome.evidence_root.join("run.json");
+        let original_run = std::fs::read(&run_path).unwrap();
+        let mut forged_run: serde_json::Value = serde_json::from_slice(&original_run).unwrap();
+        forged_run["results"][0]["environment"]["env"]["GIT_DIR"] =
+            serde_json::json!("/tmp/forged");
+        std::fs::write(&run_path, serde_json::to_vec_pretty(&forged_run).unwrap()).unwrap();
+        finalize_run_checksums(&outcome.evidence_root).unwrap();
+        let rejected_environment = verify_run_root(&outcome.evidence_root).unwrap();
+        assert!(!rejected_environment.ok);
+        assert!(rejected_environment
+            .errors
+            .iter()
+            .any(|error| error.contains("does not bind the synthetic Git environment")));
+        std::fs::write(&run_path, &original_run).unwrap();
+        finalize_run_checksums(&outcome.evidence_root).unwrap();
+
         let remote_path = outcome.evidence_root.join("remote-source.json");
+        let original_remote = std::fs::read(&remote_path).unwrap();
+        let original_value: serde_json::Value = serde_json::from_slice(&original_remote).unwrap();
+        assert_eq!(original_value["schema_version"], 2);
+        assert_eq!(
+            original_value["synthetic_git_index"]["kind"],
+            SYNTHETIC_GIT_INDEX_KIND
+        );
+        let mut legacy_v1 = original_value.clone();
+        legacy_v1["schema_version"] = serde_json::json!(1);
+        legacy_v1
+            .as_object_mut()
+            .unwrap()
+            .remove("synthetic_git_index");
+        std::fs::write(&remote_path, serde_json::to_vec_pretty(&legacy_v1).unwrap()).unwrap();
+        finalize_run_checksums(&outcome.evidence_root).unwrap();
+        let legacy_verify = verify_run_root(&outcome.evidence_root).unwrap();
+        assert!(
+            legacy_verify.ok,
+            "legacy v1 read compatibility: {}",
+            legacy_verify.errors.join("; ")
+        );
+        let legacy_replay =
+            replay_scenario_with_executor(&evidence, &run_id, &candidate, &ExactTestExecutor)
+                .unwrap_err();
+        assert!(legacy_replay.to_string().contains("verify-only"));
+
+        std::fs::write(&remote_path, &original_remote).unwrap();
+        finalize_run_checksums(&outcome.evidence_root).unwrap();
+        let mut forged_index = original_value.clone();
+        forged_index["synthetic_git_index"]["index_sha256"] =
+            serde_json::json!(format!("sha256:{}", "f".repeat(64)));
+        std::fs::write(
+            &remote_path,
+            serde_json::to_vec_pretty(&forged_index).unwrap(),
+        )
+        .unwrap();
+        finalize_run_checksums(&outcome.evidence_root).unwrap();
+        let rejected_index = verify_run_root(&outcome.evidence_root).unwrap();
+        assert!(!rejected_index.ok);
+        assert!(rejected_index
+            .errors
+            .iter()
+            .any(|error| error.contains("synthetic Git index")));
+
+        std::fs::write(&remote_path, &original_remote).unwrap();
+        finalize_run_checksums(&outcome.evidence_root).unwrap();
         let mut forged: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&remote_path).unwrap()).unwrap();
         forged["resolved_commit"] = serde_json::json!("b".repeat(40));

@@ -1,0 +1,38 @@
+{
+  "change": {
+    "container_environment": {
+      "forbid_unlisted_git_environment": true,
+      "git_config_count": "1",
+      "git_config_key_0": "safe.directory",
+      "git_config_value_0": "/work",
+      "global_config": "/dev/null",
+      "system_config": false
+    },
+    "git_capability": "PATH_ENUMERATION_ONLY",
+    "history": false,
+    "hooks": false,
+    "index_derivation": "VERIFIED_WORKSPACE_MANIFEST_AND_EXACT_FILE_BYTES",
+    "mode": "SYNTHETIC_GIT_INDEX_V1",
+    "object_files": false,
+    "ref_files": false,
+    "remote_source_schema": 2,
+    "remotes": false,
+    "replay_must_rederive_exact_index": true
+  },
+  "discovery": {
+    "observation_path": "docs/qualification/external-targets/observations/2026-08-11-run-31467337605.json",
+    "observation_sha256": "sha256:80f0ac842a1ea84547771c06d12e621e2cf5af2374b8160af5ff7169bb881c6f",
+    "run_id": 31467337605
+  },
+  "frozen_target_contract": {
+    "config_or_test_command_changed": false,
+    "preregistration_sha256": "sha256:1f9dee08d03f5f07b8c7f4396d6a0d3ee3aeb2b3071914e26d0a32f6e8b79ace",
+    "source_commit_changed": false,
+    "target_ids_changed": false
+  },
+  "kind": "tomorrowci.external-qualification-infrastructure-amendment.v1",
+  "registered_on": "2026-08-11",
+  "schema_version": 1,
+  "scope": "RUNNER_INFRASTRUCTURE_ONLY",
+  "status": "IMPLEMENTED_NOT_YET_ACCEPTED_AS_QUALIFICATION"
+}

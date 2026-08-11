@@ -236,8 +236,10 @@ class EvidenceFixture:
                 "environment": {
                     "engine": self.engine,
                     "engine_version": self.engine_version,
+                    "env": copy.deepcopy(contract.SYNTHETIC_GIT_ENV),
                     "image_digest": image_digest,
                     "network_mode": "none",
+                    "workdir": "/work",
                 },
                 "scenario_id": scenario_id,
                 "timed_out": False,
@@ -293,7 +295,7 @@ class EvidenceFixture:
             "requested_commit": source["commit"],
             "requested_url": source["url"],
             "resolved_commit": source["commit"],
-            "schema_version": 1,
+            "schema_version": 2,
             "snapshot_file_count": target["tree_inventory"]["blob_count"],
             "snapshot_total_bytes": target["tree_inventory"]["total_blob_bytes"],
             "submodules_allowed": False,
@@ -302,6 +304,18 @@ class EvidenceFixture:
         workspace_manifest = b"{}\n"
         (self.run_root / "workspace-manifest.json").write_bytes(workspace_manifest)
         remote["workspace_manifest_sha256"] = contract._file_hash(workspace_manifest)
+        remote["synthetic_git_index"] = {
+            "entry_count": target["tree_inventory"]["blob_count"],
+            "history_present": False,
+            "hooks_present": False,
+            "index_sha256": f"sha256:{'e' * 64}",
+            "kind": "tomorrowci.synthetic-git-index.v1",
+            "object_files_present": False,
+            "ref_files_present": False,
+            "remotes_present": False,
+            "source": "workspace-manifest.json",
+            "workspace_manifest_sha256": remote["workspace_manifest_sha256"],
+        }
         self._write_json("config.normalized.json", normalized)
         self._write_json("frontier.json", frontier)
         self._write_json("remote-source.json", remote)
@@ -628,6 +642,42 @@ class ExternalEvidenceTests(unittest.TestCase):
             lambda value: value.update({"resolved_commit": "d" * 40}),
         )
         with self.assertRaisesRegex(ValueError, "resolved_commit"):
+            fixture.validate()
+
+    def test_synthetic_git_index_digest_tamper_is_rejected(self) -> None:
+        fixture = EvidenceFixture(self.root)
+        fixture.mutate_json(
+            "remote-source.json",
+            lambda value: value["synthetic_git_index"].update(
+                {"workspace_manifest_sha256": f"sha256:{'a' * 64}"}
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "synthetic Git index"):
+            fixture.validate()
+
+    def test_synthetic_git_environment_override_is_rejected(self) -> None:
+        fixture = EvidenceFixture(self.root)
+
+        def add_override(value: dict[str, object]) -> None:
+            value["results"][0]["environment"]["env"]["GIT_DIR"] = "/tmp/forged"
+
+        fixture.mutate_json("run.json", add_override)
+        with self.assertRaisesRegex(ValueError, "exact allowlist"):
+            fixture.validate()
+
+    def test_remote_schema_v1_downgrade_is_not_qualification_authority(self) -> None:
+        fixture = EvidenceFixture(self.root)
+
+        def downgrade_remote(value: dict[str, object]) -> None:
+            value["schema_version"] = 1
+            del value["synthetic_git_index"]
+
+        fixture.mutate_json("remote-source.json", downgrade_remote)
+        for result in json.loads(
+            (fixture.run_root / "run.json").read_text(encoding="utf-8")
+        )["results"]:
+            self.assertEqual(result["environment"]["workdir"], "/work")
+        with self.assertRaises(ValueError):
             fixture.validate()
 
     def test_disqualifying_result_is_rejected(self) -> None:

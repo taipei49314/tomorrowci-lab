@@ -224,8 +224,8 @@
     {
       "id": "EXTERNAL-TARGETS",
       "phase": 7,
-      "status": "NOT_RUN",
-      "summary": "Run the frozen exact-SHA Python, Node, and Rust public targets on both Docker and Podman without result-based replacement; all six executions remain NOT_RUN.",
+      "status": "FAIL",
+      "summary": "Run 31467337605 retained Python/Rust Docker+Podman successes but Helmet was BASELINE_INVALID on both engines because the exact snapshot omitted the Git index required by its frozen test; the target/config/command remain unchanged, an infrastructure amendment is implemented, and a clean six-pair rerun/read-back is pending.",
       "blocks_release": true
     },
     {
