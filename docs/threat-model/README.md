@@ -124,6 +124,22 @@ attestation. It neither authenticates the CI operator nor expands the result
 to arbitrary registry packages, Podman, other host platforms, or the broader
 M3 Node/Rust runtime matrix. See the [M2 record](../qualification/M2.md).
 
+## Bounded public-target Docker/Podman observation
+
+At exact master `8ab64498add92360b92034333f056dc202396d24`, repository-owned
+[run 31480491950](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31480491950)
+passed the three preregistered exact-SHA Python, Node, and Rust targets on
+hosted Linux Docker and Podman. All six current-v2 bundles were downloaded and
+reverified, and every candidate scenario was replayed twice. The canonical
+summary artifact is `9097092837`, digest
+`sha256:155a68da092b97467b74185e0233cc727901ac51d58e180bbcd31ecd4030324e`.
+
+The observation status is `OBSERVED_PROJECT_OWNED_ONLY`. It establishes those
+six exact target/engine executions, not the integrity of the CI operator,
+ecosystem-wide compatibility, Windows/macOS platform support, or independent
+release authorization. Earlier failed runs remain immutable evidence rather
+than being rewritten by the later PASS.
+
 ## Residual risk and unqualified scope
 
 - Container-engine, kernel, and isolation defects remain in the trusted computing base.
@@ -132,10 +148,11 @@ M3 Node/Rust runtime matrix. See the [M2 record](../qualification/M2.md).
 - External independent qualification, signing authority, protected promotion,
   and published-output read-back remain outside this Phase-1 trust core.
 - Dependency-axis/ddmin behavior beyond the exact M2 Linux Docker fixtures,
-  M3 Node/Rust execution beyond the exact Linux Docker fixtures, public-remote
-  Docker/Podman execution, the wider platform matrix, and formal release
-  qualification are not established by these controls. The bounded M4 report
-  and exact-commit materialization engineering tests do not expand those claims.
+  M3 Node/Rust execution beyond the recorded fixtures and preregistered public
+  commits, public-remote execution beyond the exact hosted Linux Docker/Podman
+  pair, the wider platform matrix, and formal release qualification are not
+  established by these controls. The bounded M4 report and exact-commit
+  materialization engineering tests do not expand those claims.
 
 ## Out of scope
 

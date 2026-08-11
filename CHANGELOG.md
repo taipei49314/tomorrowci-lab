@@ -26,8 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   verifiers. These contracts validate externally signed evidence and exact
   candidate bytes but do not publish a tag, release, or container image.
 - Add result-blind preregistration for three exact-SHA public targets and a
-  repository-owned Docker/Podman qualification workflow. The six target/engine
-  executions remain `NOT_RUN` until a separate immutable result is recorded.
+  repository-owned Docker/Podman qualification workflow. Result authority is
+  recorded separately from the preregistration contract.
 
 ### Changed
 
@@ -56,11 +56,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Close the bounded M4 report and exact-commit remote-materialization
   engineering slices through PR #5, merge
   `f6efabff0214ef02d2287ccb870a4e2a75c8e2f0`, and successful exact-master CI
-  run `31451349743`. Public-remote Docker/Podman results remain unclaimed.
+  run `31451349743`.
 - Reproduce, download, and reverify the four-platform and OCI candidate from
-  exact source `d0e0c7b5ffac1c644b09b249177da5f334249c15`, run `31456913989`,
-  artifact `9088555822`. Its status remains
+  exact source `8ab64498add92360b92034333f056dc202396d24`, run `31479363341`,
+  artifact `9096821821`. Its status remains
   `CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED`.
+- Qualify all six preregistered exact-SHA Python/Node/Rust target and hosted
+  Linux Docker/Podman pairs at exact source
+  `8ab64498add92360b92034333f056dc202396d24` in run `31480491950`, including
+  replay twice per candidate and downloaded current-v2 read-back. This is a
+  project-owned observation, not independent authorization; earlier failed
+  runs remain immutable history.
 
 ### Notes
 

@@ -4,7 +4,7 @@
 
 | Platform | CLI evidence | Container execution evidence |
 |----------|--------------|------------------------------|
-| Linux x86_64 | Deterministic `0.2.0-alpha.1` candidate archive built twice; candidate-only read-back **PASS** | Docker: measured Python runtime, bounded M2 pip/npm/cargo dependency reduction, and bounded M3 Node/Rust runtime slices **PASS**; Podman **NOT_RUN** |
+| Linux x86_64 | Deterministic `0.2.0-alpha.1` candidate archive built twice; candidate-only read-back **PASS** | Docker fixture slices plus the exact-SHA Python/Node/Rust public targets on Docker and Podman **PASS** as bounded project-owned observations |
 | macOS x86_64 | Deterministic candidate archive built twice; support qualification **BLOCKED** | Docker Desktop / Colima clean-machine path **NOT_RUN** |
 | macOS arm64 | Deterministic candidate archive built twice; support qualification **BLOCKED** | Docker Desktop / Colima clean-machine path **NOT_RUN** |
 | Windows x86_64 | Deterministic candidate archive built twice; downloaded CLI/doctor/trust/evidence read-back **PASS**; support qualification **BLOCKED** | Docker Desktop Linux-engine clean-machine path **NOT_RUN** |
@@ -20,22 +20,23 @@ rows; merging that workflow alone is not a qualification result.
 
 | Ecosystem | Package manager | Status |
 |-----------|-----------------|--------|
-| Python | pip | Runtime-axis Docker slice demonstrated; bounded M2 Linux Docker dependency/ddmin **PASS** at exact master `456a36e...` |
-| Node.js | npm only | Bounded M2 dependency/ddmin and M3 Node 20→22/24 runtime Linux Docker slices **PASS**; Podman and broader platform qualification **NOT_RUN** |
-| Rust | cargo | Bounded M2 dependency/ddmin and M3 declared-MSRV Rust 1.83→1.74 Linux Docker slices **PASS**; Podman and broader platform qualification **NOT_RUN** |
+| Python | pip | Runtime-axis Docker slice and one preregistered exact-SHA public target on hosted Linux Docker/Podman **PASS**; not ecosystem-wide support |
+| Node.js | npm only | Bounded M2/M3 Docker slices and the preregistered Helmet exact-SHA target on hosted Linux Docker/Podman **PASS**; not ecosystem-wide support |
+| Rust | cargo | Bounded M2/M3 Docker slices and the preregistered human-panic exact-SHA target on hosted Linux Docker/Podman **PASS**; not ecosystem-wide support |
 
 Unsupported managers must return `UNSUPPORTED` — never silent fallback. `uv`,
 yarn, pnpm, poetry, and pipenv are not qualified first-class managers.
 
-The M2/M3 PASS rows are limited to the repository-owned fixtures and immutable
-images recorded in the [M2](docs/qualification/M2.md) and
-[M3](docs/qualification/M3.md) records. The three public exact-SHA targets and
-their Docker/Podman pairs are preregistered but **NOT_RUN**. None of these rows
-is an ecosystem-wide compatibility or independent-adoption claim.
+The fixture PASS rows are limited to the repository-owned fixtures and
+immutable images recorded in the [M2](docs/qualification/M2.md) and
+[M3](docs/qualification/M3.md) records. The three preregistered public exact-SHA
+targets and all six Docker/Podman pairs passed project-owned run `31480491950`
+with replay and downloaded current-v2 read-back. None of these rows is an
+ecosystem-wide compatibility, platform-support, or independent-adoption claim.
 
 ## What we do not support yet
 
-- Public-remote Docker/Podman qualification for bounded exact-commit GitHub scans
+- Public-remote qualification beyond the three preregistered exact commits and hosted Linux engine pair
 - yarn / pnpm / poetry / pipenv as first-class managers
 - Multi-tenant SaaS isolation guarantees
 - Guaranteed production container breakout resistance
