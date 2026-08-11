@@ -1,0 +1,6 @@
+self-hosted-runner:
+  labels:
+    - macos-15-intel
+    - tomorrowci-colima
+    - tomorrowci-docker-desktop-linux
+    - tomorrowci-ephemeral
