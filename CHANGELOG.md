@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Add content-addressed dependency manifests, exact resolved dependency sets,
+  subset materialization, and observed minimal-change reduction for pip, npm,
+  and cargo fixtures.
+- Add a Linux Docker CI qualification gate that scans each dependency fixture,
+  verifies its current-v2 evidence, and replays the minimal failing scenario
+  twice with matching exit and normalized failure signature.
+
 ### Changed
 
 - Start the `0.2.0-alpha.1` development line for the versioned strict evidence
@@ -22,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   published refs.
 - Normalize Windows Docker Desktop bind paths and force-remove exactly named
   containers after timeout so a killed client cannot leave target work running.
+- Record the bounded M2 PASS at exact master
+  `456a36edb1e8547612cd13ee7a30be3479d33bab` in CI run
+  `31316809823`; M3 runtime, Podman, platform, and independent external
+  qualification remain unclaimed.
 
 ### Security
 

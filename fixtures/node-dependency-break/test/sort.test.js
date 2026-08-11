@@ -2,10 +2,10 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { sortCopy } = require('../index.js');
+const { legacyCipherAvailable } = require('../index.js');
 
-describe('sortCopy', () => {
-  it('returns a sorted copy', () => {
-    assert.deepEqual(sortCopy([3, 1, 2]), [1, 2, 3]);
+describe('legacy Node crypto compatibility', () => {
+  it('retains crypto.createCipher', () => {
+    assert.equal(legacyCipherAvailable(), true);
   });
 });

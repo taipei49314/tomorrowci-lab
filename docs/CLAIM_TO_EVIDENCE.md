@@ -4,8 +4,9 @@ Statuses: **PASS** / **FAIL** / **BLOCKED** / **NOT_RUN** only.
 
 Current source version `0.2.0-alpha.1` is an unreleased trust-core development
 line. It does not supersede the bounded alpha.2 observations and is not a
-release or external-qualification PASS. Its exact merged SHA and default CI
-will be added only after the current changes pass review and merge.
+release or external-qualification PASS. The bounded M2 implementation is tied
+to exact master `456a36edb1e8547612cd13ee7a30be3479d33bab` and successful
+CI run [31316809823](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31316809823).
 
 | Tag | Disposition |
 |-----|-------------|
@@ -23,7 +24,7 @@ will be added only after the current changes pass review and merge.
 - Tag peeled/source commit: `167b94f9ce5c0fe95b9105abb71d26386b4fe9e3`,
   built by release run
   https://github.com/taipei49314/tomorrowci-lab/actions/runs/31080456557.
-- Current default truth commit: `1e23b40157e55e5763e3360b667d10a003b50ff9`,
+- Historical alpha.2 truth-reconciliation commit: `1e23b40157e55e5763e3360b667d10a003b50ff9`,
   covered by default CI
   https://github.com/taipei49314/tomorrowci-lab/actions/runs/31299997719.
 
@@ -31,9 +32,14 @@ These values identify different layers and are not interchangeable. See the
 full [qualification baseline](qualification/BASELINE.md) for the tag ledger
 and release read-back.
 
+## Historical alpha.2 bounded gates
+
+This table preserves the alpha.2 observation. Its `NOT_RUN` rows describe that
+historical release and are not rewritten by later M2 source qualification.
+
 | Claim | Status | Exact command / run | Exit / result | Artifact |
 |---|---|---|---|---|
-| Default-branch truth | **PASS** | run 31299997719 at exact default SHA `1e23b401…` | green | README, audits, qualification baseline |
+| Historical default-branch truth snapshot | **PASS** | run 31299997719 at exact default SHA `1e23b401…` | green | README, audits, qualification baseline |
 | encoding / fmt / clippy / tests | **PASS** | CI rust job 31080022232 | exit 0 | Actions |
 | version identity `0.1.1-alpha.2` | **PASS** | `tomorrowci --version` | matches | CI |
 | Live Python Docker scan | **PASS** | live-python job | horizon 3.10 | evidence artifact |
@@ -44,3 +50,23 @@ and release read-back.
 | bash -n release-dry-run.sh | **PASS** | rust job | exit 0 | CI |
 | Node / Rust live | **NOT_RUN** | out of scope | — | — |
 | Dependency / ddmin / React / remote / image | **NOT_RUN** | out of scope | — | — |
+
+## M2 exact-master bounded gates
+
+The current M2 PASS is limited to Linux Docker and the checked-in dependency
+fixtures. Node/Rust M3 runtime qualification, Podman, the platform matrix, and
+external adoption remain separate gates.
+
+| Claim | Status | Exact command / run | Exit / result | Artifact |
+|---|---|---|---|---|
+| M2 implementation baseline | **PASS** | master `456a36edb1e8547612cd13ee7a30be3479d33bab`; CI [31316809823](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31316809823) | workflow success | source + Actions |
+| Native content-addressed dependency probes | **PASS** | `m2-dependency-fixtures` job [93253469760](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31316809823/job/93253469760) | pip/npm/cargo baseline, full candidate, minimal subset, and subtraction observations matched | `tomorrowci-m2-dependency-evidence` |
+| Python dependency/ddmin | **PASS** | run `04054e94457a`; `verify`; `replay ... --scenario ddmin-breaking-api` x2 | observed minimal dependency change; current-v2 verify PASS, 140 files; both replays PASS | artifact 9039044133 |
+| Node dependency/ddmin | **PASS** | run `c8781bdadb33`; `verify`; minimal replay x2 | observed minimal dependency change; current-v2 verify PASS, 140 files; both replays PASS | artifact 9039044133 |
+| Rust dependency/ddmin | **PASS** | run `45c8b2fa6b57`; `verify`; minimal replay x2 | observed minimal dependency change; current-v2 verify PASS, 140 files; both replays PASS | artifact 9039044133 |
+| Downloaded artifact read-back | **PASS** | `gh run download 31316809823` followed by current CLI verification of all three run IDs | all three bundles verify PASS; all nine scan/replay logs contain the expected run ID or replay PASS | artifact digest `sha256:402c5085be7890fa57b930f6ea9744b28d5e351b78ef0e78857ad365ac0fd2f3`; expires 2026-11-07 |
+| M3 Node/Rust runtime + Podman + platform matrix | **NOT_RUN** | outside this fixture-bounded M2 gate | — | — |
+| React / remote scan / container image publish | **NOT_RUN** | outside M2 scope | — | — |
+| Independent external adopter or auditor | **BLOCKED** | repository-owned CI and operator read-back are not external evidence | external action required | — |
+
+Full details and retention limits: [qualification/M2.md](qualification/M2.md).

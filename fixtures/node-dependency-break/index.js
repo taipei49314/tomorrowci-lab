@@ -1,9 +1,12 @@
 'use strict';
 
-// Array.prototype.toSorted is available in Node 20+.
-// Baseline Node 20 passes; Node 18 fails with TypeError.
-function sortCopy(arr) {
-  return arr.toSorted((a, b) => a - b);
+const crypto = require('node:crypto');
+
+// DEP0106 reached End-of-Life in Node 22. Baseline Node 20 still exposes this
+// legacy API, while the strictly newer Node 22 candidate removes it.
+function legacyCipherAvailable() {
+  const cipher = crypto.createCipher('aes192', 'tomorrowci-fixture-key');
+  return typeof cipher.update === 'function';
 }
 
-module.exports = { sortCopy };
+module.exports = { legacyCipherAvailable };

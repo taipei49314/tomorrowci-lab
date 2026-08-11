@@ -89,13 +89,37 @@ Headerless legacy checksum evidence is read-compatible only for the exact histor
 
 The checksum graph provides integrity and tamper detection for an evidence bundle. It is not a signature, MAC, transparency-log proof, or independent attestation. An attacker who can rewrite the complete bundle can also recompute unsigned checksums; a digest identifies content but does not authenticate who produced or approved it. Release authority therefore requires a trust root outside the bundle.
 
+## Bounded M2 qualification observation
+
+At exact master `456a36edb1e8547612cd13ee7a30be3479d33bab`, public CI run
+[31316809823](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31316809823)
+passed the checked-in Python, Node, and Rust dependency fixtures on Linux
+Docker. The gate used native pip, npm, and cargo materialization, recorded exact
+dependency content and resolved sets, observed the full two-change candidate,
+tested each non-empty subset, selected `breaking-api` as the minimal failing
+change, verified the evidence, and replayed that minimal scenario twice.
+
+The downloaded artifact (ID `9039044133`, digest
+`sha256:402c5085be7890fa57b930f6ea9744b28d5e351b78ef0e78857ad365ac0fd2f3`)
+was read back with the current CLI: all three current-v2 bundles verified with
+140 checked files and all six replay logs reported matching exits and failure
+signatures. The artifact expires on 2026-11-07, so the immutable source and CI
+identity remain part of the durable claim record.
+
+This is a project-owned qualification observation, not an external
+attestation. It neither authenticates the CI operator nor expands the result
+to arbitrary registry packages, Podman, other host platforms, or the broader
+M3 Node/Rust runtime matrix. See the [M2 record](../qualification/M2.md).
+
 ## Residual risk and unqualified scope
 
 - Container-engine, kernel, and isolation defects remain in the trusted computing base.
 - Malicious base images, compromised registries, dependency registries, and fetch-time network exfiltration remain supply-chain risks. Digest equality alone is not publisher or provenance verification.
 - Local concurrent filesystem mutation and platform-specific alias behavior are reduced by pre/post verification and no-follow checks, but the host OS remains trusted.
 - External independent qualification, artifact signing/attestation, and release authorization remain outside this Phase-1 trust core.
-- M2 dependency-axis/ddmin behavior, M3 full Node/Rust execution, M4 Action/UI qualification, and M5 public release qualification are not established by these controls.
+- Dependency-axis/ddmin behavior beyond the exact M2 Linux Docker fixtures,
+  M3 full Node/Rust execution and Podman coverage, M4 Action/UI qualification,
+  and M5 public release qualification are not established by these controls.
 
 ## Out of scope
 

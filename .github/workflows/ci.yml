@@ -251,6 +251,222 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
 
+  live-node:
+    runs-on: ubuntu-latest
+    needs: rust
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # action implementation
+        with:
+          toolchain: 1.97.1
+      - name: Build release CLI
+        run: cargo build -p tomorrowci-cli --release
+      - name: Live Node 20 to 22 runtime horizon
+        id: live
+        run: |
+          set -euo pipefail
+          CLI="$GITHUB_WORKSPACE/target/release/tomorrowci"
+          FIXTURE=fixtures/node-dependency-break
+          BEFORE="$(python3 scripts/test_m3_evidence.py tree-hash "$FIXTURE")"
+
+          "$CLI" doctor
+          "$CLI" scan "$FIXTURE" --config "$FIXTURE/.tomorrowci.yml" \
+            | tee /tmp/m3-node-scan.out
+          if grep -Eq '^verdict: (BLOCKED|UNSUPPORTED|INCONCLUSIVE|BASELINE_INVALID|FLAKY)$' \
+            /tmp/m3-node-scan.out; then
+            echo "Node runtime scan did not produce authoritative evidence"
+            exit 2
+          fi
+
+          RUN_ID="$(sed -n 's/^run_id: //p' /tmp/m3-node-scan.out | tail -1)"
+          test -n "$RUN_ID"
+          RUN_DIR="$FIXTURE/.tomorrowci/runs/$RUN_ID"
+          test -d "$RUN_DIR"
+          (cd "$FIXTURE" && "$CLI" verify "$RUN_ID")
+          python3 scripts/test_m3_evidence.py assert-live \
+            --fixture "$FIXTURE" --run-id "$RUN_ID" \
+            --ecosystem node --baseline 20 --candidate 22 \
+            --manager npm --lockfile package-lock.json \
+            --failure-kind RemovedRuntimeApi --require-clean
+
+          SCENARIO="$(python3 - "$RUN_DIR/frontier.json" <<'PY'
+          import json
+          import sys
+          value = json.load(open(sys.argv[1], encoding="utf-8"))["first_failing_scenario"]
+          if not value:
+              raise SystemExit("Node frontier has no failing scenario")
+          print(value)
+          PY
+          )"
+          (
+            cd "$FIXTURE"
+            "$CLI" replay "$RUN_ID" --scenario "$SCENARIO" | tee /tmp/m3-node-replay-1.out
+            "$CLI" replay "$RUN_ID" --scenario "$SCENARIO" | tee /tmp/m3-node-replay-2.out
+            grep -q 'replay: PASS' /tmp/m3-node-replay-1.out
+            grep -q 'replay: PASS' /tmp/m3-node-replay-2.out
+            "$CLI" verify "$RUN_ID"
+          )
+          python3 scripts/test_m3_evidence.py assert-live \
+            --fixture "$FIXTURE" --run-id "$RUN_ID" \
+            --ecosystem node --baseline 20 --candidate 22 \
+            --manager npm --lockfile package-lock.json \
+            --failure-kind RemovedRuntimeApi --require-clean --replays 2
+
+          AFTER="$(python3 scripts/test_m3_evidence.py tree-hash "$FIXTURE")"
+          test "$BEFORE" = "$AFTER"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+      - name: Upload live Node evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tomorrowci-m3-live-node-evidence
+          path: |
+            /tmp/m3-node-*.out
+            fixtures/node-dependency-break/.tomorrowci/runs/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  live-rust:
+    runs-on: ubuntu-latest
+    needs: rust
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # action implementation
+        with:
+          toolchain: 1.97.1
+      - name: Build release CLI
+        run: cargo build -p tomorrowci-cli --release
+      - name: Live Rust declared-MSRV compatibility horizon
+        id: live
+        run: |
+          set -euo pipefail
+          CLI="$GITHUB_WORKSPACE/target/release/tomorrowci"
+          FIXTURE=fixtures/rust-msrv-break
+          BEFORE="$(python3 scripts/test_m3_evidence.py tree-hash "$FIXTURE")"
+
+          "$CLI" doctor
+          "$CLI" scan "$FIXTURE" --config "$FIXTURE/.tomorrowci.yml" \
+            | tee /tmp/m3-rust-scan.out
+          if grep -Eq '^verdict: (BLOCKED|UNSUPPORTED|INCONCLUSIVE|BASELINE_INVALID|FLAKY)$' \
+            /tmp/m3-rust-scan.out; then
+            echo "Rust MSRV scan did not produce authoritative evidence"
+            exit 2
+          fi
+
+          RUN_ID="$(sed -n 's/^run_id: //p' /tmp/m3-rust-scan.out | tail -1)"
+          test -n "$RUN_ID"
+          RUN_DIR="$FIXTURE/.tomorrowci/runs/$RUN_ID"
+          test -d "$RUN_DIR"
+          (cd "$FIXTURE" && "$CLI" verify "$RUN_ID")
+          python3 scripts/test_m3_evidence.py assert-live \
+            --fixture "$FIXTURE" --run-id "$RUN_ID" \
+            --ecosystem rust --baseline 1.83 --candidate 1.74 \
+            --manager cargo --lockfile Cargo.lock \
+            --failure-kind MsrvError --require-clean
+
+          SCENARIO="$(python3 - "$RUN_DIR/frontier.json" <<'PY'
+          import json
+          import sys
+          value = json.load(open(sys.argv[1], encoding="utf-8"))["first_failing_scenario"]
+          if not value:
+              raise SystemExit("Rust frontier has no failing scenario")
+          print(value)
+          PY
+          )"
+          (
+            cd "$FIXTURE"
+            "$CLI" replay "$RUN_ID" --scenario "$SCENARIO" | tee /tmp/m3-rust-replay-1.out
+            "$CLI" replay "$RUN_ID" --scenario "$SCENARIO" | tee /tmp/m3-rust-replay-2.out
+            grep -q 'replay: PASS' /tmp/m3-rust-replay-1.out
+            grep -q 'replay: PASS' /tmp/m3-rust-replay-2.out
+            "$CLI" verify "$RUN_ID"
+          )
+          python3 scripts/test_m3_evidence.py assert-live \
+            --fixture "$FIXTURE" --run-id "$RUN_ID" \
+            --ecosystem rust --baseline 1.83 --candidate 1.74 \
+            --manager cargo --lockfile Cargo.lock \
+            --failure-kind MsrvError --require-clean --replays 2
+
+          AFTER="$(python3 scripts/test_m3_evidence.py tree-hash "$FIXTURE")"
+          test "$BEFORE" = "$AFTER"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+      - name: Upload live Rust evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tomorrowci-m3-live-rust-evidence
+          path: |
+            /tmp/m3-rust-*.out
+            fixtures/rust-msrv-break/.tomorrowci/runs/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  m3-negative-controls:
+    runs-on: ubuntu-latest
+    needs: [live-node, live-rust]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # action implementation
+        with:
+          toolchain: 1.97.1
+      - name: Build release CLI
+        run: cargo build -p tomorrowci-cli --release
+      - name: Baseline-invalid, flaky, and blocked do not authorize a horizon
+        run: |
+          set -euo pipefail
+          CLI="$GITHUB_WORKSPACE/target/release/tomorrowci"
+          NODE_FIXTURE=fixtures/node-dependency-break
+          RUST_FIXTURE=fixtures/rust-msrv-break
+
+          set +e
+          "$CLI" scan "$NODE_FIXTURE" \
+            --config "$NODE_FIXTURE/.tomorrowci-baseline-invalid.yml" \
+            > /tmp/m3-baseline-invalid.out 2>&1
+          BASELINE_STATUS=$?
+          "$CLI" scan "$NODE_FIXTURE" \
+            --config "$NODE_FIXTURE/.tomorrowci-flaky.yml" \
+            > /tmp/m3-flaky.out 2>&1
+          FLAKY_STATUS=$?
+          DOCKER_HOST=unix:///tmp/tomorrowci-engine-does-not-exist.sock \
+            "$CLI" scan "$RUST_FIXTURE" \
+            --config "$RUST_FIXTURE/.tomorrowci-blocked.yml" \
+            > /tmp/m3-blocked.out 2>&1
+          BLOCKED_STATUS=$?
+          set -e
+
+          test "$BASELINE_STATUS" -eq 2
+          test "$FLAKY_STATUS" -eq 2
+          test "$BLOCKED_STATUS" -eq 2
+
+          for CASE in baseline-invalid flaky blocked; do
+            RUN_ID="$(sed -n 's/^run_id: //p' "/tmp/m3-$CASE.out" | tail -1)"
+            test -n "$RUN_ID"
+            if test "$CASE" = blocked; then
+              FIXTURE="$RUST_FIXTURE"
+            else
+              FIXTURE="$NODE_FIXTURE"
+            fi
+            (cd "$FIXTURE" && "$CLI" verify "$RUN_ID")
+            python3 scripts/test_m3_evidence.py assert-negative \
+              --fixture "$FIXTURE" --run-id "$RUN_ID" --expected "$CASE"
+          done
+      - name: Upload M3 negative-control evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tomorrowci-m3-negative-control-evidence
+          path: |
+            /tmp/m3-baseline-invalid.out
+            /tmp/m3-flaky.out
+            /tmp/m3-blocked.out
+            fixtures/node-dependency-break/.tomorrowci/runs/
+            fixtures/rust-msrv-break/.tomorrowci/runs/
+          include-hidden-files: true
+          if-no-files-found: error
+
   action-dogfood:
     runs-on: ubuntu-latest
     needs: rust

@@ -10,14 +10,14 @@ candidates:
     channels: [stable]
     max_versions: 2
   dependencies:
-    latest_allowed: true
+    latest_allowed: false
     prerelease: false
 execution:
   max_scenarios: 8
   timeout_seconds: 300
-  reruns_on_failure: 2
+  reruns_on_failure: 3
 sandbox:
-  engine: auto
+  engine: docker
   memory_mb: 2048
   cpus: 1
   pids_limit: 256

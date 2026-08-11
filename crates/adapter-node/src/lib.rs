@@ -83,24 +83,37 @@ impl EcosystemAdapter for NodeAdapter {
         if max == 0 {
             return Ok(vec![]);
         }
-        // Concrete Node.js major tags available on Docker Hub.
-        let versions = ["18", "22", "24"];
+        let baseline_major = baseline
+            .runtime
+            .split('.')
+            .next()
+            .and_then(|value| value.parse::<u32>().ok())
+            .ok_or_else(|| {
+                TcError::Config(format!(
+                    "Node baseline runtime must begin with a numeric major version: {:?}",
+                    baseline.runtime
+                ))
+            })?;
+
+        // Concrete, monotonically newer Node.js major tags. A runtime horizon
+        // must never be authorized by silently testing an older runtime first.
+        let versions = [18_u32, 20, 22, 24];
         let mut out = Vec::new();
-        for (i, v) in versions.iter().enumerate() {
+        for v in versions {
             if out.len() >= max {
                 break;
             }
-            if *v == baseline.runtime.as_str() {
+            if v <= baseline_major {
                 continue;
             }
             out.push(Candidate {
                 id: format!("node{v}-locked"),
                 axis: EnvironmentAxis::Runtime,
                 label: format!("Node {v} + locked dependencies"),
-                version: (*v).into(),
+                version: v.to_string(),
                 channel: "stable".into(),
                 grade_if_executed: EvidenceGrade::Observed,
-                order_key: format!("{i:04}"),
+                order_key: format!("{v:04}"),
                 dependency_set: None,
             });
         }
@@ -163,17 +176,46 @@ impl EcosystemAdapter for NodeAdapter {
         } else {
             argv
         };
-        Ok(vec![CommandSpec {
+        let mut commands = vec![
+            CommandSpec {
+                argv: vec!["node".into(), "--version".into()],
+                cwd: Some("/work".into()),
+                network: false,
+                phase: "test".into(),
+            },
+            CommandSpec {
+                argv: vec!["npm".into(), "--version".into()],
+                cwd: Some("/work".into()),
+                network: false,
+                phase: "test".into(),
+            },
+            CommandSpec {
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "if [ -f package-lock.json ]; then sha256sum package-lock.json; else printf '%s\\n' 'package-lock.json:ABSENT'; fi".into(),
+                ],
+                cwd: Some("/work".into()),
+                network: false,
+                phase: "test".into(),
+            },
+        ];
+        commands.push(CommandSpec {
             argv,
             cwd: Some("/work".into()),
             network: false,
             phase: "test".into(),
-        }])
+        });
+        Ok(commands)
     }
 
     fn normalize_failure(&self, result: &RawExecutionResult) -> FailureSignature {
         let blob = format!("{}\n{}", result.stdout, result.stderr);
-        let kind = if blob.contains("ERR_REQUIRE_ESM") {
+        let kind = if blob.contains("createCipher is not a function") {
+            "RemovedRuntimeApi"
+        } else if blob.contains("ERR_OSSL_EVP_UNSUPPORTED") {
+            "OpenSslUnsupported"
+        } else if blob.contains("ERR_REQUIRE_ESM") {
             "ErrRequireEsm"
         } else if blob.contains("Cannot find module") {
             "ModuleNotFound"
@@ -186,8 +228,12 @@ impl EcosystemAdapter for NodeAdapter {
             kind: kind.into(),
             summary: blob
                 .lines()
-                .rev()
-                .find(|l| !l.trim().is_empty())
+                .find(|line| line.contains("createCipher is not a function"))
+                .or_else(|| {
+                    blob.lines()
+                        .find(|line| line.contains("TypeError") || line.contains("Error:"))
+                })
+                .or_else(|| blob.lines().rev().find(|line| !line.trim().is_empty()))
                 .unwrap_or(kind)
                 .chars()
                 .take(200)
@@ -231,5 +277,64 @@ mod tests {
     #[test]
     fn yarn_unsupported_manager() {
         assert!(check_manager("yarn").is_err());
+    }
+
+    #[test]
+    fn runtime_candidates_are_strictly_newer_than_baseline() {
+        let mut config = Config::default();
+        config.candidates.runtime.max_versions = 3;
+        let baseline = Baseline {
+            runtime: "20.20.2".into(),
+            dependencies: "locked".into(),
+            declared_by: "test".into(),
+        };
+
+        let candidates = NodeAdapter.candidates(&baseline, &config).unwrap();
+        let versions: Vec<_> = candidates
+            .iter()
+            .map(|candidate| candidate.version.as_str())
+            .collect();
+        assert_eq!(versions, vec!["22", "24"]);
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate.id != "node18-locked"));
+    }
+
+    #[test]
+    fn non_numeric_runtime_baseline_is_rejected() {
+        let mut config = Config::default();
+        config.candidates.runtime.max_versions = 1;
+        let baseline = Baseline {
+            runtime: "current".into(),
+            dependencies: "locked".into(),
+            declared_by: "test".into(),
+        };
+
+        let error = NodeAdapter
+            .candidates(&baseline, &config)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("numeric major version"), "{error}");
+    }
+
+    #[test]
+    fn removed_runtime_api_has_a_semantic_stable_signature() {
+        let raw = RawExecutionResult {
+            exit_code: Some(1),
+            signal: None,
+            duration_ms: 1,
+            timed_out: false,
+            stdout: String::new(),
+            stderr: "TypeError: crypto.createCipher is not a function".into(),
+            network_used: false,
+        };
+
+        let signature = NodeAdapter.normalize_failure(&raw);
+        assert_eq!(signature.kind, "RemovedRuntimeApi");
+        assert!(signature.summary.contains("createCipher is not a function"));
+        assert_eq!(
+            signature.normalized_hash,
+            tomorrowci_core::sha256_str("RemovedRuntimeApi")
+        );
     }
 }
