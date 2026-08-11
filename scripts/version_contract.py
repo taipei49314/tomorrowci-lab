@@ -130,7 +130,7 @@ def changelog_sections(changelog: str) -> list[tuple[str, date | None]]:
                 continue
             raw = HTML_RAW_OPEN.match(stripped)
             if raw:
-                terminator = f"</{raw.group('tag').lower()}"
+                terminator = f"</{raw.group('tag').lower()}>"
                 if terminator not in lowered:
                     html_terminator = terminator
                 continue

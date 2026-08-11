@@ -93,6 +93,13 @@ class ReleaseMetadataTests(unittest.TestCase):
                 ),
                 "exactly one dated",
             ),
+            (
+                (
+                    f"# Changelog\n\n<script>\n</scripture>\n\n"
+                    f"## [{version}] - 2026-08-11\n\n</script>\n"
+                ),
+                "exactly one dated",
+            ),
             (f"# Changelog\n\n## [{version}]\n", "exactly one dated"),
             (
                 f"# Changelog\n\n## [{version}] - 2026-02-30\n",
