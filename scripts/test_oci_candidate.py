@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import io
 import json
+import os
 import sys
 import tarfile
 import tempfile
@@ -141,18 +143,21 @@ class OciCandidateTests(unittest.TestCase):
         *,
         special: list[tarfile.TarInfo] | None = None,
         duplicate: str | None = None,
+        mtime: int = 0,
     ) -> None:
         with tarfile.open(self.archive, "w") as archive:
             for directory in ("blobs", "blobs/sha256"):
                 info = tarfile.TarInfo(directory)
                 info.type = tarfile.DIRTYPE
                 info.mode = 0o755
+                info.mtime = mtime
                 archive.addfile(info)
             for name in sorted(files):
                 data = files[name]
                 info = tarfile.TarInfo(name)
                 info.size = len(data)
                 info.mode = 0o644
+                info.mtime = mtime
                 archive.addfile(info, io.BytesIO(data))
                 if name == duplicate:
                     archive.addfile(info, io.BytesIO(data))
@@ -251,6 +256,67 @@ class OciCandidateTests(unittest.TestCase):
         self.assertEqual(
             self.provenance.read_bytes(), oci_candidate._canonical_bytes(decoded)
         )
+
+    def test_pack_layout_is_reproducible_and_rejects_noncanonical_tar_metadata(self) -> None:
+        archives = []
+        for slot, timestamp in (("a", 123), ("b", 456)):
+            layout = self.root / f"layout-{slot}"
+            (layout / "blobs" / "sha256").mkdir(parents=True)
+            for name, data in reversed(list(self.files.items())):
+                path = layout / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                os.utime(path, (timestamp, timestamp))
+            archive = self.root / f"canonical-{slot}.tar"
+            oci_candidate.pack_layout(layout=layout, archive=archive)
+            archives.append(archive)
+        self.assertEqual(archives[0].read_bytes(), archives[1].read_bytes())
+        with oci_candidate._OciArchive(archives[0]):
+            pass
+
+        self._write_archive(self.files, mtime=1)
+        with self.assertRaisesRegex(ValueError, "metadata is not canonical"):
+            self._create()
+
+    def test_verifier_rejects_noncanonical_tar_carriers_and_trailing_bytes(self) -> None:
+        canonical = self.archive.read_bytes()
+        mutations = (
+            ("trailing bytes", canonical + b"UNBOUND-TRAILING-BYTES"),
+            ("extra zero record", canonical + bytes(oci_candidate.TAR_RECORD_SIZE)),
+            ("compressed carrier", gzip.compress(canonical, mtime=0)),
+        )
+        for label, payload in mutations:
+            with self.subTest(label):
+                self.archive.write_bytes(payload)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "canonical EOF length|canonical uncompressed USTAR",
+                ):
+                    self._create()
+        self.archive.write_bytes(canonical)
+
+    def test_pack_layout_rejects_extra_entries_and_existing_output(self) -> None:
+        layout = self.root / "layout"
+        (layout / "blobs" / "sha256").mkdir(parents=True)
+        for name, data in self.files.items():
+            path = layout / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        output = self.root / "canonical.tar"
+        output.write_bytes(b"existing")
+        with self.assertRaisesRegex(ValueError, "must not already exist"):
+            oci_candidate.pack_layout(layout=layout, archive=output)
+        output.unlink()
+        (layout / "unexpected").write_text("extra", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "unexpected root inventory"):
+            oci_candidate.pack_layout(layout=layout, archive=output)
+        (layout / "unexpected").unlink()
+        (layout / "ingest").mkdir()
+        oci_candidate.pack_layout(layout=layout, archive=output)
+        output.unlink()
+        (layout / "ingest" / "partial").write_bytes(b"not committed")
+        with self.assertRaisesRegex(ValueError, "real empty directory"):
+            oci_candidate.pack_layout(layout=layout, archive=output)
 
     def test_rejects_mutated_blob_and_extra_blob(self) -> None:
         with self.subTest("content digest"):

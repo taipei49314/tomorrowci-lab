@@ -109,7 +109,7 @@ jobs:
           cp -R fixtures/rust-msrv-break "$smoke"
           set +e
           smoke_output="$(cd "$smoke" && DOCKER_HOST=tcp://127.0.0.1:1 \
-            "$cli" scan . --config .tomorrowci-blocked.yml 2>&1)"
+            "$cli" scan "$smoke" --config "$smoke/.tomorrowci-blocked.yml" 2>&1)"
           smoke_code=$?
           set -e
           printf '%s\n' "$smoke_output"
@@ -170,7 +170,7 @@ jobs:
           Push-Location $smoke
           try {
             $env:DOCKER_HOST = "tcp://127.0.0.1:1"
-            $smokeOutput = (& $cli scan "." --config ".tomorrowci-blocked.yml" 2>&1 | Out-String)
+            $smokeOutput = (& $cli scan $smoke --config (Join-Path $smoke ".tomorrowci-blocked.yml") 2>&1 | Out-String)
             $smokeCode = $LASTEXITCODE
           } finally {
             if ($null -eq $previousDockerHost) {
@@ -224,6 +224,8 @@ jobs:
           for slot in a b; do
             output="$GITHUB_WORKSPACE/dist/oci/$slot"
             mkdir -p "$output"
+            layout="$output/layout"
+            test ! -e "$layout"
             docker buildx build \
               --file Containerfile \
               --platform linux/amd64 \
@@ -235,9 +237,12 @@ jobs:
               --build-arg "TCI_REVISION=$GITHUB_SHA" \
               --build-arg "TCI_SOURCE=https://github.com/$GITHUB_REPOSITORY" \
               --tag "$IMAGE" \
-              --output "type=oci,dest=$output/tomorrowci-oci-linux-amd64.tar,rewrite-timestamp=true" \
+              --output "type=oci,dest=$layout,tar=false,rewrite-timestamp=true,oci-mediatypes=true,compression=gzip,compression-level=9,force-compression=true,compatibility-version=30" \
               --metadata-file "$output/build-metadata.json" \
               .
+            python3 scripts/oci_candidate.py pack-layout \
+              --layout "$layout" \
+              --archive "$output/tomorrowci-oci-linux-amd64.tar"
           done
           archive_a="$GITHUB_WORKSPACE/dist/oci/a/tomorrowci-oci-linux-amd64.tar"
           archive_b="$GITHUB_WORKSPACE/dist/oci/b/tomorrowci-oci-linux-amd64.tar"

@@ -30,7 +30,14 @@ RUN printf '%s\n' \
     && apt-get -o Acquire::Check-Valid-Until=false update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
          ca-certificates git \
-    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf \
+         /var/lib/apt/lists/* \
+         /var/cache/apt/* \
+         /var/log/apt \
+    && rm -f \
+         /var/cache/ldconfig/aux-cache \
+         /var/log/alternatives.log \
+         /var/log/dpkg.log \
     && mkdir -p /home/tomorrowci/.docker /workspace \
     && chown -R 65532:65532 /home/tomorrowci /workspace
 
