@@ -72,6 +72,16 @@ The SHA-256 digest of `candidate-manifest.json` is the detached subject an
 external auditor must authorize. Neither the manifest nor its checksums grant
 promotion authority by themselves.
 
+The offline verification contracts are implemented in
+[`EXTERNAL_PROTOCOL.md`](qualification/EXTERNAL_PROTOCOL.md) and
+[`TAG_PROMOTION_ATTESTATION.md`](qualification/TAG_PROMOTION_ATTESTATION.md).
+They verify an independently signed authorization and bind an annotated tag to
+the exact candidate bytes; they do not create signatures, tags, releases, or
+registry publications. Repository-owned tests of these verifiers are not
+external authorization. The three public qualification targets are frozen in
+[`external-targets/preregistration-v1.json`](qualification/external-targets/preregistration-v1.json)
+with status `NOT_RUN` and cannot be replaced based on their future result.
+
 The historical `release.yml` workflow is retired and disabled. Candidate work
 uses a new workflow path that did not exist at any published historical tag,
 so `workflow_dispatch` cannot select old tag-controlled publishing code.

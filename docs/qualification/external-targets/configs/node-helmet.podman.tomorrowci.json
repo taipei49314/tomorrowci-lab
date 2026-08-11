@@ -1,0 +1,50 @@
+{
+  "baseline": {
+    "dependencies": "locked",
+    "runtime": "20"
+  },
+  "candidates": {
+    "dependencies": {
+      "latest_allowed": false,
+      "prerelease": false
+    },
+    "runtime": {
+      "channels": [
+        "stable"
+      ],
+      "max_versions": 1
+    }
+  },
+  "execution": {
+    "max_parallel": 1,
+    "max_scenarios": 4,
+    "reruns_on_failure": 2,
+    "timeout_seconds": 600
+  },
+  "policy": {
+    "fail_if": {
+      "baseline_invalid": true,
+      "blocked_ratio_above": 0.0,
+      "horizon_regression": true,
+      "new_future_failure": true
+    }
+  },
+  "project": {
+    "build_command": "auto",
+    "ecosystem": "node",
+    "test_command": "npm run test:node"
+  },
+  "report": {
+    "html": true,
+    "json": true,
+    "sarif": false
+  },
+  "sandbox": {
+    "cpus": 2.0,
+    "engine": "podman",
+    "memory_mb": 4096,
+    "network": "fetch-only",
+    "pids_limit": 512
+  },
+  "version": 1
+}

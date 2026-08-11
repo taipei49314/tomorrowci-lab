@@ -1,0 +1,329 @@
+{
+  "candidate_binding": {
+    "candidate_manifest_sha256": null,
+    "candidate_source_sha": null,
+    "must_bind_before_execution": true,
+    "oci_manifest_digest": null,
+    "required_source": "current-default-exact-sha-after-all-tracked-fixes",
+    "status": "UNBOUND_NOT_RUN"
+  },
+  "kind": "tomorrowci.external-target-preregistration.v1",
+  "operational_acceptance": {
+    "allowed_observations": [
+      "HORIZON_OBSERVED",
+      "NO_HORIZON_OBSERVED"
+    ],
+    "candidate_replay_count": 2,
+    "disqualifying_conditions": [
+      "IDENTITY_FAILURE",
+      "INTERNAL_ERROR",
+      "REQUIRED_BLOCKED",
+      "UNVERIFIABLE"
+    ],
+    "required_engines": [
+      "docker",
+      "podman"
+    ],
+    "required_sequence": [
+      "scan",
+      "verify",
+      "replay_candidate",
+      "replay_candidate",
+      "verify"
+    ],
+    "result_authority": "separate-immutable-qualification-record"
+  },
+  "registered_on": "2026-08-11",
+  "remote_materialization_limits": {
+    "allow_credentials": false,
+    "allow_lfs": false,
+    "allow_redirects": false,
+    "allow_submodules": false,
+    "allowed_host": "github.com",
+    "allowed_protocol": "https",
+    "max_clone_bytes": 268435456,
+    "max_file_bytes": 26214400,
+    "max_file_count": 10000,
+    "max_source_bytes": 104857600,
+    "timeout_seconds": 120
+  },
+  "replacement_policy": {
+    "allowed_pre_execution_reasons": [
+      "EXACT_COMMIT_UNAVAILABLE",
+      "NEWLY_DISCOVERED_PROHIBITED_TREE_OR_LICENSE_CONDITION",
+      "REPOSITORY_NO_LONGER_PUBLIC"
+    ],
+    "original_record_and_observations_retained": true,
+    "replacement_after_any_result": "FORBIDDEN",
+    "requires_new_reviewed_contract_version": true,
+    "result_based_replacement": "FORBIDDEN",
+    "status": "NOT_REQUESTED"
+  },
+  "retention_security": {
+    "container_socket_to_target": "FORBIDDEN",
+    "fetch_network": "GITHUB_AND_PACKAGE_REGISTRIES_ONLY",
+    "host_execution": "FORBIDDEN",
+    "host_secrets": "FORBIDDEN",
+    "privacy_scope": "PUBLIC_REPOSITORY_DATA_ONLY",
+    "raw_evidence_minimum_days": 90,
+    "retain_original_failures": true,
+    "source_license_files_retained": true,
+    "target_checkout": "TEMPORARY_EXACT_COMMIT",
+    "test_network": "NONE"
+  },
+  "schema_version": 1,
+  "selection": {
+    "ecosystems": [
+      "python",
+      "node",
+      "rust"
+    ],
+    "excluded_owner": "taipei49314",
+    "result_blind": true,
+    "target_ids": [
+      "python-azure-flask",
+      "node-helmet",
+      "rust-human-panic"
+    ],
+    "targets_are_project_fixtures": false
+  },
+  "status": "NOT_RUN",
+  "targets": [
+    {
+      "configs": {
+        "docker": {
+          "path": "docs/qualification/external-targets/configs/python-azure-flask.docker.tomorrowci.json",
+          "sha256": "sha256:9d42029e0db576cc545c9148ccf77c8f941d8889b10af7b0733e68503010fb94"
+        },
+        "podman": {
+          "path": "docs/qualification/external-targets/configs/python-azure-flask.podman.tomorrowci.json",
+          "sha256": "sha256:6e2ac5cff901fa2e99875ad278338f63ceabc397189a65760aa44702ef18481f"
+        }
+      },
+      "dependency_policy": {
+        "axis_claim": "EXCLUDED",
+        "baseline_reproducibility": "UNLOCKED_REQUIREMENTS",
+        "lockfiles": [],
+        "manifest_paths": [
+          "requirements.txt"
+        ]
+      },
+      "ecosystem": "python",
+      "execution_budget": {
+        "cpus": 1.0,
+        "max_parallel": 1,
+        "max_scenarios": 4,
+        "memory_mb": 2048,
+        "pids_limit": 256,
+        "reruns_on_failure": 2,
+        "timeout_seconds": 300
+      },
+      "id": "python-azure-flask",
+      "license": {
+        "expression": "MIT",
+        "files": [
+          {
+            "git_blob_sha1": "79656060de00aa4659ad2c276d5be8830664d544",
+            "path": "LICENSE.md",
+            "sha256": "sha256:d9a1b1e30d633d5732ea18e3cba9538d293ebc53e1a9e4e96ab739e0c5c4f1cb",
+            "size_bytes": 1140
+          }
+        ],
+        "source": "repository-license-file"
+      },
+      "rationale": "Public Flask quickstart with a focused route-discovery command; its unpinned requirement excludes dependency qualification.",
+      "runtime_axis": {
+        "baseline": "3.11",
+        "candidate": "3.12",
+        "direction": "future"
+      },
+      "source": {
+        "commit": "5bfb67bffda1a5083e33fec45861de6b55f74e57",
+        "repository": "Azure-Samples/msdocs-python-flask-webapp-quickstart",
+        "tree": "9a3e0abfd4bbe6044ee94c4f9e3516e7e4968053",
+        "url": "https://github.com/Azure-Samples/msdocs-python-flask-webapp-quickstart",
+        "visibility": "PUBLIC"
+      },
+      "status": "NOT_RUN",
+      "test_command": {
+        "argv": [
+          "python",
+          "-m",
+          "flask",
+          "--app",
+          "app",
+          "routes"
+        ],
+        "shell": false
+      },
+      "tree_inventory": {
+        "blob_count": 66,
+        "max_blob_bytes": 663486,
+        "total_blob_bytes": 7558379,
+        "tree_api_truncated": false
+      }
+    },
+    {
+      "configs": {
+        "docker": {
+          "path": "docs/qualification/external-targets/configs/node-helmet.docker.tomorrowci.json",
+          "sha256": "sha256:33101274e748cfe5fda2028c117052478463557a0e9bce8a61c9333b2cbd9ee1"
+        },
+        "podman": {
+          "path": "docs/qualification/external-targets/configs/node-helmet.podman.tomorrowci.json",
+          "sha256": "sha256:234d20ea7dcc51a5a112887864a182a034359decc099385e83a294f8f0efa7d3"
+        }
+      },
+      "dependency_policy": {
+        "axis_claim": "EXCLUDED",
+        "baseline_reproducibility": "LOCKED",
+        "lockfiles": [
+          {
+            "git_blob_sha1": "678e18ef4717d21cc9df27708102b52e83d0ef8c",
+            "path": "package-lock.json",
+            "sha256": "sha256:732de6e400ac80271c12c8124aa7af3285b9a4c01a14d078c6a53c59065f53e5",
+            "size_bytes": 239788
+          }
+        ],
+        "manifest_paths": [
+          "package.json"
+        ]
+      },
+      "ecosystem": "node",
+      "execution_budget": {
+        "cpus": 2.0,
+        "max_parallel": 1,
+        "max_scenarios": 4,
+        "memory_mb": 4096,
+        "pids_limit": 512,
+        "reruns_on_failure": 2,
+        "timeout_seconds": 600
+      },
+      "id": "node-helmet",
+      "license": {
+        "expression": "MIT",
+        "files": [
+          {
+            "git_blob_sha1": "27bd9478b24b763ad5103c097be02ab168b5441e",
+            "path": "LICENSE",
+            "sha256": "sha256:dd282ebd50392cbba041f6f5a4766a28f01a4ee89ea237cd7a7badc3d7871dc8",
+            "size_bytes": 1089
+          }
+        ],
+        "source": "repository-license-file"
+      },
+      "rationale": "Public npm library with an exact package-lock and a focused Node-native test script across Node 20 and 22.",
+      "runtime_axis": {
+        "baseline": "20",
+        "candidate": "22",
+        "direction": "future"
+      },
+      "source": {
+        "commit": "9315aac37eb69d8dd3fe81c67febcebe60d7e97e",
+        "repository": "helmetjs/helmet",
+        "tree": "9a28a13a551323b1ba5d954e06730f7c9a9313cf",
+        "url": "https://github.com/helmetjs/helmet",
+        "visibility": "PUBLIC"
+      },
+      "status": "NOT_RUN",
+      "test_command": {
+        "argv": [
+          "npm",
+          "run",
+          "test:node"
+        ],
+        "shell": false
+      },
+      "tree_inventory": {
+        "blob_count": 106,
+        "max_blob_bytes": 239788,
+        "total_blob_bytes": 442866,
+        "tree_api_truncated": false
+      }
+    },
+    {
+      "configs": {
+        "docker": {
+          "path": "docs/qualification/external-targets/configs/rust-human-panic.docker.tomorrowci.json",
+          "sha256": "sha256:1217aa76744e5d9e45fa523564fd2be1b988c49646a65ef5128b0e01e0004907"
+        },
+        "podman": {
+          "path": "docs/qualification/external-targets/configs/rust-human-panic.podman.tomorrowci.json",
+          "sha256": "sha256:04967112baeae1353fbc7ab062bdcb8be6921343a8451fbcaac57830f809d5d2"
+        }
+      },
+      "dependency_policy": {
+        "axis_claim": "EXCLUDED",
+        "baseline_reproducibility": "LOCKED",
+        "lockfiles": [
+          {
+            "git_blob_sha1": "13fc7f8ea2916da1e382c45b8c3d68d7a4307baf",
+            "path": "Cargo.lock",
+            "sha256": "sha256:c1768f6effba3aff876c572312dfb6c17ac0aee623ad771417f346b6bd8740ca",
+            "size_bytes": 18451
+          }
+        ],
+        "manifest_paths": [
+          "Cargo.toml"
+        ]
+      },
+      "ecosystem": "rust",
+      "execution_budget": {
+        "cpus": 2.0,
+        "max_parallel": 1,
+        "max_scenarios": 4,
+        "memory_mb": 4096,
+        "pids_limit": 512,
+        "reruns_on_failure": 2,
+        "timeout_seconds": 900
+      },
+      "id": "rust-human-panic",
+      "license": {
+        "expression": "MIT OR Apache-2.0",
+        "files": [
+          {
+            "git_blob_sha1": "8f71f43fee3f78649d238238cbde51e6d7055c82",
+            "path": "LICENSE-APACHE",
+            "sha256": "sha256:c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08",
+            "size_bytes": 11358
+          },
+          {
+            "git_blob_sha1": "a2d01088b6ce55e837a6d193943580f978fb2d2e",
+            "path": "LICENSE-MIT",
+            "sha256": "sha256:6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6",
+            "size_bytes": 1062
+          }
+        ],
+        "source": "workspace-manifest-and-license-files"
+      },
+      "rationale": "Public Rust CLI library with Cargo.lock and declared MSRV 1.74, observed from a Rust 1.83 baseline.",
+      "runtime_axis": {
+        "baseline": "1.83",
+        "candidate": "1.74",
+        "direction": "declared-msrv"
+      },
+      "source": {
+        "commit": "b8915ed30fcfca3300e3796fa35ddd0a9a0a5db7",
+        "repository": "rust-cli/human-panic",
+        "tree": "e2eb6953dea6bf932f02b6bb7c7fd0b263c9bde5",
+        "url": "https://github.com/rust-cli/human-panic",
+        "visibility": "PUBLIC"
+      },
+      "status": "NOT_RUN",
+      "test_command": {
+        "argv": [
+          "cargo",
+          "test",
+          "--locked"
+        ],
+        "shell": false
+      },
+      "tree_inventory": {
+        "blob_count": 30,
+        "max_blob_bytes": 18451,
+        "total_blob_bytes": 99641,
+        "tree_api_truncated": false
+      }
+    }
+  ]
+}

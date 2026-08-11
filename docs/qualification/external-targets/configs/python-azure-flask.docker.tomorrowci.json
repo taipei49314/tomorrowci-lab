@@ -1,0 +1,50 @@
+{
+  "baseline": {
+    "dependencies": "requirements.txt-unlocked",
+    "runtime": "3.11"
+  },
+  "candidates": {
+    "dependencies": {
+      "latest_allowed": false,
+      "prerelease": false
+    },
+    "runtime": {
+      "channels": [
+        "stable"
+      ],
+      "max_versions": 1
+    }
+  },
+  "execution": {
+    "max_parallel": 1,
+    "max_scenarios": 4,
+    "reruns_on_failure": 2,
+    "timeout_seconds": 300
+  },
+  "policy": {
+    "fail_if": {
+      "baseline_invalid": true,
+      "blocked_ratio_above": 0.0,
+      "horizon_regression": true,
+      "new_future_failure": true
+    }
+  },
+  "project": {
+    "build_command": "auto",
+    "ecosystem": "python",
+    "test_command": "python -m flask --app app routes"
+  },
+  "report": {
+    "html": true,
+    "json": true,
+    "sarif": false
+  },
+  "sandbox": {
+    "cpus": 1.0,
+    "engine": "docker",
+    "memory_mb": 2048,
+    "network": "fetch-only",
+    "pids_limit": 256
+  },
+  "version": 1
+}
