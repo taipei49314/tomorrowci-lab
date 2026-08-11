@@ -1,6 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { escapeHtml, sanitizeLog } from "../src/escape.js";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("XSS hardening", () => {
   it("escapes script tags", () => {
@@ -18,9 +23,21 @@ describe("XSS hardening", () => {
 });
 
 describe("keyboard / a11y contract markers", () => {
-  it("documents required report attributes", () => {
-    // Contract checked in Rust HTML generator tests; mirrored here for CI without cargo.
-    const required = ["aria-label", "tabindex", "prefers-reduced-motion", "role"];
-    assert.ok(required.length >= 3);
+  it("implements semantic controls and reduced-motion styling", async () => {
+    const app = await readFile(path.join(root, "src", "App.tsx"), "utf8");
+    const css = await readFile(path.join(root, "src", "report.css"), "utf8");
+    assert.match(app, /<main/);
+    assert.match(app, /aria-label="Filter scenarios"/);
+    assert.match(app, /aria-live="polite"/);
+    assert.match(css, /prefers-reduced-motion:\s*reduce/);
+  });
+
+  it("never opts into raw React HTML injection", async () => {
+    const source = await Promise.all(
+      ["App.tsx", "index.tsx", "model.ts"].map((name) =>
+        readFile(path.join(root, "src", name), "utf8"),
+      ),
+    );
+    assert.equal(source.join("\n").includes("dangerouslySetInnerHTML"), false);
   });
 });

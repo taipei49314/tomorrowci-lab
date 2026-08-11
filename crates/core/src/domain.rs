@@ -72,6 +72,33 @@ pub struct RepositorySnapshot {
     pub is_disposable_copy: bool,
 }
 
+/// Provenance for a bounded remote source materialization. This record is
+/// optional for local scans, but current evidence that contains it must bind
+/// the immutable request to the captured workspace manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteSourceRecord {
+    pub schema_version: u32,
+    pub requested_url: String,
+    pub canonical_origin: String,
+    pub requested_commit: String,
+    pub resolved_commit: String,
+    pub clean_tree: bool,
+    pub moving_ref_allowed: bool,
+    pub redirects_allowed: bool,
+    pub credentials_allowed: bool,
+    pub submodules_allowed: bool,
+    pub lfs_allowed: bool,
+    pub clone_timeout_seconds: u64,
+    pub max_files: u64,
+    pub max_file_bytes: u64,
+    pub max_total_bytes: u64,
+    pub max_clone_disk_bytes: u64,
+    pub snapshot_file_count: u64,
+    pub snapshot_total_bytes: u64,
+    pub workspace_manifest_sha256: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectDetection {
     pub ecosystem: Ecosystem,

@@ -1,8 +1,16 @@
 //! Report generation: JSON / SARIF / accessible HTML (no untrusted raw HTML).
 
+mod model;
+
+pub use model::{ReportModel, REPORT_MODEL_SCHEMA};
+
+use model::build_report_model;
 use serde_json::json;
 use std::path::Path;
 use tomorrowci_core::{Result, RunManifest, Verdict};
+
+const REPORT_UI_JS: &str = include_str!("../assets/report-ui.js");
+const REPORT_UI_CSS: &str = include_str!("../assets/report-ui.css");
 
 pub fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -77,9 +85,40 @@ pub fn write_github_job_summary(manifest: &RunManifest, out: &Path) -> Result<()
 
 /// Accessible static HTML report generated from real run data.
 pub fn write_html_report(manifest: &RunManifest, out: &Path) -> Result<()> {
+    let manifest_root = manifest.evidence_root.as_path();
+    let replay_root = if manifest_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == manifest.run_id)
+        && manifest_root.is_dir()
+    {
+        Some(manifest_root)
+    } else {
+        out.parent()
+    };
+    write_html_report_with_replay_root(manifest, replay_root, out)
+}
+
+/// Render from a caller-verified evidence root. Transactional report writers
+/// use this form when their output lives in a staging directory.
+pub fn write_html_report_from_verified_root(
+    manifest: &RunManifest,
+    verified_run_root: &Path,
+    out: &Path,
+) -> Result<()> {
+    write_html_report_with_replay_root(manifest, Some(verified_run_root), out)
+}
+
+fn write_html_report_with_replay_root(
+    manifest: &RunManifest,
+    replay_root: Option<&Path>,
+    out: &Path,
+) -> Result<()> {
     if let Some(p) = out.parent() {
         std::fs::create_dir_all(p)?;
     }
+
+    let report_model = build_report_model(manifest, replay_root)?;
 
     let mut rows = String::new();
     for r in &manifest.results {
@@ -151,7 +190,7 @@ pub fn write_html_report(manifest: &RunManifest, out: &Path) -> Result<()> {
         .as_ref()
         .map(|f| {
             format!(
-                "<p>Failure signature: <code>{}</code> — {}</p><p>Replay: <code>{}</code></p>",
+                "<span class=\"fallback-detail\">Failure signature: <code>{}</code> — {}</span><span class=\"fallback-detail\">Replay: <code>{}</code></span>",
                 escape_html(&f.normalized_hash),
                 escape_html(&f.summary),
                 escape_html(manifest.frontier.replay_command.as_deref().unwrap_or("n/a"))
@@ -182,8 +221,37 @@ pub fn write_html_report(manifest: &RunManifest, out: &Path) -> Result<()> {
         .map(|n| format!("<li>{}</li>", escape_html(n)))
         .collect();
 
+    let replay_attempts = if report_model.replay_attempts.is_empty() {
+        "<p class=\"empty-state\">No canonical replay attempt directory was present when this report was generated.</p>".to_owned()
+    } else {
+        let items: String = report_model
+            .replay_attempts
+            .iter()
+            .map(|attempt| {
+                format!(
+                    "<li><div><code>{}</code><span>Attempt {}</span></div><a href=\"{}\">Open result.json</a></li>",
+                    escape_html(&attempt.scenario_id),
+                    attempt.attempt,
+                    escape_html(&attempt.result_href)
+                )
+            })
+            .collect();
+        format!("<ol class=\"replay-list\">{items}</ol>")
+    };
+
+    let d = &report_model.denominator;
+    let denominator = format!(
+        "<dl class=\"denominator\" aria-label=\"Scenario denominator\"><div><dt>PASS</dt><dd>{}</dd></div><div><dt>FAIL</dt><dd>{}</dd></div><div><dt>FLAKY</dt><dd>{}</dd></div><div><dt>BLOCKED</dt><dd>{}</dd></div><div><dt>UNSUPPORTED</dt><dd>{}</dd></div><div><dt>INCONCLUSIVE</dt><dd>{}</dd></div><div><dt>NOT_RUN</dt><dd>{}</dd></div></dl>",
+        d.pass, d.fail, d.flaky, d.blocked, d.unsupported, d.inconclusive, d.not_run
+    );
+
+    let report_model_json = safe_json_for_script(&report_model)?;
+
     // Use replace (not format!) so CSS colors and #anchors are not parsed as format args.
     let html = HTML_TEMPLATE
+        .replace("{{REPORT_UI_CSS}}", REPORT_UI_CSS)
+        .replace("{{REPORT_UI_JS}}", REPORT_UI_JS)
+        .replace("{{REPORT_MODEL}}", &report_model_json)
         .replace("{{RUN}}", &escape_html(&manifest.run_id))
         .replace(
             "{{ECO}}",
@@ -193,10 +261,25 @@ pub fn write_html_report(manifest: &RunManifest, out: &Path) -> Result<()> {
         .replace("{{FRONTIER}}", &frontier)
         .replace("{{MATRIX}}", &matrix)
         .replace("{{ROWS}}", &rows)
+        .replace("{{DENOMINATOR}}", &denominator)
+        .replace("{{REPLAY_ATTEMPTS}}", &replay_attempts)
+        .replace(
+            "{{REPLAY_COUNT}}",
+            &report_model.replay_attempts.len().to_string(),
+        )
         .replace("{{PLAN_NOTES}}", &plan_notes)
         .replace("{{NOTES}}", &notes);
     std::fs::write(out, html)?;
     Ok(())
+}
+
+fn safe_json_for_script<T: serde::Serialize>(value: &T) -> Result<String> {
+    Ok(serde_json::to_string(value)?
+        .replace('&', "\\u0026")
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029"))
 }
 
 const HTML_TEMPLATE: &str = r##"<!DOCTYPE html>
@@ -205,36 +288,22 @@ const HTML_TEMPLATE: &str = r##"<!DOCTYPE html>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>TomorrowCI Report {{RUN}}</title>
-<style>
-:root { color-scheme: dark; }
-body { font-family: system-ui, sans-serif; margin: 0; background: #0b1220; color: #e5eefc; line-height: 1.5; }
-a:focus, button:focus, tr:focus { outline: 3px solid #fbbf24; outline-offset: 2px; }
-header, main, footer { max-width: 960px; margin: 0 auto; padding: 1.25rem; }
-h1 { color: #7dd3fc; margin-bottom: 0.25rem; }
-.banner { background: #1e293b; padding: 1rem; border-radius: 8px; border-left: 4px solid #38bdf8; }
-table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
-th, td { border: 1px solid #334155; padding: 0.5rem; text-align: left; }
-th { background: #1e293b; }
-.badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 700; font-size: 0.85rem; }
-.badge.pass { background: #14532d; color: #bbf7d0; }
-.badge.fail { background: #7f1d1d; color: #fecaca; }
-.badge.flaky { background: #713f12; color: #fde68a; }
-.badge.blocked { background: #334155; color: #e2e8f0; }
-.badge.other { background: #312e81; color: #c7d2fe; }
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
-@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
-nav a { color: #7dd3fc; margin-right: 1rem; }
-</style>
+<style>{{REPORT_UI_CSS}}</style>
 </head>
 <body>
+<div id="report-root"></div>
+<noscript>
+<style>#report-root { display: none; }</style>
+<div id="no-js-report">
 <a class="sr-only" href="#main">Skip to main content</a>
 <header>
-  <h1>TomorrowCI</h1>
-  <p>Continuous Integration Against the Future.</p>
+  <p><strong>TomorrowCI</strong> — Continuous Integration Against the Future.</p>
+  <h1>Run <code>{{RUN}}</code></h1>
   <nav aria-label="Report sections">
     <a href="#horizon">Horizon</a>
     <a href="#matrix">Matrix</a>
     <a href="#results">Results</a>
+    <a href="#replays">Replays</a>
     <a href="#planner">Planner</a>
   </nav>
 </header>
@@ -248,6 +317,7 @@ nav a { color: #7dd3fc; margin-right: 1rem; }
 
   <section aria-labelledby="matrix-h" id="matrix">
     <h2 id="matrix-h">Scenario matrix</h2>
+    {{DENOMINATOR}}
     {{MATRIX}}
   </section>
 
@@ -268,6 +338,12 @@ nav a { color: #7dd3fc; margin-right: 1rem; }
 {{ROWS}}
       </tbody>
     </table>
+  </section>
+
+  <section aria-labelledby="replays-h" id="replays">
+    <h2 id="replays-h">Replay attempts</h2>
+    <p>{{REPLAY_COUNT}} recorded.</p>
+    {{REPLAY_ATTEMPTS}}
   </section>
 
   <section aria-labelledby="planner-h" id="planner">
@@ -292,6 +368,10 @@ nav a { color: #7dd3fc; margin-right: 1rem; }
 <footer>
   <p>Read-only report derived from evidence bundle. Rebuild with <code>tomorrowci report</code>.</p>
 </footer>
+</div>
+</noscript>
+<script id="report-data" type="application/json">{{REPORT_MODEL}}</script>
+<script>{{REPORT_UI_JS}}</script>
 </body>
 </html>
 "##;
@@ -352,7 +432,7 @@ mod tests {
         use chrono::Utc;
         use indexmap::IndexMap;
         use tomorrowci_core::*;
-        let m = RunManifest {
+        let mut m = RunManifest {
             evidence_schema_version: 2,
             run_id: "r".into(),
             tool_version: "0.1.0".into(),
@@ -384,7 +464,8 @@ mod tests {
                 budget_max: 1,
             },
             results: vec![ExecutionResult {
-                scenario_id: "<img onerror=alert(1)>".into(),
+                scenario_id:
+                    "</script><script data-xss>window.xss=1</script><img onerror=alert(1)>".into(),
                 attempt: 1,
                 verdict: Verdict::FutureFail,
                 exit_code: Some(1),
@@ -430,10 +511,49 @@ mod tests {
         write_html_report(&m, &p).unwrap();
         let body = std::fs::read_to_string(&p).unwrap();
         assert!(!body.contains("<img onerror"));
+        assert!(!body.contains("<script data-xss>"));
         assert!(body.contains("&lt;img"));
+        assert!(body.contains("\\u003c/script\\u003e"));
         assert!(body.contains("aria-label"));
         assert!(body.contains("prefers-reduced-motion"));
         assert!(body.contains("tabindex"));
-        let _ = m;
+
+        let embedded = body
+            .split_once("<script id=\"report-data\" type=\"application/json\">")
+            .unwrap()
+            .1
+            .split_once("</script>")
+            .unwrap()
+            .0;
+        let model: serde_json::Value = serde_json::from_str(embedded).unwrap();
+        assert_eq!(model["schemaVersion"], REPORT_MODEL_SCHEMA);
+        assert_eq!(model["denominator"]["fail"], 1);
+        assert_eq!(model["denominator"]["notRun"], 0);
+        assert_eq!(model["scenarios"][0]["verdict"], "FAIL");
+
+        m.results[0].scenario_id = "candidate".into();
+        let run_root = dir.path().join("bundle");
+        for attempt in [2, 1] {
+            let attempt_root = run_root
+                .join("scenarios/candidate/replays")
+                .join(format!("attempt-{attempt}"));
+            std::fs::create_dir_all(&attempt_root).unwrap();
+            std::fs::write(attempt_root.join("result.json"), "{}\n").unwrap();
+        }
+        std::fs::create_dir_all(run_root.join("scenarios/candidate/replays/attempt-03")).unwrap();
+        let staged = dir.path().join("staging/report.html");
+        write_html_report_from_verified_root(&m, &run_root, &staged).unwrap();
+        let replay_body = std::fs::read_to_string(staged).unwrap();
+        let embedded = replay_body
+            .split_once("<script id=\"report-data\" type=\"application/json\">")
+            .unwrap()
+            .1
+            .split_once("</script>")
+            .unwrap()
+            .0;
+        let model: serde_json::Value = serde_json::from_str(embedded).unwrap();
+        assert_eq!(model["replayAttempts"].as_array().unwrap().len(), 2);
+        assert_eq!(model["replayAttempts"][0]["attempt"], 1);
+        assert_eq!(model["replayAttempts"][1]["attempt"], 2);
     }
 }
