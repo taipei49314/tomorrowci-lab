@@ -355,6 +355,19 @@ class _OciArchive:
                     or header[263:265] != b"00"
                 ):
                     raise ValueError("OCI archive must use canonical uncompressed USTAR")
+                expected_header = _canonical_tar_info(
+                    member.name,
+                    directory=member.isdir(),
+                    size=member.size,
+                ).tobuf(
+                    format=tarfile.USTAR_FORMAT,
+                    encoding="utf-8",
+                    errors="strict",
+                )
+                if header != expected_header:
+                    raise ValueError(
+                        f"OCI archive has a non-canonical USTAR header: {member.name}"
+                    )
 
             last = members[-1]
             data_end = last.offset_data + (

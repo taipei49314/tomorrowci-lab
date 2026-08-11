@@ -293,6 +293,16 @@ class OciCandidateTests(unittest.TestCase):
                     "canonical EOF length|canonical uncompressed USTAR",
                 ):
                     self._create()
+
+        alternate_header = bytearray(canonical)
+        self.assertEqual(alternate_header[107], 0)
+        alternate_header[107] = 0x20
+        alternate_header[148:156] = b"        "
+        checksum = sum(alternate_header[:512])
+        alternate_header[148:156] = f"{checksum:06o}\0 ".encode("ascii")
+        self.archive.write_bytes(alternate_header)
+        with self.assertRaisesRegex(ValueError, "non-canonical USTAR header"):
+            self._create()
         self.archive.write_bytes(canonical)
 
     def test_pack_layout_rejects_extra_entries_and_existing_output(self) -> None:
