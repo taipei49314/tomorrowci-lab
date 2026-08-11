@@ -47,6 +47,7 @@ on:
 permissions:
   actions: read
   contents: read
+  packages: read
 
 concurrency:
   group: protected-exact-byte-promotion
@@ -56,6 +57,10 @@ jobs:
   prepare:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      plan_sha256: ${{ steps.publication-plan.outputs.plan_sha256 }}
+      state_artifact_digest: ${{ steps.state.outputs.artifact-digest }}
+      state_artifact_id: ${{ steps.state.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -107,8 +112,11 @@ jobs:
           gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" > "$metadata/candidate-run.json"
           gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" \
             > "$metadata/candidate-artifacts.json"
+          gh api "/repos/$GITHUB_REPOSITORY/environments/release" \
+            > "$metadata/release-environment.json"
           python3 - "$metadata/repository.json" "$metadata/master.json" "$GITHUB_REPOSITORY" "$GITHUB_SHA" <<'PY'
           import json
+          import os
           import sys
 
           repository = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -124,6 +132,8 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --source-sha "$CANDIDATE_SOURCE_SHA" \
             --run-id "$CI_RUN_ID" --run-attempt "$CI_RUN_ATTEMPT"
+          python3 scripts/promotion_preflight.py inspect-release-environment \
+            --metadata "$metadata/release-environment.json"
           python3 scripts/validate_external_evidence.py inspect-candidate-api \
             --run-metadata "$metadata/candidate-run.json" \
             --artifact-metadata "$metadata/candidate-artifacts.json" \
@@ -214,8 +224,15 @@ jobs:
         run: |
           set -euo pipefail
           trust=.github/release-trust
-          test -f "$trust/allowed_signers"
-          test -f "$trust/expected-policy-sha256.txt"
+          test -f "$trust/allowed_signers" && test ! -L "$trust/allowed_signers"
+          test -f "$trust/expected-policy-sha256.txt" && \
+            test ! -L "$trust/expected-policy-sha256.txt"
+          git ls-files --error-unmatch -- "$trust/allowed_signers" \
+            "$trust/expected-policy-sha256.txt"
+          python3 scripts/promotion_preflight.py inspect-trust-material \
+            --allowed-signers "$trust/allowed_signers" \
+            --expected-policy-digest "$trust/expected-policy-sha256.txt" \
+            > "$RUNNER_TEMP/tracked-trust-identity.json"
           expected_policy="$(tr -d '\r\n' < "$trust/expected-policy-sha256.txt")"
           [[ "$expected_policy" =~ ^sha256:[0-9a-f]{64}$ ]]
           authorization="$RUNNER_TEMP/authorization"
@@ -286,7 +303,61 @@ jobs:
           cp "$authorization/tag-promotion-attestation.json" "$state_root/"
           cp "$RUNNER_TEMP/external-authorization-receipt.json" "$state_root/"
           cp "$RUNNER_TEMP/authorization-marker-identity.json" "$state_root/"
+          cp "$RUNNER_TEMP/tracked-trust-identity.json" "$state_root/"
           test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Snapshot exact GitHub Release and GHCR states and build disabled plan
+        id: publication-plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/promotion-api"
+          state_root="$RUNNER_TEMP/promotion-preflight-state"
+          authorization="$RUNNER_TEMP/authorization"
+          owner="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["owner"]["login"])' "$metadata/repository.json")"
+          owner_type="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["owner"]["type"])' "$metadata/repository.json")"
+          gh api --paginate --slurp \
+            "/repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            > "$metadata/release-pages.json"
+          gh api -H "X-GitHub-Api-Version: 2026-03-10" \
+            "/repos/$GITHUB_REPOSITORY/immutable-releases" \
+            > "$metadata/immutable-releases.json"
+          python3 scripts/promotion_preflight.py inspect-immutable-release-setting \
+            --metadata "$metadata/immutable-releases.json"
+          case "$owner_type" in
+            User)
+              package_list="/users/$owner/packages?package_type=container&per_page=100"
+              package_versions="/users/$owner/packages/container/tomorrowci/versions?per_page=100"
+              ;;
+            Organization)
+              package_list="/orgs/$owner/packages?package_type=container&per_page=100"
+              package_versions="/orgs/$owner/packages/container/tomorrowci/versions?per_page=100"
+              ;;
+            *) exit 1 ;;
+          esac
+          gh api --paginate --slurp "$package_list" > "$metadata/package-pages.json"
+          package_state="$(python3 scripts/promotion_preflight.py inspect-package-pages \
+            --pages "$metadata/package-pages.json" --package-name tomorrowci --owner "$owner")"
+          case "$package_state" in
+            PRESENT_PRIVATE|PRESENT_PUBLIC)
+              gh api --paginate --slurp "$package_versions" \
+                > "$metadata/ghcr-version-pages.json"
+              ;;
+            ABSENT) printf '[]\n' > "$metadata/ghcr-version-pages.json" ;;
+            *) exit 1 ;;
+          esac
+          python3 scripts/promotion_preflight.py build-publication-plan \
+            --attestation "$authorization/tag-promotion-attestation.json" \
+            --candidate-dir "$RUNNER_TEMP/candidate-dist" \
+            --remote-state "$state_root/remote-state.json" \
+            --marker-identity "$state_root/authorization-marker-identity.json" \
+            --release-pages "$metadata/release-pages.json" \
+            --ghcr-versions "$metadata/ghcr-version-pages.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --release-body-output "$state_root/release-body.md" \
+            --output "$state_root/publication-plan.json"
+          plan_sha256="sha256:$(sha256sum "$state_root/publication-plan.json" | cut -d ' ' -f 1)"
+          echo "plan_sha256=$plan_sha256" >> "$GITHUB_OUTPUT"
       - name: Upload prepared-only state
         id: state
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -295,11 +366,10 @@ jobs:
           path: ${{ runner.temp }}/promotion-preflight-state/*
           if-no-files-found: error
           retention-days: 90
-
   write:
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 45
     environment: release
     permissions:
       actions: read
@@ -308,11 +378,554 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          persist-credentials: false
-      - name: Permanent fail-closed publication boundary
+          fetch-depth: 0
+      - name: Revalidate prepared-state artifact API bytes after approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATE_ARTIFACT_DIGEST: ${{ needs.prepare.outputs.state_artifact_digest }}
+          STATE_ARTIFACT_ID: ${{ needs.prepare.outputs.state_artifact_id }}
         run: |
           set -euo pipefail
-          test "$GITHUB_EVENT_NAME" = workflow_dispatch
-          test "$GITHUB_REF" = refs/heads/master
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          python3 scripts/promotion_preflight.py assert-publication-disabled
+          metadata="$RUNNER_TEMP/state-artifact.json"
+          archive="$RUNNER_TEMP/state-artifact.zip"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$STATE_ARTIFACT_ID" \
+            > "$metadata"
+          python3 scripts/promotion_preflight.py inspect-authorization-artifact \
+            --metadata "$metadata" --artifact-id "$STATE_ARTIFACT_ID" \
+            --artifact-sha256 "$STATE_ARTIFACT_DIGEST"
+          size="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["size_in_bytes"])' "$metadata")"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$STATE_ARTIFACT_ID/zip" \
+            > "$archive"
+          test "$(stat -c '%s' "$archive")" = "$size"
+          test "sha256:$(sha256sum "$archive" | cut -d ' ' -f 1)" = \
+            "$STATE_ARTIFACT_DIGEST"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: protected-promotion-preflight-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/promotion-state
+      - name: Revalidate candidate API bytes after approval
+        env:
+          CANDIDATE_ARTIFACT_SHA256: ${{ inputs.candidate_artifact_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/write-candidate-api"
+          mkdir "$metadata"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" \
+            > "$metadata/run.json"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" \
+            > "$metadata/artifacts.json"
+          python3 scripts/validate_external_evidence.py inspect-candidate-api \
+            --run-metadata "$metadata/run.json" \
+            --artifact-metadata "$metadata/artifacts.json" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --project-repository "$GITHUB_REPOSITORY" \
+            | tee "$metadata/validated.txt"
+          artifact_id="$(sed -n 's/^artifact_id: //p' "$metadata/validated.txt")"
+          artifact_digest="$(sed -n 's/^artifact_digest: //p' "$metadata/validated.txt")"
+          artifact_size="$(sed -n 's/^artifact_size: //p' "$metadata/validated.txt")"
+          test "$artifact_digest" = "$CANDIDATE_ARTIFACT_SHA256"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" \
+            > "$metadata/artifact.zip"
+          test "$(stat -c '%s' "$metadata/artifact.zip")" = "$artifact_size"
+          test "sha256:$(sha256sum "$metadata/artifact.zip" | cut -d ' ' -f 1)" = \
+            "$artifact_digest"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-candidate-dist-attempt-${{ inputs.candidate_run_attempt }}
+          path: ${{ runner.temp }}/candidate-dist
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Re-download raw authorization bytes after approval
+        env:
+          ARTIFACT_ID: ${{ inputs.authorization_artifact_id }}
+          ARTIFACT_SHA256: ${{ inputs.authorization_artifact_sha256 }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/write-authorization-artifact.json"
+          archive="$RUNNER_TEMP/write-authorization-artifact.zip"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" > "$metadata"
+          python3 scripts/promotion_preflight.py inspect-authorization-artifact \
+            --metadata "$metadata" --artifact-id "$ARTIFACT_ID" \
+            --artifact-sha256 "$ARTIFACT_SHA256"
+          size="$(jq -er '.size_in_bytes' "$metadata")"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > "$archive"
+          test "$(stat -c '%s' "$archive")" = "$size"
+          test "sha256:$(sha256sum "$archive" | cut -d ' ' -f 1)" = "$ARTIFACT_SHA256"
+          python3 scripts/promotion_preflight.py extract-authorization \
+            --archive "$archive" --destination "$RUNNER_TEMP/write-authorization"
+      - name: Revalidate exact prepared plan and recreate identical local tag objects
+        env:
+          PLAN_SHA256: ${{ needs.prepare.outputs.plan_sha256 }}
+        run: |
+          set -euo pipefail
+          plan="$RUNNER_TEMP/promotion-state/publication-plan.json"
+          dist="$RUNNER_TEMP/candidate-dist"
+          test "sha256:$(sha256sum "$plan" | cut -d ' ' -f 1)" = "$PLAN_SHA256"
+          python3 scripts/promotion_preflight.py verify-candidate-assets \
+            --plan "$plan" --directory "$dist"
+          version="$(jq -er '.candidate.version' "$plan")"
+          source_sha="$(jq -er '.candidate.source_sha' "$plan")"
+          authorization_id="$(jq -er '.refs.identity | keys[] | select(startswith("refs/tags/tomorrowci-authorization/")) | split("/")[-1]' "$plan")"
+          version_ref="refs/tags/v$version"
+          marker_ref="refs/tags/tomorrowci-authorization/$authorization_id"
+          tag_oid="$(jq -er --arg ref "$version_ref" '.refs.identity[$ref]' "$plan")"
+          marker_oid="$(jq -er --arg ref "$marker_ref" '.refs.identity[$ref]' "$plan")"
+          test "$source_sha" = "$GITHUB_SHA"
+          export GIT_COMMITTER_NAME="TomorrowCI Release Bot"
+          export GIT_COMMITTER_EMAIL="release@tomorrowci.invalid"
+          export GIT_COMMITTER_DATE="@0 +0000"
+          if ! git show-ref --verify --quiet "$version_ref"; then
+            git tag --no-sign --annotate "v$version" "$source_sha" \
+              --message "TomorrowCI protected exact-byte promotion preflight"
+          fi
+          if ! git show-ref --verify --quiet "$marker_ref"; then
+            git tag --no-sign --annotate "tomorrowci-authorization/$authorization_id" \
+              "$source_sha" \
+              --message "Consume TomorrowCI external authorization $authorization_id"
+          fi
+          test "$(git rev-parse "$version_ref")" = "$tag_oid"
+          test "$(git rev-parse "$marker_ref")" = "$marker_oid"
+          authorization="$RUNNER_TEMP/write-authorization"
+          trust=.github/release-trust
+          python3 scripts/promotion_preflight.py inspect-trust-material \
+            --allowed-signers "$trust/allowed_signers" \
+            --expected-policy-digest "$trust/expected-policy-sha256.txt" \
+            > "$RUNNER_TEMP/write-trust-identity.json"
+          expected_policy="$(tr -d '\r\n' < "$trust/expected-policy-sha256.txt")"
+          python3 scripts/external_authorization.py \
+            --authorization "$authorization/external-authorization.json" \
+            --signature "$authorization/external-authorization.json.sig" \
+            --policy "$authorization/preregistered-policy.json" \
+            --expected-policy-sha256 "$expected_policy" \
+            --allowed-signers "$trust/allowed_signers" \
+            --candidate-manifest "$dist/candidate-manifest.json" \
+            --oci-provenance "$dist/image-provenance.json" \
+            --evidence "$authorization/external-qualification-evidence.json" \
+            > "$RUNNER_TEMP/write-external-authorization-receipt.json"
+          python3 scripts/tag_promotion_attestation.py \
+            --attestation "$authorization/tag-promotion-attestation.json" \
+            --git-repo . --candidate-dir "$dist" \
+            --authorization "$authorization/external-authorization.json" \
+            --signature "$authorization/external-authorization.json.sig" \
+            --policy "$authorization/preregistered-policy.json" \
+            --expected-policy-sha256 "$expected_policy" \
+            --allowed-signers "$trust/allowed_signers" \
+            --evidence "$authorization/external-qualification-evidence.json"
+          cmp --silent "$authorization/tag-promotion-attestation.json" \
+            "$RUNNER_TEMP/promotion-state/tag-promotion-attestation.json"
+          release_assets="$RUNNER_TEMP/release-assets"
+          mkdir "$release_assets"
+          cp "$dist"/* "$release_assets/"
+          cp "$authorization/tag-promotion-attestation.json" "$release_assets/"
+          python3 scripts/promotion_preflight.py verify-public-assets \
+            --plan "$plan" --directory "$release_assets"
+      - name: Refuse all remote mutation until GHCR create-only semantics are provable
+        run: python3 scripts/promotion_preflight.py assert-ghcr-nonclobber-write
+      - name: Atomically create the exact version and authorization-marker refs
+        env:
+          PLAN_SHA256: ${{ needs.prepare.outputs.plan_sha256 }}
+        run: |
+          set -euo pipefail
+          plan="$RUNNER_TEMP/promotion-state/publication-plan.json"
+          test "sha256:$(sha256sum "$plan" | cut -d ' ' -f 1)" = "$PLAN_SHA256"
+          gh api -H "X-GitHub-Api-Version: 2026-03-10" \
+            "/repos/$GITHUB_REPOSITORY/immutable-releases" \
+            > "$RUNNER_TEMP/write-immutable-releases.json"
+          python3 scripts/promotion_preflight.py inspect-immutable-release-setting \
+            --metadata "$RUNNER_TEMP/write-immutable-releases.json"
+          version="$(jq -er '.candidate.version' "$plan")"
+          authorization_id="$(jq -er '.refs.identity | keys[] | select(startswith("refs/tags/tomorrowci-authorization/")) | split("/")[-1]' "$plan")"
+          version_ref="refs/tags/v$version"
+          marker_ref="refs/tags/tomorrowci-authorization/$authorization_id"
+          tag_oid="$(jq -er --arg ref "$version_ref" '.refs.identity[$ref]' "$plan")"
+          marker_oid="$(jq -er --arg ref "$marker_ref" '.refs.identity[$ref]' "$plan")"
+          observe="$RUNNER_TEMP/write-remote-refs.txt"
+          state="$RUNNER_TEMP/write-remote-state.json"
+          git ls-remote --refs origin "$version_ref" "$marker_ref" > "$observe"
+          python3 scripts/promotion_preflight.py inspect-remote-refs \
+            --observation "$observe" --version-ref "$version_ref" \
+            --version-oid "$tag_oid" --marker-ref "$marker_ref" \
+            --marker-oid "$marker_oid" --output "$state"
+          case "$(jq -er '.state' "$state")" in
+            READY_FOR_ATOMIC_CREATE_ONLY)
+              git push --atomic origin "$tag_oid:$version_ref" "$marker_oid:$marker_ref"
+              ;;
+            IDEMPOTENT_EXACT_PAIR) ;;
+            *) exit 1 ;;
+          esac
+          git ls-remote --refs origin "$version_ref" "$marker_ref" > "$RUNNER_TEMP/write-remote-refs-final.txt"
+          python3 scripts/promotion_preflight.py inspect-remote-refs \
+            --observation "$RUNNER_TEMP/write-remote-refs-final.txt" \
+            --version-ref "$version_ref" --version-oid "$tag_oid" \
+            --marker-ref "$marker_ref" --marker-oid "$marker_oid" \
+            --output "$RUNNER_TEMP/write-remote-state-final.json"
+          test "$(jq -er '.state' "$RUNNER_TEMP/write-remote-state-final.json")" = \
+            IDEMPOTENT_EXACT_PAIR
+      - name: Create or resume exact non-clobber draft prerelease
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          plan="$RUNNER_TEMP/promotion-state/publication-plan.json"
+          tag="$(jq -er '.release.tag_name' "$plan")"
+          source_sha="$(jq -er '.release.target_commitish' "$plan")"
+          name="$(jq -er '.release.name' "$plan")"
+          body="$RUNNER_TEMP/promotion-state/release-body.md"
+          release="$RUNNER_TEMP/current-release.json"
+          gh api --paginate --slurp "/repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            > "$RUNNER_TEMP/write-release-pages.json"
+          python3 - "$RUNNER_TEMP/write-release-pages.json" "$plan" "$body" \
+            > "$RUNNER_TEMP/write-release-state.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          import promotion_preflight
+          pages = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          plan = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          releases = [item for page in pages for item in page]
+          state = promotion_preflight.inspect_release_state(
+              releases, tag_name=plan["release"]["tag_name"],
+              target_commitish=plan["release"]["target_commitish"],
+              release_name=plan["release"]["name"],
+              body=Path(sys.argv[3]).read_text(encoding="utf-8"),
+              expected_assets=plan["release"]["assets"],
+          )
+          print(json.dumps(state, sort_keys=True))
+          PY
+          state="$(jq -er '.state' "$RUNNER_TEMP/write-release-state.json")"
+          if test "$state" = CREATE_NONCLOBBER_DRAFT_PRERELEASE; then
+            jq -n --arg tag "$tag" --arg target "$source_sha" --arg name "$name" \
+              --rawfile body "$body" \
+              '{tag_name:$tag,target_commitish:$target,name:$name,body:$body,draft:true,prerelease:true,generate_release_notes:false}' \
+              > "$RUNNER_TEMP/create-release.json"
+            gh api --method POST "/repos/$GITHUB_REPOSITORY/releases" \
+              --input "$RUNNER_TEMP/create-release.json" > "$release"
+          else
+            release_id="$(jq -er '.release_id' "$RUNNER_TEMP/write-release-state.json")"
+            gh api "/repos/$GITHUB_REPOSITORY/releases/$release_id" > "$release"
+          fi
+          release_id="$(jq -er '.id' "$release")"
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+      - name: Promote the canonical OCI layout with pinned ORAS and verify exact digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          plan="$RUNNER_TEMP/promotion-state/publication-plan.json"
+          dist="$RUNNER_TEMP/candidate-dist"
+          tool="$(jq -er '.ghcr.tool' "$plan")"
+          repository="$(jq -er '.ghcr.repository' "$plan")"
+          tag="$(jq -er '.ghcr.tag' "$plan")"
+          digest="$(jq -er '.ghcr.manifest_digest' "$plan")"
+          archive="$(jq -er '.ghcr.source_archive' "$plan")"
+          source_reference="$(jq -er '.ghcr.source_reference' "$plan")"
+          config="$RUNNER_TEMP/oras-auth"
+          mkdir -m 700 "$config"
+          printf '%s' "$GH_TOKEN" | docker run --rm -i --user 0:0 \
+            --platform linux/amd64 -v "$config:/root/.docker" "$tool" \
+            login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker run --rm --user 0:0 --platform linux/amd64 \
+            -v "$config:/root/.docker" -v "$dist:/workspace:ro" "$tool" \
+            cp --from-oci-layout "/workspace/$archive:$source_reference" \
+            "$repository:$tag"
+          docker run --rm --user 0:0 --platform linux/amd64 \
+            -v "$config:/root/.docker" "$tool" manifest fetch --descriptor \
+            "$repository:$tag" > "$RUNNER_TEMP/private-image-descriptor.json"
+          python3 scripts/promotion_preflight.py inspect-public-oci-descriptor \
+            --descriptor "$RUNNER_TEMP/private-image-descriptor.json" \
+            --expected-digest "$digest"
+      - name: Require exact GHCR package state and make only that package public
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          plan="$RUNNER_TEMP/promotion-state/publication-plan.json"
+          expected_digest="$(jq -er '.ghcr.manifest_digest' "$plan")"
+          expected_tag="$(jq -er '.ghcr.tag' "$plan")"
+          repository_json="$RUNNER_TEMP/write-repository.json"
+          gh api "/repos/$GITHUB_REPOSITORY" > "$repository_json"
+          owner="$(jq -er '.owner.login' "$repository_json")"
+          owner_type="$(jq -er '.owner.type' "$repository_json")"
+          case "$owner_type" in
+            User)
+              list="/users/$owner/packages?package_type=container&per_page=100"
+              versions="/users/$owner/packages/container/tomorrowci/versions?per_page=100"
+              update="/user/packages/container/tomorrowci"
+              ;;
+            Organization)
+              list="/orgs/$owner/packages?package_type=container&per_page=100"
+              versions="/orgs/$owner/packages/container/tomorrowci/versions?per_page=100"
+              update="/orgs/$owner/packages/container/tomorrowci"
+              ;;
+            *) exit 1 ;;
+          esac
+          gh api --paginate --slurp "$list" > "$RUNNER_TEMP/write-package-pages.json"
+          package_state="$(python3 scripts/promotion_preflight.py inspect-package-pages \
+            --pages "$RUNNER_TEMP/write-package-pages.json" \
+            --package-name tomorrowci --owner "$owner")"
+          case "$package_state" in
+            PRESENT_PRIVATE)
+              gh api --method PATCH "$update" -F visibility=public > /dev/null
+              ;;
+            PRESENT_PUBLIC) ;;
+            *) exit 1 ;;
+          esac
+          gh api --paginate --slurp "$list" > "$RUNNER_TEMP/write-package-pages-public.json"
+          test "$(python3 scripts/promotion_preflight.py inspect-package-pages \
+            --pages "$RUNNER_TEMP/write-package-pages-public.json" \
+            --package-name tomorrowci --owner "$owner")" = PRESENT_PUBLIC
+          gh api --paginate --slurp "$versions" > "$RUNNER_TEMP/write-ghcr-versions.json"
+          python3 - "$RUNNER_TEMP/write-ghcr-versions.json" "$expected_tag" "$expected_digest" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          import promotion_preflight
+          pages = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          versions = [item for page in pages for item in page]
+          state = promotion_preflight.inspect_ghcr_state(
+              versions, image_tag=sys.argv[2], manifest_digest=sys.argv[3]
+          )
+          if state["state"] != "IDEMPOTENT_EXACT_IMAGE":
+              raise SystemExit("GHCR exact image state did not converge")
+          PY
+      - name: Upload only missing exact draft assets without clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          plan="$RUNNER_TEMP/promotion-state/publication-plan.json"
+          dist="$RUNNER_TEMP/release-assets"
+          gh api "/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$RUNNER_TEMP/draft-release.json"
+          python3 - "$RUNNER_TEMP/draft-release.json" "$plan" > "$RUNNER_TEMP/missing-assets.txt" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          import promotion_preflight
+          release = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          plan = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          state = promotion_preflight.inspect_release_state(
+              [release], tag_name=plan["release"]["tag_name"],
+              target_commitish=plan["release"]["target_commitish"],
+              release_name=plan["release"]["name"],
+              body=(Path(os.environ["RUNNER_TEMP"]) / "promotion-state/release-body.md").read_text(encoding="utf-8"),
+              expected_assets=plan["release"]["assets"],
+          )
+          if state["state"] == "IDEMPOTENT_EXACT_IMMUTABLE_PRERELEASE":
+              raise SystemExit(0)
+          for name in state["missing_assets"]:
+              print(name)
+          PY
+          while IFS= read -r asset; do
+            test -n "$asset" || continue
+            gh api "/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+              > "$RUNNER_TEMP/pre-upload-release.json"
+            test "$(jq -er '.draft' "$RUNNER_TEMP/pre-upload-release.json")" = true
+            test "$(jq -r --arg name "$asset" '[.assets[].name == $name] | any' \
+              "$RUNNER_TEMP/pre-upload-release.json")" = false
+            gh api --hostname uploads.github.com --method POST \
+              "/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$asset" \
+              -H "Content-Type: application/octet-stream" --input "$dist/$asset" \
+              > "$RUNNER_TEMP/upload-$asset.json"
+          done < "$RUNNER_TEMP/missing-assets.txt"
+          gh api "/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$RUNNER_TEMP/draft-complete.json"
+          python3 - "$RUNNER_TEMP/draft-complete.json" "$plan" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          import promotion_preflight
+          release = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          plan = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          state = promotion_preflight.inspect_release_state(
+              [release], tag_name=plan["release"]["tag_name"],
+              target_commitish=plan["release"]["target_commitish"],
+              release_name=plan["release"]["name"],
+              body=(Path(os.environ["RUNNER_TEMP"]) / "promotion-state/release-body.md").read_text(encoding="utf-8"),
+              expected_assets=plan["release"]["assets"],
+          )
+          if state["state"] not in {"DRAFT_COMPLETE", "IDEMPOTENT_EXACT_IMMUTABLE_PRERELEASE"}:
+              raise SystemExit("draft asset state is incomplete")
+          PY
+      - name: Publish the complete immutable prerelease and verify API identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          plan="$RUNNER_TEMP/promotion-state/publication-plan.json"
+          current="$RUNNER_TEMP/draft-complete.json"
+          if test "$(jq -er '.draft' "$current")" = true; then
+            gh api "/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$current"
+            test "$(jq -er '.draft' "$current")" = true
+            gh api --method PATCH "/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+              -F draft=false -F prerelease=true > "$RUNNER_TEMP/published-release.json"
+          fi
+          gh api "/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$RUNNER_TEMP/final-release.json"
+          python3 - "$RUNNER_TEMP/final-release.json" "$plan" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          import promotion_preflight
+          release = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          plan = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          state = promotion_preflight.inspect_release_state(
+              [release], tag_name=plan["release"]["tag_name"],
+              target_commitish=plan["release"]["target_commitish"],
+              release_name=plan["release"]["name"],
+              body=(Path(os.environ["RUNNER_TEMP"]) / "promotion-state/release-body.md").read_text(encoding="utf-8"),
+              expected_assets=plan["release"]["assets"],
+          )
+          if state["state"] != "IDEMPOTENT_EXACT_IMMUTABLE_PRERELEASE":
+              raise SystemExit("published release is not exact and immutable")
+          PY
+      - name: Public unauthenticated release and image read-back
+        run: |
+          set -euo pipefail
+          plan="$RUNNER_TEMP/promotion-state/publication-plan.json"
+          tag="$(jq -er '.release.tag_name' "$plan")"
+          repository="$(jq -er '.ghcr.repository' "$plan")"
+          digest="$(jq -er '.ghcr.manifest_digest' "$plan")"
+          readback="$RUNNER_TEMP/public-release-readback"
+          mkdir "$readback"
+          jq -r '.release.assets[].name' "$plan" | while IFS= read -r asset; do
+            curl --fail --location --proto '=https' --tlsv1.2 \
+              "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/$asset" \
+              --output "$readback/$asset"
+          done
+          python3 scripts/promotion_preflight.py verify-public-assets \
+            --plan "$plan" --directory "$readback"
+          public_config="$RUNNER_TEMP/oras-public"
+          mkdir -m 700 "$public_config"
+          tool="$(jq -er '.ghcr.tool' "$plan")"
+          docker run --rm --user 0:0 --platform linux/amd64 \
+            -v "$public_config:/root/.docker" "$tool" manifest fetch --descriptor \
+            "$repository:$tag" > "$RUNNER_TEMP/public-image-descriptor.json"
+          python3 scripts/promotion_preflight.py inspect-public-oci-descriptor \
+            --descriptor "$RUNNER_TEMP/public-image-descriptor.json" \
+            --expected-digest "$digest"
+          docker pull "$repository@$digest"
+          docker image inspect "$repository@$digest" > "$RUNNER_TEMP/public-image-inspect.json"
+
+  release-readback:
+    needs: [prepare, write]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: protected-promotion-preflight-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/promotion-state
+      - name: Fresh public release asset read-back
+        shell: python
+        env:
+          PROMOTION_REPOSITORY: ${{ github.repository }}
+          PROMOTION_STATE: ${{ runner.temp }}/promotion-state
+          PROMOTION_READBACK: ${{ runner.temp }}/public-release-readback
+        run: |
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import sys
+          import urllib.parse
+          import urllib.request
+
+          state = pathlib.Path(os.environ["PROMOTION_STATE"])
+          plan = json.loads((state / "publication-plan.json").read_text(encoding="utf-8"))
+          destination = pathlib.Path(os.environ["PROMOTION_READBACK"])
+          destination.mkdir()
+          for asset in plan["release"]["assets"]:
+              name = asset["name"]
+              url = (
+                  f"https://github.com/{os.environ['PROMOTION_REPOSITORY']}/releases/"
+                  f"download/{plan['release']['tag_name']}/{urllib.parse.quote(name)}"
+              )
+              request = urllib.request.Request(url, headers={"User-Agent": "TomorrowCI-readback"})
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  if response.status != 200:
+                      raise SystemExit(f"unexpected public asset status: {response.status}")
+                  (destination / name).write_bytes(response.read())
+          subprocess.run(
+              [sys.executable, "scripts/promotion_preflight.py", "verify-public-assets",
+               "--plan", str(state / "publication-plan.json"),
+               "--directory", str(destination)],
+              check=True,
+          )
+
+  image-readback:
+    needs: [prepare, write]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: protected-promotion-preflight-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/promotion-state
+      - name: Fresh public exact-digest image identity and behavior smoke
+        run: |
+          set -euo pipefail
+          plan="$RUNNER_TEMP/promotion-state/publication-plan.json"
+          repository="$(jq -er '.ghcr.repository' "$plan")"
+          digest="$(jq -er '.ghcr.manifest_digest' "$plan")"
+          tag="$(jq -er '.ghcr.tag' "$plan")"
+          tool="$(jq -er '.ghcr.tool' "$plan")"
+          version="$(jq -er '.candidate.version' "$plan")"
+          source_sha="$(jq -er '.candidate.source_sha' "$plan")"
+          image="$repository@$digest"
+          config="$RUNNER_TEMP/oras-public-readback"
+          mkdir -m 700 "$config"
+          docker run --rm --user 0:0 --platform linux/amd64 \
+            -v "$config:/root/.docker" "$tool" manifest fetch --descriptor \
+            "$repository:$tag" > "$RUNNER_TEMP/fresh-public-image-descriptor.json"
+          python3 scripts/promotion_preflight.py inspect-public-oci-descriptor \
+            --descriptor "$RUNNER_TEMP/fresh-public-image-descriptor.json" \
+            --expected-digest "$digest"
+          docker pull "$image"
+          test "$(docker run --rm "$image" --version)" = "tomorrowci $version"
+          docker run --rm "$image" trust
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "65532:65532"
+          test "$(docker run --rm --entrypoint /usr/bin/id "$image" -u)" = 65532
+          test "$(docker run --rm --entrypoint /usr/bin/id "$image" -g)" = 65532
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$image")" = "$version"
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$source_sha"
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$image")" = "https://github.com/$GITHUB_REPOSITORY"
+          socket_gid="$(stat -c '%g' /var/run/docker.sock)"
+          doctor="$(docker run --rm --group-add "$socket_gid" \
+            --volume /var/run/docker.sock:/var/run/docker.sock "$image" doctor)"
+          printf '%s\n' "$doctor"
+          printf '%s\n' "$doctor" | grep -Fqx 'docker: true'
+          printf '%s\n' "$doctor" | grep -Fqx 'status: READY'
