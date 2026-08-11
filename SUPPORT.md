@@ -4,13 +4,14 @@
 
 | Platform | CLI evidence | Container execution evidence |
 |----------|--------------|------------------------------|
-| Linux x86_64 | alpha.2 archive + public CI build | Docker: measured Python runtime, bounded M2 pip/npm/cargo dependency reduction, and bounded M3 Node/Rust runtime slices **PASS**; Podman **NOT_RUN** |
-| macOS x86_64 | alpha.2 archive built on public CI | Docker Desktop / Colima clean-machine path **NOT_RUN** |
-| macOS arm64 | source-build support target retained; exact runner evidence **BLOCKED** | Docker Desktop / Colima clean-machine path **NOT_RUN** |
-| Windows x86_64 | alpha.2 archive extracted and CLI/trust read back on 2026-08-09 | Docker Desktop Linux-engine clean-machine path **NOT_RUN** |
+| Linux x86_64 | Deterministic `0.2.0-alpha.1` candidate archive built twice; candidate-only read-back **PASS** | Docker: measured Python runtime, bounded M2 pip/npm/cargo dependency reduction, and bounded M3 Node/Rust runtime slices **PASS**; Podman **NOT_RUN** |
+| macOS x86_64 | Deterministic candidate archive built twice; support qualification **BLOCKED** | Docker Desktop / Colima clean-machine path **NOT_RUN** |
+| macOS arm64 | Deterministic candidate archive built twice; support qualification **BLOCKED** | Docker Desktop / Colima clean-machine path **NOT_RUN** |
+| Windows x86_64 | Deterministic candidate archive built twice; downloaded CLI/doctor/trust/evidence read-back **PASS**; support qualification **BLOCKED** | Docker Desktop Linux-engine clean-machine path **NOT_RUN** |
 
-These rows retain the declared support scope. A `NOT_RUN` or `BLOCKED` row is
-not support acceptance; it is a required qualification gate.
+Candidate construction is not platform support acceptance. A `NOT_RUN` or
+`BLOCKED` row remains a required qualification gate; see the run-bound
+[qualification status](docs/qualification/STATUS.md).
 
 ## Supported ecosystems
 
@@ -23,13 +24,15 @@ not support acceptance; it is a required qualification gate.
 Unsupported managers must return `UNSUPPORTED` — never silent fallback. `uv`,
 yarn, pnpm, poetry, and pipenv are not qualified first-class managers.
 
-The M2 PASS is limited to the repository-owned fixtures and immutable images
-recorded in [the M2 qualification record](docs/qualification/M2.md). It is not
-an ecosystem-wide compatibility or independent-adoption claim.
+The M2/M3 PASS rows are limited to the repository-owned fixtures and immutable
+images recorded in the [M2](docs/qualification/M2.md) and
+[M3](docs/qualification/M3.md) records. The three public exact-SHA targets and
+their Docker/Podman pairs are preregistered but **NOT_RUN**. None of these rows
+is an ecosystem-wide compatibility or independent-adoption claim.
 
 ## What we do not support yet
 
-- Remote `scan https://github.com/...` full clone flow
+- Public-remote Docker/Podman qualification for bounded exact-commit GitHub scans
 - yarn / pnpm / poetry / pipenv as first-class managers
 - Multi-tenant SaaS isolation guarantees
 - Guaranteed production container breakout resistance

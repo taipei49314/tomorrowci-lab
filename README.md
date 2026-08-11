@@ -20,30 +20,35 @@ No breakage claim without replayable evidence.
 `v0.1.1-alpha.2` lab release is published; broader product qualification is
 still in progress.**
 
-Current source is the unreleased `0.2.0-alpha.1` trust-core development line.
-Its M2 dependency/ddmin slice passed at exact master commit
-`456a36edb1e8547612cd13ee7a30be3479d33bab`; that observation is not a
-release, broad platform-support, or external-qualification claim.
+Current source is the unreleased `0.2.0-alpha.1` development line. It has
+bounded M2/M3 Linux Docker observations, M4 engineering slices, and a
+downloaded and reverified deterministic release candidate. The candidate is
+explicitly `CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED`: it is not a tag, GitHub
+Release, published container image, platform-support claim, or independent
+external qualification.
 
 The current live baseline, historical tag identities, clean-download checks,
 and honest blockers are recorded in
-[`docs/qualification/BASELINE.md`](docs/qualification/BASELINE.md). Open
-qualification work is machine-readable in
+[`docs/qualification/BASELINE.md`](docs/qualification/BASELINE.md). The
+run-bound current record is
+[`docs/qualification/STATUS.md`](docs/qualification/STATUS.md); open work is
+machine-readable in
 [`docs/qualification/backlog.json`](docs/qualification/backlog.json).
 
 | Area | Status | Notes |
 |------|--------|--------|
 | Live Python runtime vertical slice | **PASS** (demonstrated) | Real Docker path on public CI; see claim ledger |
-| Live report (minimum static) | **in closure** | Real digests; Phase F links/tests in alpha.2 track |
 | Action dogfood + consumer | **PASS** (alpha.2 demonstrated) | `uses: ./action`; public CI evidence in the claim ledger |
 | Evidence integrity + exact replay | **PASS** (bounded alpha.2 scope) | `verify` plus two independent replay attempts passed |
-| Release gate | **PASS** (alpha.2 scope) | Three platform archives, checksums, and CycloneDX SBOM published |
+| Historical release gate | **PASS** (alpha.2 scope) | Three platform archives, checksums, and CycloneDX SBOM were published for `v0.1.1-alpha.2` |
 | Linux Docker dependency axis / observed ddmin | **PASS** (bounded M2 scope) | Native pip/npm/cargo fixtures; scan, verify, minimal replay x2, and downloaded-artifact read-back passed at exact master `456a36e...`; see [M2 qualification](docs/qualification/M2.md) |
 | Linux Docker Node/Rust runtime slices | **PASS** (bounded M3 scope) | Node 20→22/24 and Rust 1.83→1.74 observations, fail-closed controls, verify, replay x2, and artifact read-back passed at exact master `a6af307...`; see [M3 qualification](docs/qualification/M3.md) |
-| M3 Podman/platform expansion | **NOT_RUN** | The Linux Docker observations do not qualify Podman or other hosts |
-| React/TypeScript interactive report | **NOT_RUN** | Out of alpha.2 scope |
-| Remote GitHub URL scan | **NOT_RUN** | Out of alpha.2 scope |
-| Container image publish | **NOT_RUN** | Must not be implied by release |
+| React/TypeScript interactive report | **PASS** (bounded engineering slice) | PR #5, merge `f6efabf...`, and exact-master CI exercised generated assets, types, unit tests, Chromium accessibility/responsive/XSS/no-JS gates, and Rust rendering |
+| Exact-commit GitHub URL materialization | **PASS** (bounded engineering slice) | PR #5 added fail-closed exact-commit materialization and offline regression; public-remote Docker/Podman qualification remains **NOT_RUN** |
+| Four-platform + OCI candidate | **PASS** (candidate construction/read-back only) | Exact source `d0e0c7b...`, candidate run `31456913989`, artifact `9088555822`; no support or publication authority |
+| Preregistered public targets (Python/Node/Rust × Docker/Podman) | **NOT_RUN** | Contract and workflow exist at `6e41da2...`; no target result is claimed until the run-bound qualification record is updated |
+| Podman and broader platform qualification | **BLOCKED** | Candidate builds and Linux Docker fixture observations do not qualify Podman, Windows Docker Desktop, or macOS container paths |
+| Independent authorization and formal `0.2.0-alpha.1` publication | **BLOCKED** | Verification contracts exist, but no genuine independent signed authorization or protected remote promotion/read-back has passed |
 
 ### Tags (audit history)
 

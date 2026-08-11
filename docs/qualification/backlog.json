@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-08-11T09:14:32+08:00",
-  "baseline_sha": "a6af3076ed3286d42c5ed7a386cb6812d8b76c50",
+  "recorded_at": "2026-08-11T14:04:18+08:00",
+  "baseline_sha": "6e41da287e004802213cfdfbbeb124ed26fa6ae0",
   "items": [
     {
       "id": "TRUST-001",
@@ -136,50 +136,103 @@
     {
       "id": "M4-REPORT",
       "phase": 4,
-      "status": "NOT_RUN",
-      "summary": "Build and qualify the versioned React/TypeScript interactive report, browser, XSS, accessibility, responsive, and no-JavaScript paths.",
-      "blocks_release": true
+      "status": "PASS",
+      "summary": "Bounded report engineering slice passed generated-asset, type, unit, Chromium accessibility/responsive/XSS/no-JavaScript, and Rust renderer gates on exact master.",
+      "blocks_release": false,
+      "evidence": {
+        "pr": 5,
+        "merge_sha": "f6efabff0214ef02d2287ccb870a4e2a75c8e2f0",
+        "ci_run_id": 31451349743,
+        "job_id": 93656185178,
+        "scope": "BOUNDED_ENGINEERING_ONLY"
+      }
     },
     {
       "id": "M4-REMOTE",
       "phase": 4,
-      "status": "NOT_RUN",
-      "summary": "Implement bounded exact-commit GitHub URL scanning and malicious-input fail-closed acceptance.",
-      "blocks_release": true
+      "status": "PASS",
+      "summary": "Bounded exact-commit GitHub materialization, semantic evidence binding, and fail-closed offline regression passed; live public-remote target execution is tracked separately.",
+      "blocks_release": false,
+      "evidence": {
+        "pr": 5,
+        "merge_sha": "f6efabff0214ef02d2287ccb870a4e2a75c8e2f0",
+        "ci_run_id": 31451349743,
+        "job_id": 93656185352,
+        "scope": "BOUNDED_ENGINEERING_ONLY"
+      }
     },
     {
       "id": "PLATFORM-MATRIX",
       "phase": 5,
-      "status": "NOT_RUN",
-      "summary": "Retain exact evidence for Linux Docker/Podman, Windows Docker Desktop, macOS Docker Desktop or Colima, and macOS arm64 support.",
+      "status": "BLOCKED",
+      "summary": "Candidate archives are reproducible, but clean-machine Podman, Windows Docker Desktop, and macOS Docker Desktop or Colima support qualification is not established.",
       "blocks_release": true
     },
     {
       "id": "OCI-CANDIDATE",
       "phase": 5,
-      "status": "NOT_RUN",
-      "summary": "Produce a non-root content-addressed OCI candidate with digest, SBOM, scan, provenance, and clean-load smoke.",
-      "blocks_release": true
+      "status": "PASS",
+      "summary": "A reproducible non-root OCI candidate, exact SBOM/vulnerability output, detached provenance, and clean-load smoke passed and were downloaded and reverified without granting publication authority.",
+      "blocks_release": false,
+      "evidence": {
+        "source_sha": "d0e0c7b5ffac1c644b09b249177da5f334249c15",
+        "candidate_run_id": 31456913989,
+        "candidate_run_attempt": 1,
+        "artifact": {
+          "id": 9088555822,
+          "digest": "sha256:1128eb3bc40fe91912bc476034d5cee6cfc2cb946a1f7644005e57b163863749",
+          "expires_at": "2026-11-09T03:56:28Z"
+        },
+        "candidate_manifest_sha256": "sha256:9c37261063a64ae15317007f86978b5509d164884f69d8cce2180e2dd30add8c",
+        "oci_archive_sha256": "sha256:6a98962c71b0936a43bc17cd5f7641cd04a5d9134af7ba833fa9d71e22334162",
+        "oci_manifest_digest": "sha256:946435fdfab60092e4a558ab6e41263f4ae90da395e0aa0b173a5b2073274150",
+        "promotion_status": "CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED"
+      }
     },
     {
       "id": "RELEASE-SUPPLY-CHAIN",
       "phase": 6,
-      "status": "OPEN",
-      "summary": "Generalize the release workflow, pin actions, make archives deterministic, emit exact dependency versions, and bind candidate/tag promotion identities.",
+      "status": "BLOCKED",
+      "summary": "Candidate construction and offline promotion-eligibility contracts exist, but genuine authorization, protected single-consumption remote promotion, publication, and public read-back remain absent.",
       "blocks_release": true
+    },
+    {
+      "id": "EXTERNAL-AUTHORITY-CONTRACT",
+      "phase": 7,
+      "status": "PASS",
+      "summary": "Strict external authorization and annotated-tag eligibility verifiers passed repository-owned tests; this does not record genuine external authority.",
+      "blocks_release": false,
+      "evidence": {
+        "merge_sha": "d8af4f839eddb73178a9fcf1f22b24382ee08bad",
+        "ci_run_id": 31458777043,
+        "scope": "IMPLEMENTATION_CONTRACT_ONLY"
+      }
+    },
+    {
+      "id": "EXTERNAL-WORKFLOW-CONTRACT",
+      "phase": 7,
+      "status": "PASS",
+      "summary": "Result-blind exact-SHA target preregistration and the repository-owned Docker/Podman qualification workflow are merged; target results remain separately NOT_RUN.",
+      "blocks_release": false,
+      "evidence": {
+        "merge_sha": "6e41da287e004802213cfdfbbeb124ed26fa6ae0",
+        "ci_run_id": 31463351526,
+        "preregistration_sha256": "sha256:1f9dee08d03f5f07b8c7f4396d6a0d3ee3aeb2b3071914e26d0a32f6e8b79ace",
+        "scope": "IMPLEMENTATION_CONTRACT_ONLY"
+      }
     },
     {
       "id": "EXTERNAL-TARGETS",
       "phase": 7,
       "status": "NOT_RUN",
-      "summary": "Pre-register and run exact-SHA Python, Node, and Rust public external targets without result-based replacement.",
+      "summary": "Run the frozen exact-SHA Python, Node, and Rust public targets on both Docker and Podman without result-based replacement; all six executions remain NOT_RUN.",
       "blocks_release": true
     },
     {
       "id": "INDEPENDENT-ADOPTION",
       "phase": 7,
-      "status": "BLOCKED_EXTERNAL",
-      "summary": "Obtain an attributed replay or immutable Action adoption from an independent maintainer or auditor.",
+      "status": "BLOCKED",
+      "summary": "Obtain genuine attributed signed authorization, replay, or immutable Action adoption from an independent maintainer or auditor; repository-owned evidence cannot satisfy this gate.",
       "blocks_release": true
     }
   ]

@@ -2,11 +2,10 @@
 
 Statuses: **PASS** / **FAIL** / **BLOCKED** / **NOT_RUN** only.
 
-Current source version `0.2.0-alpha.1` is an unreleased trust-core development
-line. It does not supersede the bounded alpha.2 observations and is not a
-release or external-qualification PASS. The bounded M2 implementation is tied
-to exact master `456a36edb1e8547612cd13ee7a30be3479d33bab` and successful
-CI run [31316809823](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31316809823).
+Current source version `0.2.0-alpha.1` is unreleased. It does not supersede the
+bounded alpha.2 observations, and its successful release candidate is not a
+release or external-qualification PASS. Run-bound current truth is maintained
+in the [qualification status record](qualification/STATUS.md).
 
 | Tag | Disposition |
 |-----|-------------|
@@ -88,3 +87,37 @@ gates.
 | Independent external adopter or auditor | **BLOCKED** | repository-owned CI and operator read-back are not external evidence | external action required | — |
 
 Full details and retention limits: [qualification/M3.md](qualification/M3.md).
+
+## M4 bounded engineering slices
+
+These PASS rows establish implementation and CI behavior, not public-target,
+Podman, platform-support, or independent qualification.
+
+| Claim | Status | Exact command / run | Exit / result | Artifact |
+|---|---|---|---|---|
+| PR and exact-master identity | **PASS** | [PR #5](https://github.com/taipei49314/tomorrowci-lab/pull/5) head `7c2534c7ec7a18bb18dc31a0864f7af5ae0807be`; merge `f6efabff0214ef02d2287ccb870a4e2a75c8e2f0`; exact-master [run 31451349743](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31451349743) | 9/9 jobs success | source + Actions |
+| Interactive report engineering | **PASS** | `report-ui` job [93656185178](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31451349743/job/93656185178) | generated assets, types, unit behavior, Chromium accessibility/responsive/XSS/no-JS, and Rust renderer passed | Actions |
+| Exact-commit remote materialization engineering | **PASS** | `rust` job [93656185352](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31451349743/job/93656185352) | canonical URL/40-hex commit, bounded checkout, semantic identity, cleanup, offline full-writer verify/replay, and fail-closed regressions passed | [remote contract](qualification/M4_REMOTE_EXACT_COMMIT.md) |
+| Live public-remote Python/Node/Rust × Docker/Podman | **NOT_RUN** | repository workflow exists but no accepted run-bound qualification record exists | — | [current status](qualification/STATUS.md) |
+| Independent adopter/auditor | **BLOCKED** | repository-owned CI is not independent authorization | external action required | — |
+
+## Deterministic `0.2.0-alpha.1` candidate
+
+| Claim | Status | Exact command / run | Exit / result | Artifact |
+|---|---|---|---|---|
+| Candidate workflow | **PASS** | master `d0e0c7b5ffac1c644b09b249177da5f334249c15`; [run 31456913989](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31456913989), attempt 1 | 16/16 jobs success | artifact `9088555822` |
+| Actions artifact identity | **PASS** | API/download comparison | digest `sha256:1128eb3bc40fe91912bc476034d5cee6cfc2cb946a1f7644005e57b163863749`; size `90287375` | `release-candidate-dist-attempt-1`, expires `2026-11-09T03:56:28Z` |
+| Isolated clean builds and candidate inventory | **PASS** | two clean builds per platform plus two canonical OCI builds; downloaded exact-source verifier | all four archive hashes, OCI tar, `SHA256SUMS.txt`, manifest, SBOM/vulnerability data, and provenance matched | candidate manifest digest `sha256:9c37261063a64ae15317007f86978b5509d164884f69d8cce2180e2dd30add8c` |
+| OCI candidate | **PASS** | OCI archive/provenance verifier and Ubuntu load/smoke | archive `sha256:6a98962c71b0936a43bc17cd5f7641cd04a5d9134af7ba833fa9d71e22334162`; manifest `sha256:946435fdfab60092e4a558ab6e41263f4ae90da395e0aa0b173a5b2073274150`; non-root/labels/trust/doctor/SBOM/vulnerability gates passed | provenance `sha256:bf039017784a6757fbb1825aa6702b18d03e79d44a4da53d94fc3371532ab7af` |
+| Formal release or container publish | **BLOCKED** | manifest status `CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED`; no tag/release/registry promotion or public read-back | publication forbidden until remaining gates pass | — |
+| Broad platform support | **BLOCKED** | archive construction is not Windows/macOS container-path qualification | clean-machine matrix required | — |
+
+## External qualification and promotion
+
+| Claim | Status | Exact command / run | Exit / result | Artifact |
+|---|---|---|---|---|
+| Authorization/tag-verifier contracts | **PASS** | PR #9 merge `d8af4f839eddb73178a9fcf1f22b24382ee08bad`; exact-master [run 31458777043](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31458777043) | repository-owned contract tests passed | no external authorization |
+| Result-blind preregistration/workflow | **PASS** | PR #10 merge `6e41da287e004802213cfdfbbeb124ed26fa6ae0`; exact-master [run 31463351526](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31463351526) success; preregistration digest `sha256:1f9dee08d03f5f07b8c7f4396d6a0d3ee3aeb2b3071914e26d0a32f6e8b79ace` | implementation contract passed | target results remain **NOT_RUN** |
+| Six target/engine executions | **NOT_RUN** | Python, Node, Rust × Docker, Podman | no accepted qualification record | — |
+| Genuine independent signed authorization/adoption | **BLOCKED** | fixtures, repository-owned workflows, and operator read-back cannot satisfy independence | external signer/auditor required | — |
+| Protected promotion and release download/pull read-back | **BLOCKED** | no consumed authorization, remote tag/Release/registry transaction, or public read-back | formal release gate remains closed | — |

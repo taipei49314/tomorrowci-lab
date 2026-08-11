@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add strict independent-authorization and annotated-tag qualification
   verifiers. These contracts validate externally signed evidence and exact
   candidate bytes but do not publish a tag, release, or container image.
+- Add result-blind preregistration for three exact-SHA public targets and a
+  repository-owned Docker/Podman qualification workflow. The six target/engine
+  executions remain `NOT_RUN` until a separate immutable result is recorded.
 
 ### Changed
 
@@ -50,6 +53,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   including current-v2 verification, replay x2, downloaded-artifact read-back,
   and fail-closed baseline-invalid/flaky/blocked controls. Podman and the wider
   platform matrix remain unclaimed.
+- Close the bounded M4 report and exact-commit remote-materialization
+  engineering slices through PR #5, merge
+  `f6efabff0214ef02d2287ccb870a4e2a75c8e2f0`, and successful exact-master CI
+  run `31451349743`. Public-remote Docker/Podman results remain unclaimed.
+- Reproduce, download, and reverify the four-platform and OCI candidate from
+  exact source `d0e0c7b5ffac1c644b09b249177da5f334249c15`, run `31456913989`,
+  artifact `9088555822`. Its status remains
+  `CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED`.
+
+### Notes
+
+- The `0.2.0-alpha.1` heading identifies the prepared source version. No
+  `v0.2.0-alpha.1` tag, GitHub Release, or registry image is claimed here.
+  Platform qualification, genuine independent authorization, protected remote
+  promotion, and public download/pull read-back remain blocked.
 
 ### Security
 
