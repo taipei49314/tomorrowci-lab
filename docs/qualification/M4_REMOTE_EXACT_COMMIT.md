@@ -40,14 +40,29 @@ under the caller's `.tomorrowci/runs/<run-id>` instead, including the frozen
 `workspace/`. The temporary checkout is deleted after the scan, while verify
 and replay continue to use the recorded workspace.
 
+The recorded workspace remains free of `.git`. Each disposable scenario gets
+index-only synthetic metadata derived from its verified workspace manifest and
+the same exact file bytes. It supports `git ls-files` path enumeration only;
+there are no commits, history, hooks, remotes, credentials, object files, or
+ref files. Fixed runner-provided `GIT_*` variables disable global/system
+configuration and bind `safe.directory=/work`; any additional runner-provided
+`GIT_*` override fails verification.
+
 ## Evidence identity
 
-Current-v2 remote bundles add `remote-source.json`. The verifier cross-checks
+Current-v2 remote bundles add `remote-source.json`. Schema v2 additionally
+binds the synthetic index SHA-256, entry count, manifest digest, absent Git
+capabilities, and exact environment. The verifier cross-checks
 its canonical origin, requested/resolved commit, clean-tree state, prohibited
 capabilities, budgets, file/byte inventory, and
 `workspace-manifest.json` digest against `run.json` and the recorded workspace.
 Changing the remote provenance and then recomputing checksums still fails the
 semantic verifier.
+
+Historical schema-v1 remote evidence remains available to the generic
+read-only verifier. It is not accepted as new external qualification authority
+and the amended runner refuses v1 replay; new qualification and replay require
+schema v2.
 
 ## Offline regression
 
@@ -59,8 +74,11 @@ checkout, and then checks:
 1. the recorded workspace still contains the first commit;
 2. evidence is `current_v2` and verifies;
 3. exact replay matches exit status and normalized failure signature; and
-4. a semantically forged `remote-source.json` is rejected even after checksum
-   re-finalization.
+4. initial execution and exact replay install the same manifest-derived index;
+5. a semantically forged index record or Git environment is rejected even
+   after checksum re-finalization; and
+6. schema v1 remains verify-only and cannot be downgraded into qualification or
+   replay authority.
 
 The local transport exists only inside the unit test. Production CLI grammar
 and protocol policy remain HTTPS GitHub-only.

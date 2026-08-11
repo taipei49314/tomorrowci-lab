@@ -71,7 +71,29 @@ REMOTE_SOURCE_KEYS = {
     "snapshot_file_count",
     "snapshot_total_bytes",
     "submodules_allowed",
+    "synthetic_git_index",
     "workspace_manifest_sha256",
+}
+SYNTHETIC_GIT_INDEX_KEYS = {
+    "entry_count",
+    "history_present",
+    "hooks_present",
+    "index_sha256",
+    "kind",
+    "object_files_present",
+    "ref_files_present",
+    "remotes_present",
+    "source",
+    "workspace_manifest_sha256",
+}
+SYNTHETIC_GIT_ENV = {
+    "GIT_ASKPASS": "/bin/false",
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_KEY_0": "safe.directory",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_VALUE_0": "/work",
+    "GIT_TERMINAL_PROMPT": "0",
 }
 FRONTIER_KEYS = {
     "changed_axes",
@@ -495,7 +517,7 @@ def _validate_remote_source(
     expected_url = f"https://github.com/{expected_repository}"
     expected_commit = _validate_sha(source["commit"], "target commit")
     expected_identity = {
-        "schema_version": 1,
+        "schema_version": 2,
         "requested_url": expected_url,
         "canonical_origin": f"origin:{expected_url}",
         "requested_commit": expected_commit,
@@ -544,7 +566,45 @@ def _validate_remote_source(
     )
     if _file_hash(workspace_data) != expected_workspace_digest:
         raise ValueError("remote source workspace-manifest digest mismatch")
+    synthetic = _object(
+        remote["synthetic_git_index"],
+        SYNTHETIC_GIT_INDEX_KEYS,
+        "synthetic Git index record",
+    )
+    expected_synthetic = {
+        "kind": "tomorrowci.synthetic-git-index.v1",
+        "source": "workspace-manifest.json",
+        "workspace_manifest_sha256": expected_workspace_digest,
+        "entry_count": inventory["blob_count"],
+        "history_present": False,
+        "hooks_present": False,
+        "object_files_present": False,
+        "ref_files_present": False,
+        "remotes_present": False,
+    }
+    for key, expected in expected_synthetic.items():
+        if type(synthetic.get(key)) is not type(expected) or synthetic.get(key) != expected:
+            raise ValueError(f"synthetic Git index {key} does not match exact contract")
+    _validate_digest(synthetic["index_sha256"], "synthetic Git index digest")
     return remote, _file_hash(data)
+
+
+def _validate_synthetic_git_environments(run: dict[str, object]) -> None:
+    results = run.get("results")
+    if type(results) is not list or not results:
+        raise ValueError("run has no result environments for synthetic Git validation")
+    for result in results:
+        if type(result) is not dict or type(result.get("environment")) is not dict:
+            raise ValueError("result environment is missing for synthetic Git validation")
+        environment = result["environment"]
+        values = environment.get("env")
+        if environment.get("workdir") != "/work" or type(values) is not dict:
+            raise ValueError("synthetic Git result environment is not bound to /work")
+        if any(type(key) is not str or type(value) is not str for key, value in values.items()):
+            raise ValueError("synthetic Git environment must contain string pairs")
+        actual_git = {key: value for key, value in values.items() if key.startswith("GIT_")}
+        if actual_git != SYNTHETIC_GIT_ENV:
+            raise ValueError("synthetic Git environment differs from exact allowlist")
 
 
 def _validate_results(
@@ -867,6 +927,7 @@ def validate_run(
                 f"normalized config field {key} differs from frozen config"
             )
     remote_source, remote_source_digest = _validate_remote_source(run_root, context)
+    _validate_synthetic_git_environments(run)
     frontier_file, _ = _load_json(run_root / "frontier.json", "frontier evidence")
     result_class, results, replay_scenario, frontier = _validate_results(
         run, frontier_file, context, engine, engine_version

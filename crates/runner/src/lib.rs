@@ -4,6 +4,7 @@ mod dependency;
 mod engine;
 mod orchestrate;
 mod remote;
+mod synthetic_git;
 
 pub use dependency::*;
 pub use engine::*;

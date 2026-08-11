@@ -64,6 +64,17 @@ class ExternalTargetPreregistrationTests(unittest.TestCase):
             if path.is_file()
         )
         self.assertEqual(verified.status, "NOT_RUN")
+        self.assertEqual(
+            verified.sha256,
+            "sha256:1f9dee08d03f5f07b8c7f4396d6a0d3ee3aeb2b3071914e26d0a32f6e8b79ace",
+        )
+        self.assertRegex(
+            verified.infrastructure_amendment_sha256, r"^sha256:[0-9a-f]{64}$"
+        )
+        self.assertEqual(
+            verified.failed_observation_sha256,
+            "sha256:80f0ac842a1ea84547771c06d12e621e2cf5af2374b8160af5ff7169bb881c6f",
+        )
         self.assertEqual(verified.target_ids, tuple(contract.EXPECTED_TARGET_ORDER))
         self.assertEqual(len(verified.config_sha256), 6)
         self.assertEqual(before, after)
@@ -80,6 +91,23 @@ class ExternalTargetPreregistrationTests(unittest.TestCase):
                 raw, contract.canonical_json_bytes(config), config_path.name
             )
             validate_fixture(config, schema)
+
+    def test_rejects_amendment_or_failed_observation_rewrite(self) -> None:
+        amendment = self.root.joinpath(*contract.INFRASTRUCTURE_AMENDMENT.parts)
+        original_amendment = amendment.read_bytes()
+        value = json.loads(original_amendment)
+        value["change"]["history"] = True
+        amendment.write_bytes(contract.canonical_json_bytes(value))
+        with self.assertRaisesRegex(ValueError, "infrastructure amendment change"):
+            contract.verify_preregistration(self.preregistration, self.root)
+
+        amendment.write_bytes(original_amendment)
+        observation = self.root.joinpath(*contract.FAILED_OBSERVATION.parts)
+        value = json.loads(observation.read_bytes())
+        value["failure"]["artifact_uploaded"] = True
+        observation.write_bytes(contract.canonical_json_bytes(value))
+        with self.assertRaisesRegex(ValueError, "digest mismatch"):
+            contract.verify_preregistration(self.preregistration, self.root)
 
     def test_rejects_duplicate_unknown_and_noncanonical_json(self) -> None:
         duplicate = self.original_preregistration.replace(
@@ -243,6 +271,25 @@ class ExternalTargetPreregistrationTests(unittest.TestCase):
             docker["sandbox"]["engine"] = "ENGINE"
             podman["sandbox"]["engine"] = "ENGINE"
             self.assertEqual(docker, podman, target["id"])
+
+    def test_workflow_retains_raw_failures_without_softening_result(self) -> None:
+        workflow = (contract.ROOT / ".github/workflows/external-qualification.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Upload raw target observation even when qualification fails", workflow)
+        self.assertIn("if: ${{ always() }}", workflow)
+        self.assertIn("name: raw-external-observation-${{ matrix.target_id }}", workflow)
+        self.assertIn("2>&1 | tee \"$scan_log\"", workflow)
+        self.assertIn('scan_status="${PIPESTATUS[0]}"', workflow)
+        self.assertIn("scripts/external_observation.py\" create", workflow)
+        self.assertIn("if [ \"$scan_status\" -ne 0 ]; then", workflow)
+        self.assertIn("observation-readback:", workflow)
+        self.assertIn("qualification_authority", (contract.ROOT / "scripts/external_observation.py").read_text(encoding="utf-8"))
+        self.assertNotIn("continue-on-error", workflow)
+        self.assertLess(
+            workflow.index("Upload raw target observation even when qualification fails"),
+            workflow.index("Upload isolated target and engine evidence"),
+        )
 
 
 if __name__ == "__main__":

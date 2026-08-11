@@ -97,6 +97,26 @@ pub struct RemoteSourceRecord {
     pub snapshot_file_count: u64,
     pub snapshot_total_bytes: u64,
     pub workspace_manifest_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synthetic_git_index: Option<SyntheticGitIndexRecord>,
+}
+
+/// A deterministic, manifest-derived Git index exposed only inside disposable
+/// exact-remote scenario workspaces. The flags make the intentionally absent
+/// Git capabilities part of the checksummed evidence contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyntheticGitIndexRecord {
+    pub kind: String,
+    pub source: String,
+    pub workspace_manifest_sha256: String,
+    pub index_sha256: String,
+    pub entry_count: u64,
+    pub history_present: bool,
+    pub hooks_present: bool,
+    pub object_files_present: bool,
+    pub ref_files_present: bool,
+    pub remotes_present: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

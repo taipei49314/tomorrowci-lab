@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Validate the immutable Phase-7 external-target preregistration.
+"""Validate frozen targets plus their immutable infrastructure amendment.
 
-This command is deliberately read-only.  It validates target selection and
-configuration before any qualification result exists; it does not clone a
-target, run target code, or create a qualification result.
+The v1 preregistration remains unchanged, NOT_RUN, and deliberately carries no
+result authority. This read-only validator also binds the later failed run
+observation and infrastructure-only amendment without executing target code.
 """
 
 from __future__ import annotations
@@ -22,6 +22,15 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PREREGISTRATION = (
     ROOT / "docs" / "qualification" / "external-targets" / "preregistration-v1.json"
+)
+INFRASTRUCTURE_AMENDMENT = PurePosixPath(
+    "docs/qualification/external-targets/infrastructure-amendment-v1.json"
+)
+FAILED_OBSERVATION = PurePosixPath(
+    "docs/qualification/external-targets/observations/2026-08-11-run-31467337605.json"
+)
+EXPECTED_FAILED_OBSERVATION_SHA256 = (
+    "sha256:80f0ac842a1ea84547771c06d12e621e2cf5af2374b8160af5ff7169bb881c6f"
 )
 KIND = "tomorrowci.external-target-preregistration.v1"
 STATUS = "NOT_RUN"
@@ -302,6 +311,8 @@ EXPECTED_TARGETS: dict[str, dict[str, object]] = {
 @dataclass(frozen=True)
 class VerifiedPreregistration:
     sha256: str
+    infrastructure_amendment_sha256: str
+    failed_observation_sha256: str
     status: str
     target_ids: tuple[str, ...]
     config_sha256: tuple[tuple[str, str, str], ...]
@@ -876,11 +887,144 @@ def verify_preregistration(
     if ids != EXPECTED_TARGET_ORDER or len(set(ids)) != len(ids):
         raise ValueError("target replacement, reordering, or duplication is forbidden")
 
+    preregistration_sha256 = f"sha256:{hashlib.sha256(data).hexdigest()}"
+    amendment_sha256, observation_sha256 = verify_infrastructure_amendment(
+        root, preregistration_sha256
+    )
     return VerifiedPreregistration(
-        sha256=f"sha256:{hashlib.sha256(data).hexdigest()}",
+        sha256=preregistration_sha256,
+        infrastructure_amendment_sha256=amendment_sha256,
+        failed_observation_sha256=observation_sha256,
         status=STATUS,
         target_ids=tuple(ids),
         config_sha256=tuple(config_digests),
+    )
+
+
+def verify_infrastructure_amendment(
+    root: Path, preregistration_sha256: str
+) -> tuple[str, str]:
+    amendment_path = root.joinpath(*INFRASTRUCTURE_AMENDMENT.parts)
+    amendment, amendment_data = load_canonical_json(
+        amendment_path, "external qualification infrastructure amendment"
+    )
+    _object(
+        amendment,
+        {
+            "change",
+            "discovery",
+            "frozen_target_contract",
+            "kind",
+            "registered_on",
+            "schema_version",
+            "scope",
+            "status",
+        },
+        "external qualification infrastructure amendment",
+    )
+    expected_identity = {
+        "kind": "tomorrowci.external-qualification-infrastructure-amendment.v1",
+        "registered_on": "2026-08-11",
+        "schema_version": 1,
+        "scope": "RUNNER_INFRASTRUCTURE_ONLY",
+        "status": "IMPLEMENTED_NOT_YET_ACCEPTED_AS_QUALIFICATION",
+    }
+    for key, expected in expected_identity.items():
+        _typed_equal(amendment[key], expected, f"infrastructure amendment.{key}")
+    _typed_equal(
+        amendment["frozen_target_contract"],
+        {
+            "config_or_test_command_changed": False,
+            "preregistration_sha256": preregistration_sha256,
+            "source_commit_changed": False,
+            "target_ids_changed": False,
+        },
+        "infrastructure amendment frozen target contract",
+    )
+    _typed_equal(
+        amendment["change"],
+        {
+            "container_environment": {
+                "forbid_unlisted_git_environment": True,
+                "git_config_count": "1",
+                "git_config_key_0": "safe.directory",
+                "git_config_value_0": "/work",
+                "global_config": "/dev/null",
+                "system_config": False,
+            },
+            "git_capability": "PATH_ENUMERATION_ONLY",
+            "history": False,
+            "hooks": False,
+            "index_derivation": "VERIFIED_WORKSPACE_MANIFEST_AND_EXACT_FILE_BYTES",
+            "mode": "SYNTHETIC_GIT_INDEX_V1",
+            "object_files": False,
+            "ref_files": False,
+            "remotes": False,
+            "replay_must_rederive_exact_index": True,
+            "remote_source_schema": 2,
+        },
+        "infrastructure amendment change",
+    )
+    discovery = _object(
+        amendment["discovery"],
+        {"observation_path", "observation_sha256", "run_id"},
+        "infrastructure amendment discovery",
+    )
+    if (
+        discovery["observation_path"] != FAILED_OBSERVATION.as_posix()
+        or discovery["run_id"] != 31467337605
+    ):
+        raise ValueError("infrastructure amendment discovery identity changed")
+    observation_path = root.joinpath(*FAILED_OBSERVATION.parts)
+    observation, observation_data = load_canonical_json(
+        observation_path, "failed qualification observation"
+    )
+    observation_sha256 = f"sha256:{hashlib.sha256(observation_data).hexdigest()}"
+    if (
+        observation_sha256 != EXPECTED_FAILED_OBSERVATION_SHA256
+        or discovery["observation_sha256"] != observation_sha256
+    ):
+        raise ValueError("failed qualification observation digest mismatch")
+    _object(
+        observation,
+        {
+            "candidate",
+            "failure",
+            "jobs",
+            "kind",
+            "preregistration_sha256",
+            "run",
+            "schema_version",
+            "status",
+        },
+        "failed qualification observation",
+    )
+    if (
+        observation["kind"] != "tomorrowci.external-qualification-observation.v1"
+        or observation["schema_version"] != 1
+        or observation["status"] != "FAILED_OBSERVATION_RETAINED"
+        or observation["preregistration_sha256"] != preregistration_sha256
+        or type(observation["run"]) is not dict
+        or observation["run"].get("id") != 31467337605
+        or observation["run"].get("conclusion") != "failure"
+        or type(observation["failure"]) is not dict
+        or observation["failure"].get("target_id") != "node-helmet"
+        or observation["failure"].get("classification") != "BASELINE_INVALID"
+        or observation["failure"].get("artifact_uploaded") is not False
+    ):
+        raise ValueError("failed qualification observation identity changed")
+    jobs = observation["jobs"]
+    if type(jobs) is not list or len(jobs) != 6:
+        raise ValueError("failed qualification observation must retain six matrix jobs")
+    node = [job for job in jobs if type(job) is dict and job.get("target_id") == "node-helmet"]
+    if len(node) != 2 or any(
+        job.get("result") != "BASELINE_INVALID" or job.get("artifact") is not None
+        for job in node
+    ):
+        raise ValueError("failed qualification observation changed Node failures")
+    return (
+        f"sha256:{hashlib.sha256(amendment_data).hexdigest()}",
+        observation_sha256,
     )
 
 
@@ -899,8 +1043,10 @@ def main(argv: list[str] | None = None) -> int:
     print("external target preregistration: PASS")
     print(f"status: {verified.status}")
     print(f"sha256: {verified.sha256}")
+    print(f"infrastructure_amendment_sha256: {verified.infrastructure_amendment_sha256}")
+    print(f"failed_observation_sha256: {verified.failed_observation_sha256}")
     print(f"targets: {','.join(verified.target_ids)}")
-    print("qualification_executed: false")
+    print("preregistration_is_result_authority: false")
     return 0
 
 

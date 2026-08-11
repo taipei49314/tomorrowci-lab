@@ -6,6 +6,7 @@ mod domain;
 mod error;
 mod hash;
 mod planner;
+mod synthetic_git;
 mod verdict;
 
 pub use compare::*;
@@ -14,4 +15,5 @@ pub use domain::*;
 pub use error::*;
 pub use hash::*;
 pub use planner::*;
+pub use synthetic_git::*;
 pub use verdict::*;

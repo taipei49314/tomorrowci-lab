@@ -70,6 +70,10 @@ For current-v2 evidence, verification binds:
 - for bounded remote scans, the canonical GitHub origin, requested and resolved
   40-hex commit, clean detached checkout, prohibited Git capabilities, source
   budgets, and captured workspace-manifest digest in `remote-source.json`;
+- for schema-v2 remote scans, the manifest-derived synthetic Git index digest
+  and entry count, absence of history/hooks/remotes/object files/ref files, and
+  the exact runner-provided `GIT_*` allowlist including `safe.directory=/work`; the authoritative
+  recorded workspace itself must remain free of `.git`;
 - the exact detected manifest set and each manifest hash;
 - tool version, detected ecosystem, adapter name, and adapter version;
 - run start/finish timestamps;
@@ -79,7 +83,7 @@ A mutable tag remains descriptive metadata. Replay and executed-result authority
 
 ### Replay and trusted consumers
 
-- Replay validates ancestors and fully verifies before creating its exclusive per-run operation lock, verifies again under the lock before resolving an image or executing target commands, and takes a stable verified manifest read. It makes a fresh disposable copy from the captured workspace, requires the recorded engine identity and immutable digest, and uses the failure normalizer for the recorded ecosystem.
+- Replay validates ancestors and fully verifies before creating its exclusive per-run operation lock, verifies again under the lock before resolving an image or executing target commands, and takes a stable verified manifest read. It makes a fresh disposable copy from the captured workspace, rederives and installs the exact schema-v2 index-only Git metadata before fetch/test, requires the recorded engine identity and immutable digest, and uses the failure normalizer for the recorded ecosystem. Historical remote schema v1 is generic-verify-only and cannot be replayed by the amended runner.
 - Replay attempt numbers are canonical, contiguous, and append-only. A staging directory reserves the next number before execution, preventing concurrent use of the same slot. A complete result/stdout/stderr set is atomically renamed into `replays/attempt-N`; failures are evidence too, not invisible executions.
 - The latest replay alias, checksums, and full bundle are re-finalized and re-verified. Post-commit failure rolls the attempt and checksum state back. A replay result is reported as passing only after exit/timeout and normalized failure-signature agreement and successful post-verification.
 - `report` and `compare` validate and pre-verify roots before creating exclusive operation locks, then use verification-gated stable reads. Report generation stages its output, permits only the selected report artifact to change, re-finalizes v2 inventories, and rolls back on failure. Compare verifies both inputs around manifest/config loading and confirms unchanged bytes before deriving a horizon or verified head-policy decision.

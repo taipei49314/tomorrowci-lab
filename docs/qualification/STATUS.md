@@ -39,7 +39,7 @@ publication authority.
 | Contract | Implementation evidence | Current result |
 |---|---|---|
 | Independent authorization and annotated-tag eligibility verifiers | [PR #9](https://github.com/taipei49314/tomorrowci-lab/pull/9), merge `d8af4f839eddb73178a9fcf1f22b24382ee08bad`, exact-master [run 31458777043](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31458777043) success | **BLOCKED**: no genuine independent signer/evidence or consumed authorization exists |
-| Result-blind public-target preregistration and repository-owned qualification workflow | [PR #10](https://github.com/taipei49314/tomorrowci-lab/pull/10), merge `6e41da287e004802213cfdfbbeb124ed26fa6ae0`, exact-master [run 31463351526](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31463351526) success; preregistration digest `sha256:1f9dee08d03f5f07b8c7f4396d6a0d3ee3aeb2b3071914e26d0a32f6e8b79ace` | **NOT_RUN**: Python, Node, and Rust × Docker and Podman have no accepted run-bound record |
+| Result-blind public-target preregistration and repository-owned qualification workflow | [PR #10](https://github.com/taipei49314/tomorrowci-lab/pull/10), merge `6e41da287e004802213cfdfbbeb124ed26fa6ae0`, exact-master [run 31463351526](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31463351526) success; preregistration digest `sha256:1f9dee08d03f5f07b8c7f4396d6a0d3ee3aeb2b3071914e26d0a32f6e8b79ace` | **FAIL**: [run 31467337605](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31467337605) retained Python/Rust Docker+Podman successes but Helmet was `BASELINE_INVALID` on both engines; no six-artifact read-back exists; infrastructure amendment implemented, rerun pending |
 
 ## Blocking gates
 

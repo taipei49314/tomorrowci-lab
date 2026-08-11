@@ -6,6 +6,10 @@ use crate::dependency::{
     load_dependency_experiment, DependencyExperiment,
 };
 use crate::engine::{ContainerExecutor, ExecutionContext, ScenarioExecutor};
+use crate::synthetic_git::{
+    configure_synthetic_git_environment, install_synthetic_git_index, prepare_synthetic_git_index,
+    PreparedSyntheticGitIndex,
+};
 use chrono::Utc;
 use indexmap::IndexMap;
 use serde::Serialize;
@@ -19,8 +23,9 @@ use tomorrowci_core::{
     classify_candidate_attempts, classify_from_reruns, compute_breakage_frontier, plan_scenarios,
     validate_image_digest, Baseline, CommandSpec, Config, Ecosystem, EnvironmentAxis,
     EnvironmentSpec, EvidenceGrade, ExecutionPlan, ExecutionResult, FailureSignature,
-    ProjectDetection, RawExecutionResult, RepositorySnapshot, Result, RunIdentity, RunManifest,
-    Scenario, TcError, TestAttemptRecord, TestAttemptsSummary, TestExecutionStatus, Verdict,
+    ProjectDetection, RawExecutionResult, RemoteSourceRecord, RepositorySnapshot, Result,
+    RunIdentity, RunManifest, Scenario, TcError, TestAttemptRecord, TestAttemptsSummary,
+    TestExecutionStatus, Verdict,
 };
 use tomorrowci_evidence::{
     metadata_is_alias, validate_identifier, write_checksums, write_run_manifest,
@@ -67,7 +72,7 @@ struct SourceIdentity {
 
 /// Auto-detect ecosystem and run a full local scan.
 pub fn scan_local(repo: &Path, opts: ScanOptions) -> Result<ScanOutcome> {
-    scan_local_into(repo, repo, opts)
+    scan_local_into(repo, repo, opts, false)
 }
 
 /// Scan `repo` while retaining evidence under a separate trusted root. Remote
@@ -77,6 +82,7 @@ pub(crate) fn scan_local_into(
     repo: &Path,
     evidence_repo: &Path,
     opts: ScanOptions,
+    synthesize_git_index: bool,
 ) -> Result<ScanOutcome> {
     let py = PythonAdapter.detect(repo);
     if py.supported {
@@ -86,6 +92,7 @@ pub(crate) fn scan_local_into(
             &PythonAdapter,
             opts,
             py.detection,
+            synthesize_git_index,
             None,
         );
     }
@@ -97,6 +104,7 @@ pub(crate) fn scan_local_into(
             &NodeAdapter,
             opts,
             node.detection,
+            synthesize_git_index,
             None,
         );
     }
@@ -108,6 +116,7 @@ pub(crate) fn scan_local_into(
             &RustAdapter,
             opts,
             rust.detection,
+            synthesize_git_index,
             None,
         );
     }
@@ -122,6 +131,7 @@ fn scan_with_adapter(
     adapter: &dyn EcosystemAdapter,
     opts: ScanOptions,
     detection: ProjectDetection,
+    synthesize_git_index: bool,
     executor_override: Option<&dyn ScenarioExecutor>,
 ) -> Result<ScanOutcome> {
     let config = opts.config;
@@ -149,8 +159,17 @@ fn scan_with_adapter(
 
     let work = layout.run_root.join("workspace");
     make_disposable_copy(repo, &work)?;
-    let workspace_manifest =
-        write_workspace_manifest(&work, &layout.run_root.join("workspace-manifest.json"))?;
+    let workspace_manifest_path = layout.run_root.join("workspace-manifest.json");
+    let workspace_manifest = write_workspace_manifest(&work, &workspace_manifest_path)?;
+    let synthetic_git_index = if synthesize_git_index {
+        Some(prepare_synthetic_git_index(
+            &work,
+            &workspace_manifest,
+            &tomorrowci_evidence::file_checksum(&workspace_manifest_path)?,
+        )?)
+    } else {
+        None
+    };
     verify_source_copy_stable(repo, &layout, &workspace_manifest, &source_before)?;
     let source_after = capture_source_identity(repo)?;
     let source_identity = merge_source_identity(source_before, source_after)?;
@@ -215,6 +234,7 @@ fn scan_with_adapter(
                 engine_resolve_finished,
                 &detail,
                 &source_identity,
+                synthesize_git_index,
             );
         }
         None => None,
@@ -239,12 +259,18 @@ fn scan_with_adapter(
         // workspace. Dependency installers and build tools must never leak state
         // into a later candidate or mutate the replay authority snapshot.
         let scenario_workspace = DisposableWorkspace::capture(&work)?;
+        if let Some(prepared) = &synthetic_git_index {
+            install_synthetic_git_index(scenario_workspace.path(), prepared)?;
+        }
         prepare_scenario_state(scenario_workspace.path())?;
         prepare_runtime_workspace(scenario_workspace.path(), eco)?;
         prepare_dependency_materialization_root(scenario_workspace.path(), scenario)?;
         let scenario_work = scenario_workspace.path();
 
         let mut env = adapter.materialize(scenario, scenario_work)?;
+        if synthetic_git_index.is_some() {
+            configure_synthetic_git_environment(&mut env)?;
+        }
         let tag = normalize_image(eco, &scenario.runtime);
         env.image_tag = tag.clone();
         env.image = tag; // legacy alias of tag only — never store digest here
@@ -855,12 +881,16 @@ fn finalize_no_engine_blocked_run(
     image_resolve_finished: chrono::DateTime<Utc>,
     detail: &str,
     source_identity: &SourceIdentity,
+    synthesize_git_index: bool,
 ) -> Result<ScanOutcome> {
     let scenario = plan.scenarios.first().ok_or_else(|| {
         TcError::InvalidState("cannot record BLOCKED scan without a planned scenario".into())
     })?;
 
     let mut env = adapter.materialize(scenario, work)?;
+    if synthesize_git_index {
+        configure_synthetic_git_environment(&mut env)?;
+    }
     let image_tag = normalize_image(detection.ecosystem, &scenario.runtime);
     env.image_tag = image_tag.clone();
     env.image = image_tag;
@@ -1257,6 +1287,7 @@ pub(crate) fn scan_local_with_executor_into(
             &PythonAdapter,
             opts,
             py.detection,
+            true,
             Some(executor),
         );
     }
@@ -1268,6 +1299,7 @@ pub(crate) fn scan_local_with_executor_into(
             &NodeAdapter,
             opts,
             node.detection,
+            true,
             Some(executor),
         );
     }
@@ -1279,6 +1311,7 @@ pub(crate) fn scan_local_with_executor_into(
             &RustAdapter,
             opts,
             rust.detection,
+            true,
             Some(executor),
         );
     }
@@ -2568,6 +2601,7 @@ fn replay_scenario_with_verified_evidence(
             "workspace snapshot missing for replay; external artifact unavailable".into(),
         ));
     }
+    let replay_synthetic_git_index = prepared_synthetic_git_index_for_replay(root, &work)?;
 
     // Reject malformed/gapped history before any external image resolution or target execution.
     inspect_replay_attempts(&sc_dir)?;
@@ -2592,6 +2626,9 @@ fn replay_scenario_with_verified_evidence(
     let test_to = Duration::from_secs(test_seconds);
 
     let replay_workspace = DisposableWorkspace::capture(&work)?;
+    if let Some(prepared) = &replay_synthetic_git_index {
+        install_synthetic_git_index(replay_workspace.path(), prepared)?;
+    }
     prepare_scenario_state(replay_workspace.path())?;
     prepare_runtime_workspace(replay_workspace.path(), m.detection.ecosystem)?;
     prepare_dependency_materialization_root(replay_workspace.path(), &scenario)?;
@@ -2840,6 +2877,55 @@ fn replay_scenario_with_verified_evidence(
     Ok(out)
 }
 
+fn prepared_synthetic_git_index_for_replay(
+    run_root: &Path,
+    workspace: &Path,
+) -> Result<Option<PreparedSyntheticGitIndex>> {
+    let remote_path = run_root.join("remote-source.json");
+    let before = match std::fs::read(&remote_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let remote: RemoteSourceRecord = serde_json::from_slice(&before)?;
+    let Some(expected) = remote.synthetic_git_index else {
+        if remote.schema_version == 1 {
+            return Err(TcError::Blocked(
+                "legacy remote-source schema v1 is verify-only; exact replay requires the schema v2 synthetic Git contract"
+                    .into(),
+            ));
+        }
+        return Err(TcError::Blocked(
+            "remote replay has no synthetic Git index contract".into(),
+        ));
+    };
+    if remote.schema_version != 2 {
+        return Err(TcError::Blocked(
+            "synthetic Git index is not valid for this remote-source schema".into(),
+        ));
+    }
+    let workspace_manifest_path = run_root.join("workspace-manifest.json");
+    let manifest: WorkspaceManifest =
+        serde_json::from_slice(&std::fs::read(&workspace_manifest_path)?)?;
+    let prepared = prepare_synthetic_git_index(
+        workspace,
+        &manifest,
+        &tomorrowci_evidence::file_checksum(&workspace_manifest_path)?,
+    )?;
+    if prepared.record != expected {
+        return Err(TcError::Blocked(
+            "replay synthetic Git index differs from checksummed remote evidence".into(),
+        ));
+    }
+    verify_replay_evidence(run_root)?;
+    if before != std::fs::read(&remote_path)? {
+        return Err(TcError::Blocked(
+            "remote-source evidence changed while preparing replay Git metadata".into(),
+        ));
+    }
+    Ok(Some(prepared))
+}
+
 #[cfg(test)]
 mod hardening_tests {
     use super::*;
@@ -2918,6 +3004,14 @@ mod hardening_tests {
     }
 
     fn create_blocked_bundle(repo: &Path, run_id: &str) -> ScanOutcome {
+        create_blocked_bundle_with_synthetic_git(repo, run_id, false)
+    }
+
+    fn create_blocked_bundle_with_synthetic_git(
+        repo: &Path,
+        run_id: &str,
+        synthesize_git_index: bool,
+    ) -> ScanOutcome {
         let adapter = PythonAdapter;
         let source_identity = capture_source_identity(repo).unwrap();
         let detection = adapter.detect(repo).detection;
@@ -2965,6 +3059,7 @@ mod hardening_tests {
             image_resolve_finished,
             "sandbox unavailable: focused test has no engine",
             &source_identity,
+            synthesize_git_index,
         )
         .unwrap()
     }
@@ -3313,6 +3408,98 @@ mod hardening_tests {
         assert!(outcome.terminal_summary.contains("BLOCKED"));
         let verification = tomorrowci_evidence::verify_run_root(&outcome.evidence_root).unwrap();
         assert!(verification.ok, "{:?}", verification.errors);
+    }
+
+    #[test]
+    fn no_engine_remote_bundle_binds_synthetic_git_contract() {
+        let repo = tempdir().unwrap();
+        write_python_fixture(repo.path());
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(repo.path())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {:?}: {}",
+                args,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap().trim().to_string()
+        };
+        git(&["init", "--quiet"]);
+        git(&["config", "user.name", "TomorrowCI Test"]);
+        git(&["config", "user.email", "test@example.invalid"]);
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/example/blocked",
+        ]);
+        git(&["add", "."]);
+        git(&["commit", "--quiet", "-m", "fixture"]);
+        let commit = git(&["rev-parse", "HEAD"]);
+
+        let outcome = create_blocked_bundle_with_synthetic_git(repo.path(), "remoteblocked", true);
+        let environment = &outcome.manifest.results[0].environment;
+        for (key, value) in tomorrowci_core::SYNTHETIC_GIT_ENV {
+            assert_eq!(environment.env.get(*key).map(String::as_str), Some(*value));
+        }
+        assert!(environment
+            .env
+            .keys()
+            .filter(|key| key.starts_with("GIT_"))
+            .all(|key| tomorrowci_core::SYNTHETIC_GIT_ENV
+                .iter()
+                .any(|(allowed, _)| key == allowed)));
+        assert!(!outcome.evidence_root.join("workspace/.git").exists());
+
+        let manifest_path = outcome.evidence_root.join("workspace-manifest.json");
+        let manifest: WorkspaceManifest =
+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        let manifest_sha256 = tomorrowci_evidence::file_checksum(&manifest_path).unwrap();
+        let prepared = prepare_synthetic_git_index(
+            &outcome.evidence_root.join("workspace"),
+            &manifest,
+            &manifest_sha256,
+        )
+        .unwrap();
+        let snapshot_total_bytes = manifest.files.values().map(|entry| entry.size).sum();
+        let remote = RemoteSourceRecord {
+            schema_version: 2,
+            requested_url: "https://github.com/example/blocked".into(),
+            canonical_origin: "origin:https://github.com/example/blocked".into(),
+            requested_commit: commit.clone(),
+            resolved_commit: commit,
+            clean_tree: true,
+            moving_ref_allowed: false,
+            redirects_allowed: false,
+            credentials_allowed: false,
+            submodules_allowed: false,
+            lfs_allowed: false,
+            clone_timeout_seconds: 120,
+            max_files: 10_000,
+            max_file_bytes: 25 * 1024 * 1024,
+            max_total_bytes: 100 * 1024 * 1024,
+            max_clone_disk_bytes: 256 * 1024 * 1024,
+            snapshot_file_count: manifest.files.len() as u64,
+            snapshot_total_bytes,
+            workspace_manifest_sha256: manifest_sha256,
+            synthetic_git_index: Some(prepared.record),
+        };
+        std::fs::write(
+            outcome.evidence_root.join("remote-source.json"),
+            serde_json::to_vec_pretty(&remote).unwrap(),
+        )
+        .unwrap();
+        tomorrowci_evidence::finalize_run_checksums(&outcome.evidence_root).unwrap();
+        let verification = tomorrowci_evidence::verify_run_root(&outcome.evidence_root).unwrap();
+        assert!(verification.ok, "{:?}", verification.errors);
+        assert_eq!(
+            verification.checksum_compatibility,
+            ChecksumCompatibility::CurrentV2
+        );
     }
 
     #[test]
