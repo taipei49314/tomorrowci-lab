@@ -58,6 +58,20 @@ class ReleaseMetadataTests(unittest.TestCase):
                 f"# Changelog\n\n<div>\n## [{version}] - 2026-08-11\n</div>\n",
                 "exactly one dated",
             ),
+            (
+                (
+                    f"# Changelog\n\n<div>not Markdown\n"
+                    f"## [{version}] - 2026-08-11\n</div>\n"
+                ),
+                "exactly one dated",
+            ),
+            (
+                (
+                    f'# Changelog\n\n<div class="x">not Markdown\n'
+                    f"## [{version}] - 2026-08-11\n</div>\n"
+                ),
+                "exactly one dated",
+            ),
             (f"# Changelog\n\n## [{version}]\n", "exactly one dated"),
             (
                 f"# Changelog\n\n## [{version}] - 2026-02-30\n",

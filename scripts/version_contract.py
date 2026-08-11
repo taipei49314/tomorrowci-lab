@@ -25,6 +25,15 @@ FENCE_OPEN = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 HTML_RAW_OPEN = re.compile(
     r"^<(?P<tag>script|pre|style|textarea)(?:[ \t>]|$)", re.IGNORECASE
 )
+HTML_BLOCK_OPEN = re.compile(
+    r"^</?(?:address|article|aside|base|basefont|blockquote|body|caption|center|"
+    r"col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|"
+    r"footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|"
+    r"link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|"
+    r"section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)"
+    r"(?:[ \t]|/?>|$)",
+    re.IGNORECASE,
+)
 HTML_TAG_OPEN = re.compile(r"^</?[A-Za-z][A-Za-z0-9-]*(?:[ \t][^>]*)?/?>[ \t]*$")
 
 
@@ -131,7 +140,7 @@ def changelog_sections(changelog: str) -> list[tuple[str, date | None]]:
                 if ">" not in lowered:
                     html_terminator = ">"
                 continue
-            if HTML_TAG_OPEN.fullmatch(stripped):
+            if HTML_BLOCK_OPEN.match(stripped) or HTML_TAG_OPEN.fullmatch(stripped):
                 html_terminator = "blank"
                 continue
 
