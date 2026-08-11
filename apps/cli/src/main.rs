@@ -17,7 +17,8 @@ use tomorrowci_evidence::{
 };
 use tomorrowci_metrics::{run_trust_audit, ClaimLedger, ClaimStatus, ScanMetrics, TrustVerdict};
 use tomorrowci_report::{
-    write_github_job_summary, write_html_report, write_json_report, write_sarif_stub,
+    write_github_job_summary, write_html_report_from_verified_root, write_json_report,
+    write_sarif_stub,
 };
 use tomorrowci_runner::{
     load_and_explain, replay_scenario, scan_local, scan_remote_github, ScanOptions, ScanOutcome,
@@ -704,11 +705,12 @@ fn report_file_name(format: &str) -> &'static str {
 
 fn write_report_format(
     manifest: &tomorrowci_core::RunManifest,
+    verified_run_root: &Path,
     format: &str,
     output: &Path,
 ) -> Result<()> {
     match format {
-        "html" => write_html_report(manifest, output)?,
+        "html" => write_html_report_from_verified_root(manifest, verified_run_root, output)?,
         "sarif" => write_sarif_stub(manifest, output)?,
         "summary" => write_github_job_summary(manifest, output)?,
         _ => write_json_report(manifest, output)?,
@@ -789,7 +791,7 @@ fn render_report_transactionally(run_root: &Path, format: &str) -> Result<PathBu
     ));
     std::fs::create_dir(&staging_root)?;
     let staged = staging_root.join(file_name);
-    let render_result = write_report_format(manifest, format, &staged);
+    let render_result = write_report_format(manifest, run_root, format, &staged);
     if let Err(error) = render_result {
         let cleanup = std::fs::remove_dir_all(&staging_root);
         return match cleanup {
@@ -961,7 +963,8 @@ mod tests {
             .write_json("claims.json", &serde_json::json!({ "rows": [] }))
             .unwrap();
         write_json_report(&manifest, &layout.run_root.join("report.json")).unwrap();
-        write_html_report(&manifest, &layout.run_root.join("report.html")).unwrap();
+        tomorrowci_report::write_html_report(&manifest, &layout.run_root.join("report.html"))
+            .unwrap();
         write_github_job_summary(&manifest, &layout.run_root.join("job-summary.md")).unwrap();
         std::fs::write(layout.run_root.join("summary.txt"), "focused summary\n").unwrap();
         finalize_and_verify_run(&layout.run_root).unwrap();
@@ -1043,6 +1046,41 @@ mod tests {
                 verification.errors
             );
         }
+
+        std::fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn html_report_dispatch_uses_current_run_root_for_replays() {
+        let repo = std::env::temp_dir().join(format!(
+            "tomorrowci-cli-report-root-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir(&repo).unwrap();
+        let root = create_valid_run(&repo, "report-root");
+        let mut manifest: tomorrowci_core::RunManifest =
+            serde_json::from_slice(&std::fs::read(root.join("run.json")).unwrap()).unwrap();
+        add_observed_passing_baseline(&mut manifest);
+        manifest.evidence_root = repo.join("stale-original-location");
+
+        let attempt_root = root.join("scenarios/baseline/replays/attempt-1");
+        std::fs::create_dir_all(&attempt_root).unwrap();
+        std::fs::write(attempt_root.join("result.json"), b"{}\n").unwrap();
+
+        let output = repo.join("staging/report.html");
+        write_report_format(&manifest, &root, "html", &output).unwrap();
+        let body = std::fs::read_to_string(output).unwrap();
+        let embedded = body
+            .split_once("<script id=\"report-data\" type=\"application/json\">")
+            .unwrap()
+            .1
+            .split_once("</script>")
+            .unwrap()
+            .0;
+        let model: serde_json::Value = serde_json::from_str(embedded).unwrap();
+        assert_eq!(model["replayAttempts"].as_array().unwrap().len(), 1);
+        assert_eq!(model["replayAttempts"][0]["scenarioId"], "baseline");
+        assert_eq!(model["replayAttempts"][0]["attempt"], 1);
 
         std::fs::remove_dir_all(repo).unwrap();
     }

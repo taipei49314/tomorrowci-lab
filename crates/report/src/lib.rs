@@ -7,7 +7,7 @@ pub use model::{ReportModel, REPORT_MODEL_SCHEMA};
 use model::build_report_model;
 use serde_json::json;
 use std::path::Path;
-use tomorrowci_core::{Result, RunManifest, Verdict};
+use tomorrowci_core::{Result, RunManifest, TcError, Verdict};
 
 const REPORT_UI_JS: &str = include_str!("../assets/report-ui.js");
 const REPORT_UI_CSS: &str = include_str!("../assets/report-ui.css");
@@ -247,30 +247,57 @@ fn write_html_report_with_replay_root(
 
     let report_model_json = safe_json_for_script(&report_model)?;
 
-    // Use replace (not format!) so CSS colors and #anchors are not parsed as format args.
-    let html = HTML_TEMPLATE
-        .replace("{{REPORT_UI_CSS}}", REPORT_UI_CSS)
-        .replace("{{REPORT_UI_JS}}", REPORT_UI_JS)
-        .replace("{{REPORT_MODEL}}", &report_model_json)
-        .replace("{{RUN}}", &escape_html(&manifest.run_id))
-        .replace(
-            "{{ECO}}",
-            &escape_html(&format!("{:?}", manifest.detection.ecosystem)),
-        )
-        .replace("{{TOOL}}", &escape_html(&manifest.tool_version))
-        .replace("{{FRONTIER}}", &frontier)
-        .replace("{{MATRIX}}", &matrix)
-        .replace("{{ROWS}}", &rows)
-        .replace("{{DENOMINATOR}}", &denominator)
-        .replace("{{REPLAY_ATTEMPTS}}", &replay_attempts)
-        .replace(
-            "{{REPLAY_COUNT}}",
-            &report_model.replay_attempts.len().to_string(),
-        )
-        .replace("{{PLAN_NOTES}}", &plan_notes)
-        .replace("{{NOTES}}", &notes);
+    let escaped_run = escape_html(&manifest.run_id);
+    let escaped_ecosystem = escape_html(&format!("{:?}", manifest.detection.ecosystem));
+    let escaped_tool = escape_html(&manifest.tool_version);
+    let replay_count = report_model.replay_attempts.len().to_string();
+    let html = render_html_template_once(&[
+        ("{{REPORT_UI_CSS}}", REPORT_UI_CSS),
+        ("{{REPORT_UI_JS}}", REPORT_UI_JS),
+        ("{{REPORT_MODEL}}", &report_model_json),
+        ("{{RUN}}", &escaped_run),
+        ("{{ECO}}", &escaped_ecosystem),
+        ("{{TOOL}}", &escaped_tool),
+        ("{{FRONTIER}}", &frontier),
+        ("{{MATRIX}}", &matrix),
+        ("{{ROWS}}", &rows),
+        ("{{DENOMINATOR}}", &denominator),
+        ("{{REPLAY_ATTEMPTS}}", &replay_attempts),
+        ("{{REPLAY_COUNT}}", &replay_count),
+        ("{{PLAN_NOTES}}", &plan_notes),
+        ("{{NOTES}}", &notes),
+    ])?;
     std::fs::write(out, html)?;
     Ok(())
+}
+
+/// Replace placeholders found in the trusted template exactly once. Replacement
+/// values are never scanned as template syntax, so untrusted report text such
+/// as `{{ROWS}}` remains data instead of becoming markup or corrupting JSON.
+fn render_html_template_once(replacements: &[(&str, &str)]) -> Result<String> {
+    let mut rendered = String::with_capacity(HTML_TEMPLATE.len());
+    let mut remaining = HTML_TEMPLATE;
+
+    while let Some(start) = remaining.find("{{") {
+        rendered.push_str(&remaining[..start]);
+        let placeholder = &remaining[start..];
+        let end = placeholder.find("}}").ok_or_else(|| {
+            TcError::InvalidState("unterminated HTML report template placeholder".into())
+        })? + 2;
+        let placeholder = &placeholder[..end];
+        let replacement = replacements
+            .iter()
+            .find_map(|(candidate, value)| (*candidate == placeholder).then_some(*value))
+            .ok_or_else(|| {
+                TcError::InvalidState(format!(
+                    "unknown HTML report template placeholder: {placeholder}"
+                ))
+            })?;
+        rendered.push_str(replacement);
+        remaining = &remaining[start + end..];
+    }
+    rendered.push_str(remaining);
+    Ok(rendered)
 }
 
 fn safe_json_for_script<T: serde::Serialize>(value: &T) -> Result<String> {
@@ -428,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn xss_in_scenario_id_escaped_in_report() {
+    fn untrusted_report_text_is_escaped_and_placeholders_stay_literal() {
         use chrono::Utc;
         use indexmap::IndexMap;
         use tomorrowci_core::*;
@@ -471,7 +498,12 @@ mod tests {
                 exit_code: Some(1),
                 duration_ms: 1,
                 timed_out: false,
-                failure: None,
+                failure: Some(FailureSignature {
+                    kind: "LiteralPlaceholder".into(),
+                    summary: "literal {{ROWS}} marker".into(),
+                    normalized_hash: format!("sha256:{}", "a".repeat(64)),
+                    primary_frame: None,
+                }),
                 environment: EnvironmentSpec {
                     image_tag: "x".into(),
                     image: "x".into(),
@@ -530,6 +562,10 @@ mod tests {
         assert_eq!(model["denominator"]["fail"], 1);
         assert_eq!(model["denominator"]["notRun"], 0);
         assert_eq!(model["scenarios"][0]["verdict"], "FAIL");
+        assert_eq!(
+            model["scenarios"][0]["failureSummary"],
+            "literal {{ROWS}} marker"
+        );
 
         m.results[0].scenario_id = "candidate".into();
         let run_root = dir.path().join("bundle");

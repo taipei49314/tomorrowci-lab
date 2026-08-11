@@ -136,9 +136,13 @@ function strings(value: unknown, label: string): string[] {
   return value.map((item, index) => string(item, `${label}[${index}]`));
 }
 
+function hasActiveOrAbsolutePrefix(href: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("/") || href.includes("\\");
+}
+
 function relativeHref(value: unknown, label: string): string {
   const href = string(value, label);
-  if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("/") || href.includes("\\")) {
+  if (href.trim() !== href || hasActiveOrAbsolutePrefix(href)) {
     throw new Error(`${label} must be a relative evidence link`);
   }
   let decoded: string;
@@ -146,6 +150,9 @@ function relativeHref(value: unknown, label: string): string {
     decoded = decodeURIComponent(href);
   } catch {
     throw new Error(`${label} contains invalid percent encoding`);
+  }
+  if (decoded.trim() !== decoded || hasActiveOrAbsolutePrefix(decoded)) {
+    throw new Error(`${label} must be a relative evidence link`);
   }
   if (
     decoded

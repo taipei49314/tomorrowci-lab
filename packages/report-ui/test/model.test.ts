@@ -20,9 +20,18 @@ describe("versioned report model", () => {
   });
 
   it("rejects active or escaping evidence links", () => {
-    const active = structuredClone(sampleModel);
-    active.evidenceLinks[0].href = "javascript:alert(1)";
-    expect(() => parseReportModel(active)).toThrow(/relative evidence link/);
+    for (const href of [
+      "javascript:alert(1)",
+      " javascript:alert(1)",
+      " https://evil.example/",
+      "%6aavascript:alert(1)",
+      "%2f%2fevil.example/escape",
+      "evidence/%5c..%5csecret",
+    ]) {
+      const active = structuredClone(sampleModel);
+      active.evidenceLinks[0].href = href;
+      expect(() => parseReportModel(active), href).toThrow(/relative evidence link/);
+    }
 
     const traversal = structuredClone(sampleModel);
     traversal.evidenceLinks[0].href = "evidence/%2e%2e/secret";
