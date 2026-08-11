@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -86,6 +87,76 @@ class PromotionStateTests(unittest.TestCase):
                     run_id="123",
                     run_attempt="2",
                 )
+
+    def test_post_approval_repository_run_and_reviewer_identities(self) -> None:
+        source = "d" * 40
+        repository = {"default_branch": "master", "full_name": "owner/repo"}
+        branch = {
+            "object": {"sha": source, "type": "commit"},
+            "ref": "refs/heads/master",
+        }
+        preflight.inspect_repository_head(
+            repository, branch, repository="owner/repo", source_sha=source
+        )
+        run = {
+            "actor": {"id": 11},
+            "conclusion": None,
+            "event": "workflow_dispatch",
+            "head_branch": "master",
+            "head_repository": {"full_name": "owner/repo"},
+            "head_sha": source,
+            "id": 123,
+            "path": ".github/workflows/protected-exact-byte-promotion.yml",
+            "repository": {"full_name": "owner/repo"},
+            "run_attempt": 2,
+            "status": "in_progress",
+            "triggering_actor": {"id": 12},
+        }
+        preflight.inspect_promotion_workflow_run(
+            run,
+            repository="owner/repo",
+            source_sha=source,
+            run_id="123",
+            run_attempt="2",
+        )
+        environment = {
+            "deployment_branch_policy": {
+                "custom_branch_policies": False,
+                "protected_branches": True,
+            },
+            "id": 44,
+            "name": "release",
+            "protection_rules": [
+                {
+                    "prevent_self_review": True,
+                    "reviewers": [{"reviewer": {"id": 99}, "type": "User"}],
+                    "type": "required_reviewers",
+                }
+            ],
+        }
+        approvals = [
+            {
+                "environments": [{"id": 44, "name": "release"}],
+                "state": "approved",
+                "user": {"id": 99, "login": "independent-reviewer"},
+            }
+        ]
+        identity = preflight.inspect_approval_history(
+            approvals, environment_metadata=environment, run_metadata=run
+        )
+        self.assertEqual(identity["reviewers"][0]["id"], 99)
+        changed = copy.deepcopy(approvals)
+        changed[0]["user"] = {"id": 11, "login": "dispatcher"}
+        with self.assertRaisesRegex(ValueError, "self-approved"):
+            preflight.inspect_approval_history(
+                changed, environment_metadata=environment, run_metadata=run
+            )
+        drift = copy.deepcopy(branch)
+        drift["object"]["sha"] = "e" * 40
+        with self.assertRaisesRegex(ValueError, "no longer names"):
+            preflight.inspect_repository_head(
+                repository, drift, repository="owner/repo", source_sha=source
+            )
 
     def test_oci_input_binds_only_authoritative_manifest_digest(self) -> None:
         authoritative = "sha256:" + "1" * 64
@@ -238,6 +309,7 @@ class PromotionWorkflowStaticTests(unittest.TestCase):
         self.assertIn("packages: write", text)
         self.assertNotIn("assert-publication-disabled", text)
         self.assertIn("assert-ghcr-nonclobber-write", text)
+        self.assertIn("assert-release-publish-nonclobber", text)
         self.assertIn("inspect-authorization-marker", text)
         self.assertIn("inspect-oci-manifest", text)
         self.assertIn("inspect-trust-material", text)
@@ -245,17 +317,31 @@ class PromotionWorkflowStaticTests(unittest.TestCase):
         self.assertIn("ghcr-version-pages.json", text)
         self.assertIn("tag-promotion-attestation.json", text)
         self.assertIn("git tag --no-sign --annotate", text)
-        self.assertIn("git push --atomic origin", text)
+        self.assertIn("git push --atomic", text)
+        self.assertIn("GIT_ASKPASS", text)
+        self.assertNotIn("persist-credentials: true", text)
         self.assertNotIn("releases/tags", text)
         self.assertGreaterEqual(text.count("scripts/external_authorization.py"), 2)
         self.assertGreaterEqual(text.count("scripts/tag_promotion_attestation.py"), 2)
         self.assertIn("inspect-immutable-release-setting", text)
+        self.assertIn("inspect-approval-history", text)
+        self.assertIn("/approvals", text)
+        self.assertIn("inspect-promotion-run", text)
+        self.assertIn("inspect-repository-head", text)
         self.assertIn("release-readback:", text)
-        self.assertIn("os: [ubuntu-24.04, macos-15, windows-2025]", text)
+        for runner in ("ubuntu-24.04", "macos-15", "windows-2025"):
+            self.assertIn(f"os: {runner}", text)
         self.assertIn("image-readback:", text)
         self.assertIn("65532:65532", text)
         self.assertIn("org.opencontainers.image.revision", text)
         self.assertIn("status: READY", text)
+        self.assertIn("inspect-doctor-output", text)
+        self.assertGreaterEqual(text.count("artifact-ids:"), 2)
+        self.assertIn("extract-prepared-state", text)
+        self.assertNotIn(
+            "name: protected-promotion-preflight-${{ github.run_id }}-attempt-${{ github.run_attempt }}",
+            text.split("\n  write:", 1)[1],
+        )
         self.assertIn(
             "CREATE_NONCLOBBER_DRAFT_PRERELEASE",
             preflight.inspect_release_state(
@@ -276,16 +362,51 @@ class PromotionWorkflowStaticTests(unittest.TestCase):
         )
         self.assertLess(
             text.index("assert-ghcr-nonclobber-write"),
-            text.index("git push --atomic origin"),
+            text.index("git push --atomic"),
+        )
+        global_gate = text.index("assert-ghcr-nonclobber-write")
+        for mutation in (
+            'gh api --method POST "/repos/$GITHUB_REPOSITORY/releases"',
+            "cp --from-oci-layout",
+            'gh api --method PATCH "$update"',
+            "uploads.github.com --method POST",
+            'gh api --method PATCH "/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"',
+        ):
+            self.assertLess(global_gate, text.index(mutation), mutation)
+        self.assertLess(
+            text.index("inspect-http-etag"),
+            text.index("assert-release-publish-nonclobber"),
+        )
+        self.assertLess(
+            text.index("assert-release-publish-nonclobber"),
+            text.index(
+                'gh api --method PATCH "/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"'
+            ),
         )
         write = text.split("\n  write:", 1)[1].split("\n  release-readback:", 1)[0]
+        checkout = write.split("- uses: actions/checkout@", 1)[1].split("- name:", 1)[0]
+        self.assertIn("persist-credentials: false", checkout)
         self.assertLess(
             write.index("Re-download raw authorization bytes after approval"),
             write.index("assert-ghcr-nonclobber-write"),
         )
         self.assertLess(
             write.index("inspect-immutable-release-setting"),
-            write.index("git push --atomic origin"),
+            write.index("git push --atomic"),
+        )
+        oras_step = write.split("- name: Promote the canonical OCI layout", 1)[1].split(
+            "- name:", 1
+        )[0]
+        self.assertLess(
+            oras_step.index("inspect-ghcr-pages"),
+            oras_step.index("cp --from-oci-layout"),
+        )
+        visibility_step = write.split("- name: Require exact GHCR package state", 1)[
+            1
+        ].split("- name:", 1)[0]
+        self.assertLess(
+            visibility_step.index("--required-state IDEMPOTENT_EXACT_IMAGE"),
+            visibility_step.index('gh api --method PATCH "$update"'),
         )
         self.assertNotIn("state_artifact:", text)
         self.assertNotIn('grep -Fq "$OCI_MANIFEST_DIGEST"', text)
@@ -559,9 +680,36 @@ class PublicationPrimitiveTests(unittest.TestCase):
                 wrong, image_tag=tag, manifest_digest=self.OCI_DIGEST
             )
 
-    def test_ghcr_nonclobber_gap_is_the_only_explicit_mutation_refusal(self) -> None:
+    def test_ghcr_nonclobber_gap_is_explicitly_refused(self) -> None:
         with self.assertRaisesRegex(ValueError, "no proven create-only"):
             preflight.refuse_unconditional_ghcr_tag_write()
+
+    def test_release_publish_without_if_match_is_explicitly_refused(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no conditional If-Match"):
+            preflight.refuse_unconditional_release_publish()
+
+    def test_prepared_state_extract_is_exact_and_fresh(self) -> None:
+        source = self.root / "prepared"
+        source.mkdir()
+        for name in preflight.PREPARED_STATE_FILES:
+            (source / name).write_bytes(f"{name}\n".encode())
+        archive = self.root / "prepared.zip"
+        with zipfile.ZipFile(archive, "w") as bundle:
+            for name in sorted(preflight.PREPARED_STATE_FILES):
+                bundle.write(source / name, name)
+        destination = self.root / "prepared-extracted"
+        preflight.safe_extract_prepared_state(archive, destination)
+        self.assertEqual(
+            {entry.name for entry in destination.iterdir()},
+            preflight.PREPARED_STATE_FILES,
+        )
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            preflight.safe_extract_prepared_state(archive, destination)
+        bad = self.root / "bad-prepared.zip"
+        with zipfile.ZipFile(bad, "w") as bundle:
+            bundle.write(source / "publication-plan.json", "publication-plan.json")
+        with self.assertRaisesRegex(ValueError, "inventory mismatch"):
+            preflight.safe_extract_prepared_state(bad, self.root / "bad-extracted")
 
     def test_release_environment_requires_independent_approval(self) -> None:
         environment = {
@@ -607,6 +755,34 @@ class PublicationPrimitiveTests(unittest.TestCase):
             },
         )
         preflight.inspect_public_oci_descriptor(descriptor, self.OCI_DIGEST)
+
+    def test_etag_and_doctor_semantics_fail_closed(self) -> None:
+        headers = self.root / "headers.txt"
+        headers.write_bytes(b'HTTP/2 200\r\netag: W/"safe-123"\r\n\r\n')
+        self.assertEqual(preflight.inspect_http_etag(headers), 'W/"safe-123"')
+        headers.write_bytes(b'HTTP/2 200\r\netag: "one"\r\nETag: "two"\r\n\r\n')
+        with self.assertRaisesRegex(ValueError, "single safe ETag"):
+            preflight.inspect_http_etag(headers)
+        doctor = self.root / "doctor.txt"
+        doctor.write_text(
+            "TomorrowCI doctor\n"
+            f"tool_version: {self.VERSION}\n"
+            "docker: false\n"
+            "podman: false\n"
+            "selected_engine: NONE (sandbox BLOCKED)\n"
+            "security_defaults: OK\n"
+            "host_execution_of_targets: FORBIDDEN by default\n"
+            "status: BLOCKED for container execution\n",
+            encoding="utf-8",
+        )
+        state = preflight.inspect_doctor_output(doctor, expected_version=self.VERSION)
+        self.assertIn("BLOCKED", state["status"])
+        doctor.write_text(
+            doctor.read_text(encoding="utf-8").replace("docker: false", "docker: true"),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "not honest"):
+            preflight.inspect_doctor_output(doctor, expected_version=self.VERSION)
 
     def test_trust_and_package_snapshots_are_strict(self) -> None:
         signers = self.root / "allowed_signers"

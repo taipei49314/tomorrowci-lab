@@ -379,6 +379,51 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
+      - name: Revalidate default branch, CI, environment, and approval after wait
+        env:
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/post-approval-api"
+          mkdir "$metadata"
+          test "$GITHUB_REF" = refs/heads/master
+          test "$GITHUB_SHA" = "$CANDIDATE_SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SOURCE_SHA"
+          gh api "/repos/$GITHUB_REPOSITORY" > "$metadata/repository.json"
+          gh api "/repos/$GITHUB_REPOSITORY/git/ref/heads/master" \
+            > "$metadata/master.json"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" \
+            > "$metadata/ci-run.json"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            > "$metadata/promotion-run.json"
+          gh api "/repos/$GITHUB_REPOSITORY/environments/release" \
+            > "$metadata/release-environment.json"
+          gh api -H "X-GitHub-Api-Version: 2026-03-10" \
+            "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" \
+            > "$metadata/approval-history.json"
+          python3 scripts/promotion_preflight.py inspect-repository-head \
+            --repository-metadata "$metadata/repository.json" \
+            --branch-metadata "$metadata/master.json" \
+            --repository "$GITHUB_REPOSITORY" --source-sha "$CANDIDATE_SOURCE_SHA"
+          python3 scripts/promotion_preflight.py inspect-ci-api \
+            --metadata "$metadata/ci-run.json" --repository "$GITHUB_REPOSITORY" \
+            --source-sha "$CANDIDATE_SOURCE_SHA" --run-id "$CI_RUN_ID" \
+            --run-attempt "$CI_RUN_ATTEMPT"
+          python3 scripts/promotion_preflight.py inspect-promotion-run \
+            --metadata "$metadata/promotion-run.json" \
+            --repository "$GITHUB_REPOSITORY" --source-sha "$CANDIDATE_SOURCE_SHA" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          python3 scripts/promotion_preflight.py inspect-release-environment \
+            --metadata "$metadata/release-environment.json"
+          python3 scripts/promotion_preflight.py inspect-approval-history \
+            --approvals "$metadata/approval-history.json" \
+            --environment "$metadata/release-environment.json" \
+            --run-metadata "$metadata/promotion-run.json" \
+            > "$metadata/approval-identity.json"
       - name: Revalidate prepared-state artifact API bytes after approval
         env:
           GH_TOKEN: ${{ github.token }}
@@ -399,10 +444,8 @@ jobs:
           test "$(stat -c '%s' "$archive")" = "$size"
           test "sha256:$(sha256sum "$archive" | cut -d ' ' -f 1)" = \
             "$STATE_ARTIFACT_DIGEST"
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: protected-promotion-preflight-${{ github.run_id }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/promotion-state
+          python3 scripts/promotion_preflight.py extract-prepared-state \
+            --archive "$archive" --destination "$RUNNER_TEMP/promotion-state"
       - name: Revalidate candidate API bytes after approval
         env:
           CANDIDATE_ARTIFACT_SHA256: ${{ inputs.candidate_artifact_sha256 }}
@@ -527,10 +570,11 @@ jobs:
           cp "$authorization/tag-promotion-attestation.json" "$release_assets/"
           python3 scripts/promotion_preflight.py verify-public-assets \
             --plan "$plan" --directory "$release_assets"
-      - name: Refuse all remote mutation until GHCR create-only semantics are provable
+      - name: Refuse all publication mutation until GHCR create-only semantics are provable
         run: python3 scripts/promotion_preflight.py assert-ghcr-nonclobber-write
       - name: Atomically create the exact version and authorization-marker refs
         env:
+          GH_TOKEN: ${{ github.token }}
           PLAN_SHA256: ${{ needs.prepare.outputs.plan_sha256 }}
         run: |
           set -euo pipefail
@@ -556,7 +600,18 @@ jobs:
             --marker-oid "$marker_oid" --output "$state"
           case "$(jq -er '.state' "$state")" in
             READY_FOR_ATOMIC_CREATE_ONLY)
-              git push --atomic origin "$tag_oid:$version_ref" "$marker_oid:$marker_ref"
+              askpass="$RUNNER_TEMP/promotion-git-askpass.sh"
+              printf '%s\n' '#!/bin/sh' \
+                'case "$1" in' \
+                '  *Username*) printf "%s\\n" x-access-token ;;' \
+                '  *Password*) printf "%s\\n" "$GH_TOKEN" ;;' \
+                '  *) exit 1 ;;' \
+                'esac' > "$askpass"
+              chmod 700 "$askpass"
+              GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
+                git push --atomic "https://github.com/$GITHUB_REPOSITORY.git" \
+                "$tag_oid:$version_ref" "$marker_oid:$marker_ref"
+              rm "$askpass"
               ;;
             IDEMPOTENT_EXACT_PAIR) ;;
             *) exit 1 ;;
@@ -631,13 +686,49 @@ jobs:
           source_reference="$(jq -er '.ghcr.source_reference' "$plan")"
           config="$RUNNER_TEMP/oras-auth"
           mkdir -m 700 "$config"
+          gh api "/repos/$GITHUB_REPOSITORY" > "$RUNNER_TEMP/pre-oras-repository.json"
+          owner="$(jq -er '.owner.login' "$RUNNER_TEMP/pre-oras-repository.json")"
+          owner_type="$(jq -er '.owner.type' "$RUNNER_TEMP/pre-oras-repository.json")"
+          case "$owner_type" in
+            User)
+              package_list="/users/$owner/packages?package_type=container&per_page=100"
+              package_versions="/users/$owner/packages/container/tomorrowci/versions?per_page=100"
+              ;;
+            Organization)
+              package_list="/orgs/$owner/packages?package_type=container&per_page=100"
+              package_versions="/orgs/$owner/packages/container/tomorrowci/versions?per_page=100"
+              ;;
+            *) exit 1 ;;
+          esac
+          gh api --paginate --slurp "$package_list" \
+            > "$RUNNER_TEMP/pre-oras-package-pages.json"
+          package_state="$(python3 scripts/promotion_preflight.py inspect-package-pages \
+            --pages "$RUNNER_TEMP/pre-oras-package-pages.json" \
+            --package-name tomorrowci --owner "$owner")"
+          case "$package_state" in
+            PRESENT_PRIVATE|PRESENT_PUBLIC)
+              gh api --paginate --slurp "$package_versions" \
+                > "$RUNNER_TEMP/pre-oras-version-pages.json"
+              ;;
+            ABSENT) printf '[]\n' > "$RUNNER_TEMP/pre-oras-version-pages.json" ;;
+            *) exit 1 ;;
+          esac
+          fresh_state="$(python3 scripts/promotion_preflight.py inspect-ghcr-pages \
+            --pages "$RUNNER_TEMP/pre-oras-version-pages.json" --image-tag "$tag" \
+            --manifest-digest "$digest" | jq -er '.state')"
           printf '%s' "$GH_TOKEN" | docker run --rm -i --user 0:0 \
             --platform linux/amd64 -v "$config:/root/.docker" "$tool" \
             login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          docker run --rm --user 0:0 --platform linux/amd64 \
-            -v "$config:/root/.docker" -v "$dist:/workspace:ro" "$tool" \
-            cp --from-oci-layout "/workspace/$archive:$source_reference" \
-            "$repository:$tag"
+          case "$fresh_state" in
+            READY_FOR_EXACT_OCI_COPY|READY_TO_ADD_EXACT_TAG)
+              docker run --rm --user 0:0 --platform linux/amd64 \
+                -v "$config:/root/.docker" -v "$dist:/workspace:ro" "$tool" \
+                cp --from-oci-layout "/workspace/$archive:$source_reference" \
+                "$repository:$tag"
+              ;;
+            IDEMPOTENT_EXACT_IMAGE) ;;
+            *) exit 1 ;;
+          esac
           docker run --rm --user 0:0 --platform linux/amd64 \
             -v "$config:/root/.docker" "$tool" manifest fetch --descriptor \
             "$repository:$tag" > "$RUNNER_TEMP/private-image-descriptor.json"
@@ -674,6 +765,21 @@ jobs:
             --pages "$RUNNER_TEMP/write-package-pages.json" \
             --package-name tomorrowci --owner "$owner")"
           case "$package_state" in
+            PRESENT_PRIVATE|PRESENT_PUBLIC) ;;
+            *) exit 1 ;;
+          esac
+          gh api --paginate --slurp "$versions" \
+            > "$RUNNER_TEMP/pre-visibility-ghcr-versions.json"
+          python3 scripts/promotion_preflight.py inspect-ghcr-pages \
+            --pages "$RUNNER_TEMP/pre-visibility-ghcr-versions.json" \
+            --image-tag "$expected_tag" --manifest-digest "$expected_digest" \
+            --required-state IDEMPOTENT_EXACT_IMAGE
+          gh api --paginate --slurp "$list" \
+            > "$RUNNER_TEMP/pre-visibility-package-pages.json"
+          package_state="$(python3 scripts/promotion_preflight.py inspect-package-pages \
+            --pages "$RUNNER_TEMP/pre-visibility-package-pages.json" \
+            --package-name tomorrowci --owner "$owner")"
+          case "$package_state" in
             PRESENT_PRIVATE)
               gh api --method PATCH "$update" -F visibility=public > /dev/null
               ;;
@@ -685,20 +791,10 @@ jobs:
             --pages "$RUNNER_TEMP/write-package-pages-public.json" \
             --package-name tomorrowci --owner "$owner")" = PRESENT_PUBLIC
           gh api --paginate --slurp "$versions" > "$RUNNER_TEMP/write-ghcr-versions.json"
-          python3 - "$RUNNER_TEMP/write-ghcr-versions.json" "$expected_tag" "$expected_digest" <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-          sys.path.insert(0, "scripts")
-          import promotion_preflight
-          pages = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-          versions = [item for page in pages for item in page]
-          state = promotion_preflight.inspect_ghcr_state(
-              versions, image_tag=sys.argv[2], manifest_digest=sys.argv[3]
-          )
-          if state["state"] != "IDEMPOTENT_EXACT_IMAGE":
-              raise SystemExit("GHCR exact image state did not converge")
-          PY
+          python3 scripts/promotion_preflight.py inspect-ghcr-pages \
+            --pages "$RUNNER_TEMP/write-ghcr-versions.json" \
+            --image-tag "$expected_tag" --manifest-digest "$expected_digest" \
+            --required-state IDEMPOTENT_EXACT_IMAGE
       - name: Upload only missing exact draft assets without clobber
         env:
           GH_TOKEN: ${{ github.token }}
@@ -768,12 +864,52 @@ jobs:
         run: |
           set -euo pipefail
           plan="$RUNNER_TEMP/promotion-state/publication-plan.json"
-          current="$RUNNER_TEMP/draft-complete.json"
-          if test "$(jq -er '.draft' "$current")" = true; then
-            gh api "/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$current"
-            test "$(jq -er '.draft' "$current")" = true
+          current="$RUNNER_TEMP/pre-publish-release.json"
+          headers="$RUNNER_TEMP/pre-publish-release.headers"
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --dump-header "$headers" --output "$current" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
+          python3 - "$current" "$plan" > "$RUNNER_TEMP/pre-publish-state.txt" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          import promotion_preflight
+          release = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          plan = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          state = promotion_preflight.inspect_release_state(
+              [release], tag_name=plan["release"]["tag_name"],
+              target_commitish=plan["release"]["target_commitish"],
+              release_name=plan["release"]["name"],
+              body=(Path(os.environ["RUNNER_TEMP"]) / "promotion-state/release-body.md").read_text(encoding="utf-8"),
+              expected_assets=plan["release"]["assets"],
+          )
+          print(state["state"])
+          PY
+          publish_state="$(cat "$RUNNER_TEMP/pre-publish-state.txt")"
+          if test "$publish_state" = DRAFT_COMPLETE; then
+            gh api -H "X-GitHub-Api-Version: 2026-03-10" \
+              "/repos/$GITHUB_REPOSITORY/immutable-releases" \
+              > "$RUNNER_TEMP/pre-publish-immutable-releases.json"
+            python3 scripts/promotion_preflight.py inspect-immutable-release-setting \
+              --metadata "$RUNNER_TEMP/pre-publish-immutable-releases.json"
+            etag="$(python3 scripts/promotion_preflight.py inspect-http-etag \
+              --headers "$headers")"
+            status="$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "If-None-Match: $etag" --output /dev/null \
+              --write-out '%{http_code}' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
+            test "$status" = 304
+            python3 scripts/promotion_preflight.py assert-release-publish-nonclobber
             gh api --method PATCH "/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
               -F draft=false -F prerelease=true > "$RUNNER_TEMP/published-release.json"
+          elif test "$publish_state" != IDEMPOTENT_EXACT_IMMUTABLE_PRERELEASE; then
+            exit 1
           fi
           gh api "/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$RUNNER_TEMP/final-release.json"
           python3 - "$RUNNER_TEMP/final-release.json" "$plan" <<'PY'
@@ -828,7 +964,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-15
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            archive: zip
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     permissions:
@@ -840,7 +985,8 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: protected-promotion-preflight-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          artifact-ids: ${{ needs.prepare.outputs.state_artifact_id }}
+          merge-multiple: true
           path: ${{ runner.temp }}/promotion-state
       - name: Fresh public release asset read-back
         shell: python
@@ -878,6 +1024,53 @@ jobs:
                "--directory", str(destination)],
               check=True,
           )
+      - name: Clean-extract and smoke the public CLI archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          plan="$RUNNER_TEMP/promotion-state/publication-plan.json"
+          version="$(jq -er '.candidate.version' "$plan")"
+          target="${{ matrix.target }}"
+          archive="$RUNNER_TEMP/public-release-readback/tomorrowci-v${version}-${target}.${{ matrix.archive }}"
+          extract="$RUNNER_TEMP/public-cli-extract"
+          test ! -e "$extract"
+          python3 scripts/package_release.py extract --archive "$archive" \
+            --output-dir "$extract" --version "$version" --target "$target"
+          cli="$extract/tomorrowci-v${version}-${target}/tomorrowci"
+          test "$("$cli" --version)" = "tomorrowci $version"
+          "$cli" trust
+          "$cli" doctor > "$RUNNER_TEMP/public-cli-doctor.txt"
+          python3 scripts/promotion_preflight.py inspect-doctor-output \
+            --output "$RUNNER_TEMP/public-cli-doctor.txt" \
+            --expected-version "$version"
+      - name: Clean-extract and smoke the public CLI archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $plan = Join-Path $env:RUNNER_TEMP "promotion-state/publication-plan.json"
+          $version = (Get-Content -Raw -LiteralPath $plan | ConvertFrom-Json).candidate.version
+          $target = "${{ matrix.target }}"
+          $archive = Join-Path $env:RUNNER_TEMP "public-release-readback/tomorrowci-v$version-$target.${{ matrix.archive }}"
+          $extract = Join-Path $env:RUNNER_TEMP "public-cli-extract"
+          if (Test-Path -LiteralPath $extract) { throw "non-clean public CLI extraction" }
+          python scripts/package_release.py extract --archive $archive `
+            --output-dir $extract --version $version --target $target
+          if ($LASTEXITCODE -ne 0) { throw "public CLI archive extraction failed" }
+          $cli = Join-Path $extract "tomorrowci-v$version-$target/tomorrowci.exe"
+          $actual = (& $cli --version).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -ne "tomorrowci $version") {
+            throw "public CLI version mismatch: $actual"
+          }
+          & $cli trust
+          if ($LASTEXITCODE -ne 0) { throw "public CLI trust failed" }
+          $doctor = Join-Path $env:RUNNER_TEMP "public-cli-doctor.txt"
+          & $cli doctor | Out-File -LiteralPath $doctor -Encoding utf8NoBOM
+          if ($LASTEXITCODE -ne 0) { throw "public CLI doctor failed" }
+          python scripts/promotion_preflight.py inspect-doctor-output `
+            --output $doctor --expected-version $version
+          if ($LASTEXITCODE -ne 0) { throw "public CLI doctor semantics failed" }
 
   image-readback:
     needs: [prepare, write]
@@ -893,7 +1086,8 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: protected-promotion-preflight-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          artifact-ids: ${{ needs.prepare.outputs.state_artifact_id }}
+          merge-multiple: true
           path: ${{ runner.temp }}/promotion-state
       - name: Fresh public exact-digest image identity and behavior smoke
         run: |

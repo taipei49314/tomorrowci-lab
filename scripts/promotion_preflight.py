@@ -3,8 +3,8 @@
 
 The protected workflow owns mutation sequencing.  This module validates
 immutable snapshots, exact retry states, and non-clobber boundaries.  It keeps
-the GHCR tag write refused because the available registry primitive has no
-proven create-only precondition.
+the GHCR tag write and final Release publish refused because the documented
+mutation APIs lack the required create-only or compare-and-swap preconditions.
 """
 
 from __future__ import annotations
@@ -39,6 +39,15 @@ AUTHORIZATION_FILES = {
     "external-qualification-evidence.json",
     "preregistered-policy.json",
     "tag-promotion-attestation.json",
+}
+PREPARED_STATE_FILES = {
+    "authorization-marker-identity.json",
+    "external-authorization-receipt.json",
+    "publication-plan.json",
+    "release-body.md",
+    "remote-state.json",
+    "tag-promotion-attestation.json",
+    "tracked-trust-identity.json",
 }
 
 
@@ -101,6 +110,19 @@ def _page_items(path: Path, label: str) -> list[dict]:
     return items
 
 
+def _load_json_array(path: Path, label: str) -> list:
+    value = json.loads(
+        _snapshot(path, label).decode("utf-8"),
+        object_pairs_hook=lambda pairs: _reject_duplicate_pairs(pairs, label),
+        parse_constant=lambda item: (_ for _ in ()).throw(
+            ValueError(f"{label} contains non-finite JSON value {item}")
+        ),
+    )
+    if type(value) is not list:
+        raise ValueError(f"{label} must be an array")
+    return value
+
+
 def _reject_duplicate_pairs(pairs: list[tuple[str, object]], label: str) -> dict:
     value: dict = {}
     for key, item in pairs:
@@ -153,6 +175,76 @@ def inspect_ci_run(
     return expected
 
 
+def inspect_repository_head(
+    repository_metadata: dict,
+    branch_metadata: dict,
+    *,
+    repository: str,
+    source_sha: str,
+) -> dict:
+    if not SLUG.fullmatch(repository) or not SHA.fullmatch(source_sha):
+        raise ValueError("expected repository or source SHA is malformed")
+    branch_object = branch_metadata.get("object")
+    if (
+        repository_metadata.get("full_name") != repository
+        or repository_metadata.get("default_branch") != "master"
+        or branch_metadata.get("ref") != "refs/heads/master"
+        or type(branch_object) is not dict
+        or branch_object.get("type") != "commit"
+        or branch_object.get("sha") != source_sha
+    ):
+        raise ValueError("default branch no longer names the exact source commit")
+    return {"default_branch": "master", "repository": repository, "sha": source_sha}
+
+
+def inspect_promotion_workflow_run(
+    metadata: dict,
+    *,
+    repository: str,
+    source_sha: str,
+    run_id: str,
+    run_attempt: str,
+) -> dict:
+    if not SLUG.fullmatch(repository) or not SHA.fullmatch(source_sha):
+        raise ValueError("expected promotion repository or source SHA is malformed")
+    expected_id = _positive(run_id, "promotion run ID")
+    expected_attempt = _positive(run_attempt, "promotion run attempt")
+    expected = {
+        "event": "workflow_dispatch",
+        "head_branch": "master",
+        "head_sha": source_sha,
+        "id": expected_id,
+        "path": ".github/workflows/protected-exact-byte-promotion.yml",
+        "run_attempt": expected_attempt,
+        "status": "in_progress",
+    }
+    for key, value in expected.items():
+        if metadata.get(key) != value:
+            raise ValueError(f"promotion workflow run {key} mismatch")
+    if metadata.get("conclusion") is not None:
+        raise ValueError("in-progress promotion run already has a conclusion")
+    repo = metadata.get("repository")
+    head_repo = metadata.get("head_repository")
+    actor = metadata.get("actor")
+    triggering_actor = metadata.get("triggering_actor")
+    if (
+        type(repo) is not dict
+        or type(head_repo) is not dict
+        or repo.get("full_name") != repository
+        or head_repo.get("full_name") != repository
+        or type(actor) is not dict
+        or type(actor.get("id")) is not int
+        or type(triggering_actor) is not dict
+        or type(triggering_actor.get("id")) is not int
+    ):
+        raise ValueError("promotion workflow run repository or actor identity mismatch")
+    return {
+        **expected,
+        "actor_id": actor["id"],
+        "triggering_actor_id": triggering_actor["id"],
+    }
+
+
 def inspect_release_environment(metadata: dict) -> dict:
     if metadata.get("name") != "release":
         raise ValueError("protected environment name mismatch")
@@ -191,6 +283,86 @@ def inspect_release_environment(metadata: dict) -> dict:
         "prevent_self_review": True,
         "required_reviewers": len(reviewers),
         "protected_branches_only": True,
+    }
+
+
+def inspect_approval_history(
+    approvals: list,
+    *,
+    environment_metadata: dict,
+    run_metadata: dict,
+) -> dict:
+    """Bind the approval identity fields exposed by the run-level REST API."""
+
+    inspect_release_environment(environment_metadata)
+    environment_id = environment_metadata.get("id")
+    reviewer_rule = next(
+        rule
+        for rule in environment_metadata["protection_rules"]
+        if rule.get("type") == "required_reviewers"
+    )
+    configured_reviewers = reviewer_rule["reviewers"]
+    direct_user_ids = {
+        item["reviewer"]["id"]
+        for item in configured_reviewers
+        if item.get("type") == "User"
+    }
+    has_team_reviewer = any(item.get("type") == "Team" for item in configured_reviewers)
+    actor = run_metadata.get("actor")
+    triggering_actor = run_metadata.get("triggering_actor")
+    if (
+        type(environment_id) is not int
+        or environment_id <= 0
+        or type(actor) is not dict
+        or type(actor.get("id")) is not int
+        or type(triggering_actor) is not dict
+        or type(triggering_actor.get("id")) is not int
+        or type(approvals) is not list
+    ):
+        raise ValueError("approval context identity is malformed")
+    approvers: list[dict] = []
+    for review in approvals:
+        if type(review) is not dict:
+            raise ValueError("approval history entry is malformed")
+        environments = review.get("environments")
+        if type(environments) is not list:
+            raise ValueError("approval history environments are malformed")
+        matches = [
+            item
+            for item in environments
+            if type(item) is dict
+            and item.get("id") == environment_id
+            and item.get("name") == "release"
+        ]
+        if not matches:
+            continue
+        if (
+            len(environments) != 1
+            or len(matches) != 1
+            or review.get("state") != "approved"
+        ):
+            raise ValueError("release environment review is not an exact approval")
+        user = review.get("user")
+        if (
+            type(user) is not dict
+            or type(user.get("id")) is not int
+            or user["id"] <= 0
+            or type(user.get("login")) is not str
+            or not user["login"]
+            or user["id"] in {actor["id"], triggering_actor["id"]}
+            or (not has_team_reviewer and user["id"] not in direct_user_ids)
+        ):
+            raise ValueError("release approval identity is missing or self-approved")
+        approvers.append({"id": user["id"], "login": user["login"]})
+    if not approvers:
+        raise ValueError("no observable independent release approval")
+    identities = sorted({(item["id"], item["login"]) for item in approvers})
+    return {
+        "approval_history_scope": "workflow_run",
+        "environment_id": environment_id,
+        "reviewers": [
+            {"id": reviewer_id, "login": login} for reviewer_id, login in identities
+        ],
     }
 
 
@@ -517,6 +689,80 @@ def inspect_public_oci_descriptor(descriptor: Path, expected_digest: str) -> dic
     return value
 
 
+def inspect_http_etag(headers: Path) -> str:
+    raw = _snapshot(headers, "HTTP response headers")
+    try:
+        text = raw.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise ValueError("HTTP response headers are not ASCII") from exc
+    values = []
+    for line in text.replace("\r\n", "\n").split("\n"):
+        name, separator, value = line.partition(":")
+        if separator and name.lower() == "etag":
+            values.append(value.strip())
+    if len(values) != 1 or not re.fullmatch(
+        r'(?:W/)?"[A-Za-z0-9._~:/+=-]{1,200}"', values[0]
+    ):
+        raise ValueError("HTTP response has no single safe ETag")
+    return values[0]
+
+
+def inspect_doctor_output(output: Path, *, expected_version: str) -> dict:
+    if not re.fullmatch(r"[0-9A-Za-z.-]+", expected_version):
+        raise ValueError("expected doctor version is malformed")
+    try:
+        lines = _snapshot(output, "doctor output").decode("utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        raise ValueError("doctor output is not UTF-8") from exc
+    if not lines or lines[0] != "TomorrowCI doctor":
+        raise ValueError("doctor output header mismatch")
+    fields: dict[str, str] = {}
+    for line in lines[1:]:
+        if line.startswith("note: "):
+            continue
+        key, separator, value = line.partition(": ")
+        if not separator or key in fields:
+            raise ValueError("doctor output contains malformed or duplicate fields")
+        fields[key] = value
+    required = {
+        "docker",
+        "host_execution_of_targets",
+        "podman",
+        "security_defaults",
+        "selected_engine",
+        "status",
+        "tool_version",
+    }
+    if set(fields) != required:
+        raise ValueError("doctor output field inventory mismatch")
+    if (
+        fields["tool_version"] != expected_version
+        or fields["docker"] not in {"true", "false"}
+        or fields["podman"] not in {"true", "false"}
+        or fields["security_defaults"] != "OK"
+        or fields["host_execution_of_targets"] != "FORBIDDEN by default"
+    ):
+        raise ValueError("doctor identity or security semantics mismatch")
+    ready = fields["status"] == "READY"
+    blocked = fields["status"] == "BLOCKED for container execution"
+    selected = fields["selected_engine"]
+    if ready:
+        if selected not in {"Docker", "Podman"}:
+            raise ValueError("READY doctor output has no selected engine")
+        if fields[selected.lower()] != "true":
+            raise ValueError("READY doctor output contradicts engine detection")
+    elif blocked:
+        if (
+            selected != "NONE (sandbox BLOCKED)"
+            or fields["docker"] != "false"
+            or fields["podman"] != "false"
+        ):
+            raise ValueError("BLOCKED doctor output is not honest about engines")
+    else:
+        raise ValueError("doctor status is neither READY nor honest BLOCKED")
+    return {"selected_engine": selected, "status": fields["status"]}
+
+
 def build_publication_plan(
     *,
     attestation_path: Path,
@@ -655,18 +901,20 @@ def build_publication_plan(
     return plan, body
 
 
-def safe_extract_authorization(archive: Path, destination: Path) -> None:
+def _safe_extract_exact_zip(
+    archive: Path, destination: Path, *, expected_files: set[str], label: str
+) -> None:
     destination = destination.absolute()
     if destination.exists():
-        raise ValueError("authorization extraction destination already exists")
+        raise ValueError(f"{label} extraction destination already exists")
     destination.mkdir(mode=0o700)
     with zipfile.ZipFile(archive) as package:
         entries = package.infolist()
         names = [entry.filename for entry in entries]
-        if len(names) != len(set(names)) or set(names) != AUTHORIZATION_FILES:
-            raise ValueError("authorization bundle inventory mismatch")
+        if len(names) != len(set(names)) or set(names) != expected_files:
+            raise ValueError(f"{label} bundle inventory mismatch")
         if sum(entry.file_size for entry in entries) > 64 * 1024 * 1024:
-            raise ValueError("authorization bundle exceeds size limit")
+            raise ValueError(f"{label} bundle exceeds size limit")
         for entry in entries:
             name = entry.filename
             mode = entry.external_attr >> 16
@@ -678,12 +926,30 @@ def safe_extract_authorization(archive: Path, destination: Path) -> None:
                 or entry.file_size <= 0
                 or (mode and not stat.S_ISREG(mode))
             ):
-                raise ValueError(f"unsafe authorization bundle entry: {name!r}")
+                raise ValueError(f"unsafe {label} bundle entry: {name!r}")
             data = package.read(entry)
             if len(data) != entry.file_size:
-                raise ValueError(f"authorization entry size drift: {name}")
+                raise ValueError(f"{label} entry size drift: {name}")
             with (destination / name).open("xb") as handle:
                 handle.write(data)
+
+
+def safe_extract_authorization(archive: Path, destination: Path) -> None:
+    _safe_extract_exact_zip(
+        archive,
+        destination,
+        expected_files=AUTHORIZATION_FILES,
+        label="authorization",
+    )
+
+
+def safe_extract_prepared_state(archive: Path, destination: Path) -> None:
+    _safe_extract_exact_zip(
+        archive,
+        destination,
+        expected_files=PREPARED_STATE_FILES,
+        label="prepared state",
+    )
 
 
 def remote_state(
@@ -778,6 +1044,14 @@ def refuse_unconditional_ghcr_tag_write() -> None:
     )
 
 
+def refuse_unconditional_release_publish() -> None:
+    raise ValueError(
+        "GitHub Release publication is disabled: the documented release PATCH "
+        "endpoint has no conditional If-Match primitive, so a validated draft "
+        "cannot be published without a final concurrent-update window"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -787,15 +1061,33 @@ def main(argv: list[str] | None = None) -> int:
     ci.add_argument("--source-sha", required=True)
     ci.add_argument("--run-id", required=True)
     ci.add_argument("--run-attempt", required=True)
+    repository_head = commands.add_parser("inspect-repository-head")
+    repository_head.add_argument("--repository-metadata", type=Path, required=True)
+    repository_head.add_argument("--branch-metadata", type=Path, required=True)
+    repository_head.add_argument("--repository", required=True)
+    repository_head.add_argument("--source-sha", required=True)
+    workflow_run = commands.add_parser("inspect-promotion-run")
+    workflow_run.add_argument("--metadata", type=Path, required=True)
+    workflow_run.add_argument("--repository", required=True)
+    workflow_run.add_argument("--source-sha", required=True)
+    workflow_run.add_argument("--run-id", required=True)
+    workflow_run.add_argument("--run-attempt", required=True)
     artifact = commands.add_parser("inspect-authorization-artifact")
     artifact.add_argument("--metadata", type=Path, required=True)
     artifact.add_argument("--artifact-id", required=True)
     artifact.add_argument("--artifact-sha256", required=True)
     environment = commands.add_parser("inspect-release-environment")
     environment.add_argument("--metadata", type=Path, required=True)
+    approval = commands.add_parser("inspect-approval-history")
+    approval.add_argument("--approvals", type=Path, required=True)
+    approval.add_argument("--environment", type=Path, required=True)
+    approval.add_argument("--run-metadata", type=Path, required=True)
     extract = commands.add_parser("extract-authorization")
     extract.add_argument("--archive", type=Path, required=True)
     extract.add_argument("--destination", type=Path, required=True)
+    state_extract = commands.add_parser("extract-prepared-state")
+    state_extract.add_argument("--archive", type=Path, required=True)
+    state_extract.add_argument("--destination", type=Path, required=True)
     refs = commands.add_parser("inspect-remote-refs")
     refs.add_argument("--observation", type=Path, required=True)
     refs.add_argument("--version-ref", required=True)
@@ -820,6 +1112,11 @@ def main(argv: list[str] | None = None) -> int:
     packages.add_argument("--owner", required=True)
     immutable = commands.add_parser("inspect-immutable-release-setting")
     immutable.add_argument("--metadata", type=Path, required=True)
+    ghcr = commands.add_parser("inspect-ghcr-pages")
+    ghcr.add_argument("--pages", type=Path, required=True)
+    ghcr.add_argument("--image-tag", required=True)
+    ghcr.add_argument("--manifest-digest", required=True)
+    ghcr.add_argument("--required-state")
     plan = commands.add_parser("build-publication-plan")
     plan.add_argument("--attestation", type=Path, required=True)
     plan.add_argument("--candidate-dir", type=Path, required=True)
@@ -839,12 +1136,35 @@ def main(argv: list[str] | None = None) -> int:
     public_oci = commands.add_parser("inspect-public-oci-descriptor")
     public_oci.add_argument("--descriptor", type=Path, required=True)
     public_oci.add_argument("--expected-digest", required=True)
+    etag = commands.add_parser("inspect-http-etag")
+    etag.add_argument("--headers", type=Path, required=True)
+    doctor = commands.add_parser("inspect-doctor-output")
+    doctor.add_argument("--output", type=Path, required=True)
+    doctor.add_argument("--expected-version", required=True)
     commands.add_parser("assert-ghcr-nonclobber-write")
+    commands.add_parser("assert-release-publish-nonclobber")
     args = parser.parse_args(argv)
     try:
         if args.command == "inspect-ci-api":
             value = inspect_ci_run(
                 _load_json(args.metadata, "CI run metadata"),
+                repository=args.repository,
+                source_sha=args.source_sha,
+                run_id=args.run_id,
+                run_attempt=args.run_attempt,
+            )
+            print(json.dumps(value, sort_keys=True))
+        elif args.command == "inspect-repository-head":
+            value = inspect_repository_head(
+                _load_json(args.repository_metadata, "repository metadata"),
+                _load_json(args.branch_metadata, "default branch metadata"),
+                repository=args.repository,
+                source_sha=args.source_sha,
+            )
+            print(json.dumps(value, sort_keys=True))
+        elif args.command == "inspect-promotion-run":
+            value = inspect_promotion_workflow_run(
+                _load_json(args.metadata, "promotion run metadata"),
                 repository=args.repository,
                 source_sha=args.source_sha,
                 run_id=args.run_id,
@@ -863,9 +1183,21 @@ def main(argv: list[str] | None = None) -> int:
                 _load_json(args.metadata, "release environment metadata")
             )
             print(json.dumps(value, sort_keys=True))
+        elif args.command == "inspect-approval-history":
+            value = inspect_approval_history(
+                _load_json_array(args.approvals, "approval history"),
+                environment_metadata=_load_json(
+                    args.environment, "release environment metadata"
+                ),
+                run_metadata=_load_json(args.run_metadata, "promotion run metadata"),
+            )
+            print(json.dumps(value, sort_keys=True))
         elif args.command == "extract-authorization":
             safe_extract_authorization(args.archive, args.destination)
             print("authorization bundle: PASS")
+        elif args.command == "extract-prepared-state":
+            safe_extract_prepared_state(args.archive, args.destination)
+            print("prepared state bundle: PASS")
         elif args.command == "inspect-remote-refs":
             value = remote_state(
                 args.observation.read_text(encoding="utf-8"),
@@ -905,6 +1237,18 @@ def main(argv: list[str] | None = None) -> int:
                 _load_json(args.metadata, "immutable-release setting")
             )
             print("repository immutable releases: PASS")
+        elif args.command == "inspect-ghcr-pages":
+            value = inspect_ghcr_state(
+                _page_items(args.pages, "GHCR package-version API pages"),
+                image_tag=args.image_tag,
+                manifest_digest=args.manifest_digest,
+            )
+            if (
+                args.required_state is not None
+                and value["state"] != args.required_state
+            ):
+                raise ValueError("GHCR state does not equal the required exact state")
+            print(json.dumps(value, sort_keys=True))
         elif args.command == "build-publication-plan":
             value, body = build_publication_plan(
                 attestation_path=args.attestation,
@@ -945,8 +1289,17 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "inspect-public-oci-descriptor":
             value = inspect_public_oci_descriptor(args.descriptor, args.expected_digest)
             print(json.dumps(value, sort_keys=True))
+        elif args.command == "inspect-http-etag":
+            print(inspect_http_etag(args.headers))
+        elif args.command == "inspect-doctor-output":
+            value = inspect_doctor_output(
+                args.output, expected_version=args.expected_version
+            )
+            print(json.dumps(value, sort_keys=True))
         elif args.command == "assert-ghcr-nonclobber-write":
             refuse_unconditional_ghcr_tag_write()
+        elif args.command == "assert-release-publish-nonclobber":
+            refuse_unconditional_release_publish()
         else:
             raise ValueError("unhandled promotion-preflight command")
     except (OSError, ValueError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
