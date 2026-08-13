@@ -96,7 +96,8 @@ class ContainerContractTests(unittest.TestCase):
 
     def test_candidate_smoke_keeps_reproducibility_gates_fail_closed(self) -> None:
         self.assertIn(
-            '$env:RUSTFLAGS = "-C link-arg=/Brepro"', self.candidate_workflow
+            '$env:RUSTFLAGS = "-C link-arg=/Brepro -C target-feature=+crt-static"',
+            self.candidate_workflow,
         )
         self.assertIn(
             "python3 scripts/oci_candidate.py docker-archive",
