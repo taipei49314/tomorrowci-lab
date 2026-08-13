@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Record the immutable, project-operated `v0.2.0-alpha.1` GitHub prerelease and
+  anonymous exact-asset read-back for external testing. The candidate manifest
+  remains unauthorized; independent authorization, protected formal promotion,
+  platform qualification, and GHCR publication remain blocked.
+
 ## [0.2.0-alpha.1] - 2026-08-11
 
 ### Added
@@ -70,10 +77,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Notes
 
-- The `0.2.0-alpha.1` heading identifies the prepared source version. No
-  `v0.2.0-alpha.1` tag, GitHub Release, or registry image is claimed here.
-  Platform qualification, genuine independent authorization, protected remote
-  promotion, and public download/pull read-back remain blocked.
+- The exact candidate was later published as immutable GitHub prerelease
+  `v0.2.0-alpha.1` for project-operated external testing, and its 16 assets
+  passed anonymous public download read-back. No registry image is published;
+  platform qualification, genuine independent authorization, and protected
+  formal promotion remain blocked.
 
 ### Security
 
