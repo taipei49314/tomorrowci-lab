@@ -63,10 +63,19 @@ open:
 
 If any required artifact is missing, the candidate-index job fails.
 
-Tag promotion remains absent (and therefore fail-closed) until a detached,
-independently attributable authorization can be verified against the frozen
-candidate manifest and OCI digest. A tracked self-asserted JSON file is not an
-external trust root and will not be accepted as one.
+Authorized protected tag promotion remains absent (and therefore fail-closed)
+until a detached, independently attributable authorization can be verified
+against the frozen candidate manifest and OCI digest. A tracked self-asserted
+JSON file is not an external trust root and will not be accepted as one.
+
+Separately, the owner published
+[`v0.2.0-alpha.1`](https://github.com/taipei49314/tomorrowci-lab/releases/tag/v0.2.0-alpha.1)
+as an immutable project-operated prerelease for external testing. It contains
+the exact candidate bytes from source `f83d43235c4d03ea9a95fc048d3edbd582e8f438`;
+all 16 assets passed anonymous public digest and verifier read-back. This
+relaxed distribution did not consume external authorization, did not run the
+protected promotion workflow, and did not publish a GHCR image. It is not the
+formal release described by the gates below.
 
 The SHA-256 digest of `candidate-manifest.json` is the detached subject an
 external auditor must authorize. Neither the manifest nor its checksums grant

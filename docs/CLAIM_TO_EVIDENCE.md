@@ -2,9 +2,10 @@
 
 Statuses: **PASS** / **FAIL** / **BLOCKED** / **NOT_RUN** only.
 
-Current source version `0.2.0-alpha.1` is unreleased. It does not supersede the
-bounded alpha.2 observations, and its successful release candidate is not a
-release or external-qualification PASS. Run-bound current truth is maintained
+Version `0.2.0-alpha.1` is distributed as an immutable, project-operated
+external-testing prerelease. It does not supersede the bounded alpha.2
+observations, and its frozen candidate manifest is not a formal release or
+independent external-qualification PASS. Run-bound current truth is maintained
 in the [qualification status record](qualification/STATUS.md).
 
 | Tag | Disposition |
@@ -13,6 +14,7 @@ in the [qualification status record](qualification/STATUS.md).
 | `v0.1.0-grok-session` | REJECTED historical parallel candidate; annotated tag object `39011d3b`, peeled commit `7a08c488` |
 | `v0.1.1-alpha.1` | REJECTED acceptance candidate / live-path demonstration |
 | `v0.1.1-alpha.2` | Published measured lab prerelease — see bounded gates below |
+| `v0.2.0-alpha.1` | Project-operated external-testing prerelease; exact public bytes passed anonymous read-back, formal promotion remains BLOCKED |
 
 ## Alpha.2 identity layers
 
@@ -99,18 +101,19 @@ platform support or independent qualification.
 | PR and exact-master identity | **PASS** | [PR #5](https://github.com/taipei49314/tomorrowci-lab/pull/5) head `7c2534c7ec7a18bb18dc31a0864f7af5ae0807be`; merge `f6efabff0214ef02d2287ccb870a4e2a75c8e2f0`; exact-master [run 31451349743](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31451349743) | 9/9 jobs success | source + Actions |
 | Interactive report engineering | **PASS** | `report-ui` job [93656185178](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31451349743/job/93656185178) | generated assets, types, unit behavior, Chromium accessibility/responsive/XSS/no-JS, and Rust renderer passed | Actions |
 | Exact-commit remote materialization engineering | **PASS** | `rust` job [93656185352](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31451349743/job/93656185352) | canonical URL/40-hex commit, bounded checkout, semantic identity, cleanup, offline full-writer verify/replay, and fail-closed regressions passed | [remote contract](qualification/M4_REMOTE_EXACT_COMMIT.md) |
-| Live public-remote Python/Node/Rust × Docker/Podman | **PASS** | exact source `8ab64498add92360b92034333f056dc202396d24`; [run 31480491950](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31480491950), attempt 1 | all six target/engine pairs passed, each candidate replayed twice, six downloaded current-v2 bundles and the canonical summary reverified | summary artifact `9097092837`, digest `sha256:155a68da092b97467b74185e0233cc727901ac51d58e180bbcd31ecd4030324e`; project-owned only |
+| Live public-remote Python/Node/Rust × Docker/Podman | **PASS** | exact source `f83d43235c4d03ea9a95fc048d3edbd582e8f438`; [run 31679941755](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31679941755), attempt 1 | all six target/engine pairs passed, each candidate replayed twice, six downloaded current-v2 bundles and the canonical summary reverified | summary artifact `9173146614`, digest `sha256:165aaff2716f4362952487d731c14c9aa9de4cae6bda21f3f6104834ea81b564`; project-owned only |
 | Independent adopter/auditor | **BLOCKED** | repository-owned CI is not independent authorization | external action required | — |
 
 ## Deterministic `0.2.0-alpha.1` candidate
 
 | Claim | Status | Exact command / run | Exit / result | Artifact |
 |---|---|---|---|---|
-| Candidate workflow | **PASS** | master `8ab64498add92360b92034333f056dc202396d24`; [run 31479363341](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31479363341), attempt 1 | 16/16 jobs success | artifact `9096821821` |
-| Actions artifact identity | **PASS** | API/download comparison | digest `sha256:be8c08aad565fe7a24d049f8fe8ce8d43ca2478b52554107b68e04667d17f5d6`; size `90570524` | `release-candidate-dist-attempt-1`, expires `2026-11-09T09:48:27Z` |
-| Isolated clean builds and candidate inventory | **PASS** | two clean builds per platform plus two canonical OCI builds; downloaded exact-source verifier | all four archive hashes, OCI tar, `SHA256SUMS.txt`, manifest, SBOM/vulnerability data, and provenance matched | candidate manifest digest `sha256:ebc29db4f02a646a50e1ed73be197bb48a997de105e717595178160b35c7fdb6` |
-| OCI candidate | **PASS** | OCI archive/provenance verifier and downloaded Docker load/smoke | archive `sha256:609368b4b88304bcb69e08958ec9bb96cd286503f2822c0e5b22eb8a5149dbe5`; manifest `sha256:f9243f15c06ae48a2a03f868f7444789d92b058807aac03eba3dab0fc51e8f04`; non-root/labels/trust/doctor/SBOM/vulnerability gates passed | provenance `sha256:96554e8975935aef1a4ce07faca599b557598177ad100396e3562ebe6bca8b21` |
-| Formal release or container publish | **BLOCKED** | manifest status `CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED`; no tag/release/registry promotion or public read-back | publication forbidden until remaining gates pass | — |
+| Candidate workflow | **PASS** | master `f83d43235c4d03ea9a95fc048d3edbd582e8f438`; [run 31678894284](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31678894284), attempt 1 | 16/16 jobs success | artifact `9172900020` |
+| Actions artifact identity | **PASS** | API/download comparison | digest `sha256:5b8b474a05d37c3be88dd559200643ea2439b619ef500f566394c741a05fc2d1`; size `90570997` | `release-candidate-dist-attempt-1`, expires `2026-11-11T07:42:41Z` |
+| Isolated clean builds and candidate inventory | **PASS** | two clean builds per platform plus two canonical OCI builds; downloaded exact-source verifier | all four archive hashes, OCI tar, `SHA256SUMS.txt`, manifest, SBOM/vulnerability data, and provenance matched | candidate manifest digest `sha256:cefd88c6d79537f19088891c2f911b50c60b75e801a2ce53b3bd5c0aa57bcaf4` |
+| OCI candidate | **PASS** | OCI archive/provenance verifier and downloaded Docker load/smoke | archive `sha256:a4a73e60aaa705d80884c165df24b570dba3abd80f980341859f776050d4877f`; manifest `sha256:a96e9e3a1486281902e5d43143362a29e5de4d1bf64f6ba438d50bd7cb9f45f2`; non-root/labels/trust/doctor/SBOM/vulnerability gates passed | provenance `sha256:47b926d3c3c8de4c2d878415c1efae20acd1246a718f640a5b19c8905381cd76` |
+| Public GitHub prerelease distribution | **PASS** (external testing only) | immutable [`v0.2.0-alpha.1`](https://github.com/taipei49314/tomorrowci-lab/releases/tag/v0.2.0-alpha.1), release `369814204`, 16 assets / `92161526` bytes | anonymous public API, asset digest, `SHA256SUMS.txt`, archive, OCI, and Windows CLI read-back passed | exact candidate bytes; no rebuild |
+| Formal release or container publish | **BLOCKED** | manifest status `CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED`; external-testing GitHub distribution exists, but no independent authorization, protected promotion, or registry image | formal promotion remains forbidden until remaining gates pass | — |
 | Broad platform support | **BLOCKED** | archive construction is not Windows/macOS container-path qualification | clean-machine matrix required | — |
 
 ## External qualification and promotion
@@ -119,9 +122,9 @@ platform support or independent qualification.
 |---|---|---|---|---|
 | Authorization/tag-verifier contracts | **PASS** | PR #9 merge `d8af4f839eddb73178a9fcf1f22b24382ee08bad`; exact-master [run 31458777043](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31458777043) | repository-owned contract tests passed | no external authorization |
 | Result-blind preregistration/workflow | **PASS** | PR #10 merge `6e41da287e004802213cfdfbbeb124ed26fa6ae0`; exact-master [run 31463351526](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31463351526) success; preregistration digest `sha256:1f9dee08d03f5f07b8c7f4396d6a0d3ee3aeb2b3071914e26d0a32f6e8b79ace` | implementation contract passed | target result authority is separate |
-| Six target/engine executions | **PASS** | [run 31480491950](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31480491950), exact source `8ab64498add92360b92034333f056dc202396d24`, candidate run `31479363341` | Python/Node/Rust Docker+Podman all passed; each candidate replayed twice; canonical summary plus six evidence artifacts passed repository-outside current-v2 read-back | artifacts `9097085909`, `9097078440`, `9097020490`, `9097018493`, `9097055697`, `9097044023`; summary `9097092837`; status `OBSERVED_PROJECT_OWNED_ONLY` |
+| Six target/engine executions | **PASS** | [run 31679941755](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31679941755), exact source `f83d43235c4d03ea9a95fc048d3edbd582e8f438`, candidate run `31678894284` | Python/Node/Rust Docker+Podman all passed; each candidate replayed twice; canonical summary plus six evidence artifacts passed repository-outside current-v2 read-back | artifacts `9173075187`, `9173073165`, `9173100270`, `9173096452`, `9173141699`, `9173140716`; summary `9173146614`; status `OBSERVED_PROJECT_OWNED_ONLY` |
 | Genuine independent signed authorization/adoption | **BLOCKED** | fixtures, repository-owned workflows, and operator read-back cannot satisfy independence | external signer/auditor required | — |
-| Protected promotion and release download/pull read-back | **BLOCKED** | no consumed authorization, remote tag/Release/registry transaction, or public read-back | formal release gate remains closed | — |
+| Protected promotion and registry pull read-back | **BLOCKED** | the project-operated GitHub prerelease and anonymous download read-back did not consume external authorization or use the protected promotion path; no GHCR transaction/pull exists | formal release gate remains closed | — |
 
 Runs [31467337605](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31467337605)
 and [31476579941](https://github.com/taipei49314/tomorrowci-lab/actions/runs/31476579941)

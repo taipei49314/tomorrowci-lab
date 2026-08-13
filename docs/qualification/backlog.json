@@ -193,17 +193,17 @@
       "summary": "A reproducible non-root OCI candidate, exact SBOM/vulnerability output, detached provenance, and clean-load smoke passed and were downloaded and reverified without granting publication authority.",
       "blocks_release": false,
       "evidence": {
-        "source_sha": "8ab64498add92360b92034333f056dc202396d24",
-        "candidate_run_id": 31479363341,
+        "source_sha": "f83d43235c4d03ea9a95fc048d3edbd582e8f438",
+        "candidate_run_id": 31678894284,
         "candidate_run_attempt": 1,
         "artifact": {
-          "id": 9096821821,
-          "digest": "sha256:be8c08aad565fe7a24d049f8fe8ce8d43ca2478b52554107b68e04667d17f5d6",
-          "expires_at": "2026-11-09T09:48:27Z"
+          "id": 9172900020,
+          "digest": "sha256:5b8b474a05d37c3be88dd559200643ea2439b619ef500f566394c741a05fc2d1",
+          "expires_at": "2026-11-11T07:42:41Z"
         },
-        "candidate_manifest_sha256": "sha256:ebc29db4f02a646a50e1ed73be197bb48a997de105e717595178160b35c7fdb6",
-        "oci_archive_sha256": "sha256:609368b4b88304bcb69e08958ec9bb96cd286503f2822c0e5b22eb8a5149dbe5",
-        "oci_manifest_digest": "sha256:f9243f15c06ae48a2a03f868f7444789d92b058807aac03eba3dab0fc51e8f04",
+        "candidate_manifest_sha256": "sha256:cefd88c6d79537f19088891c2f911b50c60b75e801a2ce53b3bd5c0aa57bcaf4",
+        "oci_archive_sha256": "sha256:a4a73e60aaa705d80884c165df24b570dba3abd80f980341859f776050d4877f",
+        "oci_manifest_digest": "sha256:a96e9e3a1486281902e5d43143362a29e5de4d1bf64f6ba438d50bd7cb9f45f2",
         "promotion_status": "CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED"
       }
     },
@@ -211,7 +211,7 @@
       "id": "RELEASE-SUPPLY-CHAIN",
       "phase": 6,
       "status": "BLOCKED",
-      "summary": "Candidate construction and offline promotion-eligibility contracts exist, but genuine authorization, protected single-consumption remote promotion, publication, and public read-back remain absent.",
+      "summary": "An immutable project-operated GitHub prerelease and anonymous exact-asset read-back exist for external testing, but genuine authorization, protected single-consumption formal promotion, platform qualification, and GHCR publication remain absent.",
       "blocks_release": true
     },
     {
@@ -243,20 +243,20 @@
       "id": "EXTERNAL-TARGETS",
       "phase": 7,
       "status": "PASS",
-      "summary": "Run 31480491950 passed all three preregistered exact-SHA targets on hosted Linux Docker and Podman, replayed every candidate twice, and passed canonical six-artifact repository-outside current-v2 read-back; this remains project-owned and cannot satisfy independent adoption.",
+      "summary": "Run 31679941755 passed all three preregistered exact-SHA targets on hosted Linux Docker and Podman, replayed every candidate twice, and passed canonical six-artifact repository-outside current-v2 read-back; this remains project-owned and cannot satisfy independent adoption.",
       "blocks_release": false,
       "evidence": {
-        "source_sha": "8ab64498add92360b92034333f056dc202396d24",
-        "qualification_run_id": 31480491950,
+        "source_sha": "f83d43235c4d03ea9a95fc048d3edbd582e8f438",
+        "qualification_run_id": 31679941755,
         "qualification_run_attempt": 1,
-        "candidate_run_id": 31479363341,
-        "candidate_manifest_sha256": "sha256:ebc29db4f02a646a50e1ed73be197bb48a997de105e717595178160b35c7fdb6",
-        "oci_manifest_digest": "sha256:f9243f15c06ae48a2a03f868f7444789d92b058807aac03eba3dab0fc51e8f04",
-        "artifact_ids": [9097085909, 9097078440, 9097020490, 9097018493, 9097055697, 9097044023],
+        "candidate_run_id": 31678894284,
+        "candidate_manifest_sha256": "sha256:cefd88c6d79537f19088891c2f911b50c60b75e801a2ce53b3bd5c0aa57bcaf4",
+        "oci_manifest_digest": "sha256:a96e9e3a1486281902e5d43143362a29e5de4d1bf64f6ba438d50bd7cb9f45f2",
+        "artifact_ids": [9173075187, 9173073165, 9173100270, 9173096452, 9173141699, 9173140716],
         "summary_artifact": {
-          "id": 9097092837,
-          "digest": "sha256:155a68da092b97467b74185e0233cc727901ac51d58e180bbcd31ecd4030324e",
-          "expires_at": "2026-11-09T10:03:26Z"
+          "id": 9173146614,
+          "digest": "sha256:165aaff2716f4362952487d731c14c9aa9de4cae6bda21f3f6104834ea81b564",
+          "expires_at": "2026-11-11T07:57:24Z"
         },
         "status": "OBSERVED_PROJECT_OWNED_ONLY",
         "historical_failed_run_ids": [31467337605, 31476579941]

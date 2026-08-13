@@ -16,17 +16,18 @@ No breakage claim without replayable evidence.
 
 ## Product status (evidence-based)
 
-**TomorrowCI is an experimental pre-alpha architecture. The measured
-`v0.1.1-alpha.2` lab release is published; broader product qualification is
-still in progress.**
+**TomorrowCI is an experimental pre-alpha architecture. The exact
+[`v0.2.0-alpha.1`](https://github.com/taipei49314/tomorrowci-lab/releases/tag/v0.2.0-alpha.1)
+candidate is now available as an immutable, project-operated prerelease for
+external testing; broader product qualification is still in progress.**
 
-Current source is the unreleased `0.2.0-alpha.1` development line. It has
-bounded M2/M3 Linux Docker observations, M4 engineering slices, a downloaded
-and reverified deterministic release candidate, and project-owned exact-SHA
-Python/Node/Rust observations on hosted Linux Docker and Podman. The candidate
-is explicitly `CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED`: it is not a tag, GitHub
-Release, published container image, platform-support claim, independent
-adoption, or external authorization.
+The prerelease contains the deterministic candidate built from exact source
+`f83d43235c4d03ea9a95fc048d3edbd582e8f438`, plus bounded M2/M3 Linux Docker
+observations, M4 engineering slices, and project-owned exact-SHA
+Python/Node/Rust observations on hosted Linux Docker and Podman. Its frozen
+manifest remains explicitly `CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED`: public
+distribution is not a platform-support claim, independent adoption, external
+authorization, protected formal promotion, or published GHCR image.
 
 The current live baseline, historical tag identities, clean-download checks,
 and honest blockers are recorded in
@@ -46,10 +47,11 @@ machine-readable in
 | Linux Docker Node/Rust runtime slices | **PASS** (bounded M3 scope) | Node 20→22/24 and Rust 1.83→1.74 observations, fail-closed controls, verify, replay x2, and artifact read-back passed at exact master `a6af307...`; see [M3 qualification](docs/qualification/M3.md) |
 | React/TypeScript interactive report | **PASS** (bounded engineering slice) | PR #5, merge `f6efabf...`, and exact-master CI exercised generated assets, types, unit tests, Chromium accessibility/responsive/XSS/no-JS gates, and Rust rendering |
 | Exact-commit GitHub URL materialization | **PASS** (bounded engineering slice) | PR #5 added fail-closed exact-commit materialization; the later schema-v2 amendment adds manifest-derived index-only Git metadata for disposable scenarios without changing recorded source bytes |
-| Four-platform + OCI candidate | **PASS** (candidate construction/read-back only) | Exact source `8ab6449...`, candidate run `31479363341`, artifact `9096821821`; no support or publication authority |
-| Preregistered public targets (Python/Node/Rust × Docker/Podman) | **PASS** (bounded, project-owned observation) | Exact-source run `31480491950` completed all six pairs, replayed each candidate twice, and passed downloaded current-v2 read-back; the two earlier failed runs remain immutable history |
+| Four-platform + OCI candidate | **PASS** (candidate construction/read-back only) | Exact source `f83d432...`, candidate run `31678894284`, artifact `9172900020`; no support or formal promotion authority |
+| Preregistered public targets (Python/Node/Rust × Docker/Podman) | **PASS** (bounded, project-owned observation) | Exact-source run `31679941755` completed all six pairs, replayed each candidate twice, and passed downloaded current-v2 read-back; earlier failed runs remain immutable history |
+| Public `v0.2.0-alpha.1` distribution | **PASS** (external testing only) | Immutable GitHub prerelease `369814204`; 16 exact candidate assets passed anonymous HTTPS digest/read-back and Windows CLI smoke; no GHCR image |
 | Broader platform qualification | **BLOCKED** | Hosted Linux Docker/Podman target observations and reproducible archives do not qualify Windows Docker Desktop, macOS Docker Desktop/Colima, or a wider clean-machine support matrix |
-| Independent authorization and formal `0.2.0-alpha.1` publication | **BLOCKED** | Verification contracts exist, but no genuine independent signed authorization or protected remote promotion/read-back has passed |
+| Independent authorization and formal `0.2.0-alpha.1` promotion | **BLOCKED** | The external-testing prerelease is owner-operated; no genuine independent signed authorization, protected promotion, or GHCR publication has passed |
 
 ### Tags (audit history)
 
@@ -59,6 +61,7 @@ machine-readable in
 | `v0.1.0-grok-session` | **REJECTED** historical parallel candidate — same peeled commit as `v0.1.0`; GitHub release metadata corrected without moving the tag or assets |
 | `v0.1.1-alpha.1` | **REJECTED acceptance candidate** / live-path demonstration — Python slice real; evidence envelope + release gate incomplete ([audit note](docs/audits/v0.1.1-alpha.1-rejection.md)) |
 | `v0.1.1-alpha.2` | **PUBLISHED MEASURED LAB RELEASE** — Python live path, verify, replay ×2, Action dogfood, and release assets passed; Node/Rust live and the other `NOT_RUN` rows remain unclaimed |
+| `v0.2.0-alpha.1` | **PROJECT-OPERATED EXTERNAL-TESTING PRERELEASE** — exact immutable candidate assets and anonymous public read-back passed; formal independent authorization, platform qualification, and GHCR remain blocked |
 
 Full matrix: [docs/CLAIM_TO_EVIDENCE.md](docs/CLAIM_TO_EVIDENCE.md). GitHub
 currently selects the rejected `v0.1.0-grok-session` as “Latest” because it is
