@@ -262,7 +262,9 @@ class ExternalPolicyTransportTests(unittest.TestCase):
             transport._candidate_identity(self.manifest)
 
         manifest = json.loads(original)
-        manifest["workflow"]["workflow_ref"] = "other/repo/.github/workflows/candidate.yml@refs/heads/master"
+        manifest["workflow"]["workflow_ref"] = (
+            "other/repo/.github/workflows/candidate.yml@refs/heads/master"
+        )
         self.manifest.write_bytes(canonical(manifest))
         with self.assertRaisesRegex(ValueError, "workflow is not authoritative"):
             transport._candidate_identity(self.manifest)

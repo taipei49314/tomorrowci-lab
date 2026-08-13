@@ -288,9 +288,10 @@ def render_urls(
     transport = config["transport"]
     policy_url = render(transport["policy_url_template"])
     signature_url = render(transport["signature_url_template"])
-    if urllib.parse.urlsplit(policy_url).hostname != urllib.parse.urlsplit(
-        signature_url
-    ).hostname:
+    if (
+        urllib.parse.urlsplit(policy_url).hostname
+        != urllib.parse.urlsplit(signature_url).hostname
+    ):
         raise ValueError("policy and signature URLs must have the same authority")
     return policy_url, signature_url
 
