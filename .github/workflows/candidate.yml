@@ -137,12 +137,7 @@ jobs:
             cargo build -p tomorrowci-cli --release --locked --target "${{ matrix.target }}"
             if ($LASTEXITCODE -ne 0) { throw "cargo build $slot failed" }
             $binary = "$targetDir/${{ matrix.target }}/release/tomorrowci.exe"
-            $dumpbin = (Get-Command dumpbin.exe -ErrorAction Stop).Source
-            $imports = (& $dumpbin /dependents $binary 2>&1 | Out-String)
-            if ($LASTEXITCODE -ne 0) { throw "dumpbin dependency inspection failed" }
-            if ($imports -match '(?im)^\s*VCRUNTIME[0-9_]*\.dll\s*$') {
-              throw "Windows candidate retains an app-local-resolvable MSVC runtime import"
-            }
+            & scripts/verify-windows-runtime.ps1 -Binary $binary
             python scripts/package_release.py create `
               --binary $binary `
               --output-dir "dist/$slot" `

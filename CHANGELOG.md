@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Build the Windows MSVC candidate with the CRT linked statically and reject
   candidate construction if PE inspection still finds an app-local-resolvable
   `VCRUNTIME*.dll` import. This closes only that runtime-dependency gap; it does
-  not grant release authorization or widen the candidate's claim scope.
+  not grant release authorization or widen the candidate's claim scope. The
+  same non-publishing gate now builds the exact pull-request head on Windows,
+  resolves the active MSVC `dumpbin.exe`, and smoke-tests `trust --json`.
 - Record the immutable, project-operated `v0.2.0-alpha.1` GitHub prerelease and
   anonymous exact-asset read-back for external testing. The candidate manifest
   remains unauthorized; independent authorization, protected formal promotion,

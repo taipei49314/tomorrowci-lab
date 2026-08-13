@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import stat
 import tempfile
+import tomllib
 import unittest
 import zipfile
 from pathlib import Path
@@ -18,6 +19,7 @@ from candidate_manifest import (
     verify_candidate,
 )
 from package_release import ZIP_EPOCH, create_archive, extract_archive, verify_archive
+from windows_runtime_gate import RuntimeGateError, validate_dumpbin_output
 
 VERSION = "0.2.0-alpha.1"
 SHA = "1" * 40
@@ -233,17 +235,81 @@ class ReleaseCandidateTests(unittest.TestCase):
                 )
 
     def test_windows_candidate_requires_static_crt_and_pe_import_check(self) -> None:
-        config = (ROOT / ".cargo/config.toml").read_text(encoding="utf-8")
-        workflow = (ROOT / ".github/workflows/candidate.yml").read_text(
+        config = tomllib.loads(
+            (ROOT / ".cargo/config.toml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            config["target"]["x86_64-pc-windows-msvc"]["rustflags"],
+            ["-C", "target-feature=+crt-static"],
+        )
+
+        candidate_workflow = (ROOT / ".github/workflows/candidate.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn("target-feature=+crt-static", config)
         self.assertIn(
             'RUSTFLAGS = "-C link-arg=/Brepro -C target-feature=+crt-static"',
-            workflow,
+            candidate_workflow,
         )
-        self.assertIn("Get-Command dumpbin.exe -ErrorAction Stop", workflow)
-        self.assertIn("VCRUNTIME[0-9_]*\\.dll", workflow)
+        self.assertIn(
+            "scripts/verify-windows-runtime.ps1 -Binary $binary",
+            candidate_workflow,
+        )
+
+        resolver = (ROOT / "scripts/verify-windows-runtime.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("vswhere.exe", resolver)
+        self.assertIn("Microsoft.VisualStudio.Component.VC.Tools.x86.x64", resolver)
+        self.assertIn("windows_runtime_gate.py", resolver)
+
+    def test_windows_pr_runtime_gate_executes_exact_head_without_publication(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        job = workflow.split("  windows-pr-runtime:\n", 1)[1].split(
+            "\n  report-ui:", 1
+        )[0]
+        self.assertIn("if: github.event_name == 'pull_request'", job)
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", job)
+        self.assertIn(
+            'RUSTFLAGS: "-C link-arg=/Brepro -C target-feature=+crt-static"', job
+        )
+        self.assertIn("cargo build -p tomorrowci-cli --release --locked", job)
+        self.assertIn("scripts/verify-windows-runtime.ps1 -Binary $binary", job)
+        self.assertIn("& $binary trust --json", job)
+        for publishing_command in (
+            "actions/upload-artifact",
+            "gh release",
+            "docker push",
+            "package_release.py",
+        ):
+            self.assertNotIn(publishing_command, job)
+
+    def test_windows_pe_import_gate_rejects_vcruntime_behaviorally(self) -> None:
+        safe = """
+        Image has the following dependencies:
+
+            KERNEL32.dll
+            api-ms-win-crt-runtime-l1-1-0.dll
+            USERENV.dll
+        """
+        self.assertEqual(
+            validate_dumpbin_output(safe),
+            (
+                "KERNEL32.DLL",
+                "API-MS-WIN-CRT-RUNTIME-L1-1-0.DLL",
+                "USERENV.DLL",
+            ),
+        )
+        for forbidden in (
+            "VCRUNTIME140.dll",
+            "vcruntime140_1.DLL",
+            "VCRUNTIME140D.dll",
+        ):
+            with self.assertRaisesRegex(
+                RuntimeGateError, "app-local-resolvable MSVC runtime import"
+            ):
+                validate_dumpbin_output(f"    KERNEL32.dll\n    {forbidden}\n")
+        with self.assertRaisesRegex(RuntimeGateError, "no parseable DLL dependencies"):
+            validate_dumpbin_output("dumpbin emitted an unexpected format")
 
     def test_candidate_manifest_binds_exact_payload_source_and_run(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
