@@ -35,6 +35,18 @@ on:
         description: Exact OCI image manifest digest
         required: true
         type: string
+      platform_qualification_run_id:
+        description: Exact successful dedicated platform-qualification run ID
+        required: true
+        type: string
+      platform_qualification_run_attempt:
+        description: Exact successful platform-qualification run attempt
+        required: true
+        type: string
+      platform_qualification_identity_sha256:
+        description: Canonical digest binding the run and all seven retained artifacts
+        required: true
+        type: string
       authorization_artifact_id:
         description: Artifact ID containing independently signed authorization files
         required: true
@@ -56,7 +68,7 @@ concurrency:
 jobs:
   prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     outputs:
       plan_sha256: ${{ steps.publication-plan.outputs.plan_sha256 }}
       state_artifact_digest: ${{ steps.state.outputs.artifact-digest }}
@@ -76,6 +88,9 @@ jobs:
           CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt }}
           CI_RUN_ID: ${{ inputs.ci_run_id }}
           OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+          PLATFORM_IDENTITY_SHA256: ${{ inputs.platform_qualification_identity_sha256 }}
+          PLATFORM_RUN_ATTEMPT: ${{ inputs.platform_qualification_run_attempt }}
+          PLATFORM_RUN_ID: ${{ inputs.platform_qualification_run_id }}
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
@@ -91,16 +106,24 @@ jobs:
           [[ "$CANDIDATE_ARTIFACT_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$CANDIDATE_MANIFEST_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$OCI_MANIFEST_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$PLATFORM_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PLATFORM_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PLATFORM_IDENTITY_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]]
       - name: Snapshot default branch, exact CI, candidate run, and artifact APIs
         id: candidate-api
         env:
           CANDIDATE_ARTIFACT_SHA256: ${{ inputs.candidate_artifact_sha256 }}
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
           CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
           CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt }}
           CI_RUN_ID: ${{ inputs.ci_run_id }}
           GH_TOKEN: ${{ github.token }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+          PLATFORM_IDENTITY_SHA256: ${{ inputs.platform_qualification_identity_sha256 }}
+          PLATFORM_RUN_ATTEMPT: ${{ inputs.platform_qualification_run_attempt }}
+          PLATFORM_RUN_ID: ${{ inputs.platform_qualification_run_id }}
         run: |
           set -euo pipefail
           metadata="$RUNNER_TEMP/promotion-api"
@@ -112,6 +135,10 @@ jobs:
           gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" > "$metadata/candidate-run.json"
           gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" \
             > "$metadata/candidate-artifacts.json"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$PLATFORM_RUN_ID" \
+            > "$metadata/platform-run.json"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$PLATFORM_RUN_ID/artifacts?per_page=100" \
+            > "$metadata/platform-artifacts.json"
           gh api "/repos/$GITHUB_REPOSITORY/environments/release" \
             > "$metadata/release-environment.json"
           python3 - "$metadata/repository.json" "$metadata/master.json" "$GITHUB_REPOSITORY" "$GITHUB_SHA" <<'PY'
@@ -151,6 +178,17 @@ jobs:
           test "$(stat -c '%s' "$metadata/candidate-artifact.zip")" = "$artifact_size"
           test "sha256:$(sha256sum "$metadata/candidate-artifact.zip" | cut -d ' ' -f 1)" = \
             "$artifact_digest"
+          python3 scripts/promotion_preflight.py inspect-platform-api \
+            --run-metadata "$metadata/platform-run.json" \
+            --artifact-metadata "$metadata/platform-artifacts.json" \
+            --repository "$GITHUB_REPOSITORY" --source-sha "$CANDIDATE_SOURCE_SHA" \
+            --run-id "$PLATFORM_RUN_ID" --run-attempt "$PLATFORM_RUN_ATTEMPT" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            --candidate-manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+            --oci-manifest-digest "$OCI_MANIFEST_DIGEST" \
+            --expected-identity-sha256 "$PLATFORM_IDENTITY_SHA256" \
+            --output "$metadata/platform-identity.json"
       - name: Extract the digest-verified raw candidate artifact without rebuilding
         run: |
           set -euo pipefail
@@ -217,30 +255,94 @@ jobs:
           python3 scripts/promotion_preflight.py inspect-oci-manifest \
             --provenance "$dist/image-provenance.json" \
             --expected-digest "$OCI_MANIFEST_DIGEST"
-      - name: Require immutable repository trust material and verify authorization
+      - name: Download raw platform artifacts and reverify exact retained evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/promotion-api"
+          identity="$metadata/platform-identity.json"
+          downloads="$RUNNER_TEMP/platform-downloads"
+          artifacts="$RUNNER_TEMP/platform-artifacts"
+          observations="$RUNNER_TEMP/platform-observations"
+          state_root="$RUNNER_TEMP/promotion-preflight-state"
+          test ! -e "$downloads" && test ! -e "$artifacts"
+          test ! -e "$observations" && test ! -e "$state_root"
+          mkdir "$downloads" "$artifacts" "$observations" "$observations/readback" \
+            "$state_root"
+          while IFS= read -r item; do
+            artifact_id="$(jq -er '.artifact_id' <<<"$item")"
+            digest="$(jq -er '.archive_sha256' <<<"$item")"
+            size="$(jq -er '.archive_size' <<<"$item")"
+            role="$(jq -er '.role' <<<"$item")"
+            scope="$(jq -er '.scope' <<<"$item")"
+            [[ "$artifact_id" =~ ^[1-9][0-9]*$ ]]
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            [[ "$size" =~ ^[1-9][0-9]*$ ]]
+            case "$role:$scope" in
+              candidate-binding:candidate)
+                destination="$observations/candidate-binding"
+                ;;
+              qualification:windows-x86_64-docker-desktop-linux|\
+              qualification:macos-x86_64-colima|\
+              qualification:macos-aarch64-colima)
+                destination="$artifacts/$scope"
+                ;;
+              readback:windows-x86_64-docker-desktop-linux|\
+              readback:macos-x86_64-colima|\
+              readback:macos-aarch64-colima)
+                destination="$observations/readback/$scope"
+                ;;
+              *) exit 1 ;;
+            esac
+            archive="$downloads/$artifact_id.zip"
+            gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" \
+              > "$archive"
+            test "$(stat -c '%s' "$archive")" = "$size"
+            test "sha256:$(sha256sum "$archive" | cut -d ' ' -f 1)" = "$digest"
+            if test "$role" = qualification; then
+              python3 scripts/promotion_preflight.py extract-platform-artifact \
+                --archive "$archive" --destination "$destination"
+            else
+              python3 scripts/promotion_preflight.py extract-platform-observation \
+                --archive "$archive" --destination "$destination" --role "$role"
+            fi
+          done < <(jq -cer '.artifacts[]' "$identity")
+          cp "$identity" "$state_root/platform-identity.json"
+          python3 scripts/promotion_preflight.py verify-platform-consumption \
+            --identity "$state_root/platform-identity.json" \
+            --artifacts-root "$artifacts" --observations-root "$observations" \
+            --candidate-dist "$RUNNER_TEMP/candidate-dist" \
+            --fixture-source "$GITHUB_WORKSPACE/fixtures/python-runtime-break" \
+            --output "$state_root/platform-consumption.json"
+      - name: Fetch candidate-derived externally signed policy and verify authorization
         env:
           CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
         run: |
           set -euo pipefail
           trust=.github/release-trust
           test -f "$trust/allowed_signers" && test ! -L "$trust/allowed_signers"
-          test -f "$trust/expected-policy-sha256.txt" && \
-            test ! -L "$trust/expected-policy-sha256.txt"
+          test -f "$trust/external-policy-transport.json" && \
+            test ! -L "$trust/external-policy-transport.json"
           git ls-files --error-unmatch -- "$trust/allowed_signers" \
-            "$trust/expected-policy-sha256.txt"
-          python3 scripts/promotion_preflight.py inspect-trust-material \
-            --allowed-signers "$trust/allowed_signers" \
-            --expected-policy-digest "$trust/expected-policy-sha256.txt" \
-            > "$RUNNER_TEMP/tracked-trust-identity.json"
-          expected_policy="$(tr -d '\r\n' < "$trust/expected-policy-sha256.txt")"
-          [[ "$expected_policy" =~ ^sha256:[0-9a-f]{64}$ ]]
-          authorization="$RUNNER_TEMP/authorization"
+            "$trust/external-policy-transport.json"
+          policy_root="$RUNNER_TEMP/external-policy"
+          mkdir "$policy_root"
           dist="$RUNNER_TEMP/candidate-dist"
+          python3 scripts/external_policy_transport.py fetch \
+            --config "$trust/external-policy-transport.json" \
+            --allowed-signers "$trust/allowed_signers" \
+            --candidate-manifest "$dist/candidate-manifest.json" \
+            --output-policy "$policy_root/external-policy.json" \
+            --output-signature "$policy_root/external-policy.json.sig" \
+            > "$RUNNER_TEMP/external-policy-transport-receipt.json"
+          test -s "$RUNNER_TEMP/external-policy-transport-receipt.json"
+          authorization="$RUNNER_TEMP/authorization"
           python3 scripts/external_authorization.py \
             --authorization "$authorization/external-authorization.json" \
             --signature "$authorization/external-authorization.json.sig" \
-            --policy "$authorization/preregistered-policy.json" \
-            --expected-policy-sha256 "$expected_policy" \
+            --policy "$policy_root/external-policy.json" \
+            --policy-signature "$policy_root/external-policy.json.sig" \
             --allowed-signers "$trust/allowed_signers" \
             --candidate-manifest "$dist/candidate-manifest.json" \
             --oci-provenance "$dist/image-provenance.json" \
@@ -257,7 +359,7 @@ jobs:
           dist="$RUNNER_TEMP/candidate-dist"
           trust=.github/release-trust
           version="$(python3 scripts/version_contract.py)"
-          authorization_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["external"]["authorization_id"])' "$authorization/preregistered-policy.json")"
+          authorization_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["external"]["authorization_id"])' "$RUNNER_TEMP/external-policy/external-policy.json")"
           [[ "$authorization_id" =~ ^[0-9a-f]{64}$ ]]
           export GIT_COMMITTER_NAME="TomorrowCI Release Bot"
           export GIT_COMMITTER_EMAIL="release@tomorrowci.invalid"
@@ -273,14 +375,13 @@ jobs:
               "$CANDIDATE_SOURCE_SHA" \
               --message "Consume TomorrowCI external authorization $authorization_id"
           fi
-          expected_policy="$(tr -d '\r\n' < "$trust/expected-policy-sha256.txt")"
           python3 scripts/tag_promotion_attestation.py \
             --attestation "$authorization/tag-promotion-attestation.json" \
             --git-repo . --candidate-dir "$dist" \
             --authorization "$authorization/external-authorization.json" \
             --signature "$authorization/external-authorization.json.sig" \
-            --policy "$authorization/preregistered-policy.json" \
-            --expected-policy-sha256 "$expected_policy" \
+            --policy "$RUNNER_TEMP/external-policy/external-policy.json" \
+            --policy-signature "$RUNNER_TEMP/external-policy/external-policy.json.sig" \
             --allowed-signers "$trust/allowed_signers" \
             --evidence "$authorization/external-qualification-evidence.json"
           tag_oid="$(git rev-parse "$version_ref")"
@@ -293,7 +394,7 @@ jobs:
           git ls-remote --refs origin "$version_ref" "$marker_ref" \
             > "$RUNNER_TEMP/remote-refs.txt"
           state_root="$RUNNER_TEMP/promotion-preflight-state"
-          mkdir "$state_root"
+          test -d "$state_root"
           python3 scripts/promotion_preflight.py inspect-remote-refs \
             --observation "$RUNNER_TEMP/remote-refs.txt" \
             --version-ref "$version_ref" --version-oid "$tag_oid" \
@@ -301,8 +402,10 @@ jobs:
             --output "$state_root/remote-state.json"
           cp "$authorization/tag-promotion-attestation.json" "$state_root/"
           cp "$RUNNER_TEMP/external-authorization-receipt.json" "$state_root/"
+          cp "$RUNNER_TEMP/external-policy-transport-receipt.json" "$state_root/"
+          cp "$RUNNER_TEMP/external-policy/external-policy.json" "$state_root/"
+          cp "$RUNNER_TEMP/external-policy/external-policy.json.sig" "$state_root/"
           cp "$RUNNER_TEMP/authorization-marker-identity.json" "$state_root/"
-          cp "$RUNNER_TEMP/tracked-trust-identity.json" "$state_root/"
           test -z "$(git status --porcelain --untracked-files=all)"
       - name: Snapshot exact GitHub Release and GHCR states and build disabled plan
         id: publication-plan
@@ -350,6 +453,7 @@ jobs:
             --candidate-dir "$RUNNER_TEMP/candidate-dist" \
             --remote-state "$state_root/remote-state.json" \
             --marker-identity "$state_root/authorization-marker-identity.json" \
+            --platform-consumption "$state_root/platform-consumption.json" \
             --release-pages "$metadata/release-pages.json" \
             --ghcr-versions "$metadata/ghcr-version-pages.json" \
             --repository "$GITHUB_REPOSITORY" \
@@ -368,7 +472,7 @@ jobs:
   write:
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     environment: release
     permissions:
       actions: read
@@ -484,6 +588,92 @@ jobs:
           python3 scripts/promotion_preflight.py extract-candidate \
             --archive "$RUNNER_TEMP/write-candidate-api/artifact.zip" \
             --destination "$RUNNER_TEMP/candidate-dist" --version "$version"
+      - name: Re-download and reverify all platform evidence after approval
+        env:
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          GH_TOKEN: ${{ github.token }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+          PLATFORM_IDENTITY_SHA256: ${{ inputs.platform_qualification_identity_sha256 }}
+          PLATFORM_RUN_ATTEMPT: ${{ inputs.platform_qualification_run_attempt }}
+          PLATFORM_RUN_ID: ${{ inputs.platform_qualification_run_id }}
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/write-platform-api"
+          downloads="$RUNNER_TEMP/write-platform-downloads"
+          artifacts="$RUNNER_TEMP/write-platform-artifacts"
+          observations="$RUNNER_TEMP/write-platform-observations"
+          prepared="$RUNNER_TEMP/promotion-state"
+          mkdir "$metadata" "$downloads" "$artifacts" "$observations" \
+            "$observations/readback"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$PLATFORM_RUN_ID" \
+            > "$metadata/run.json"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$PLATFORM_RUN_ID/artifacts?per_page=100" \
+            > "$metadata/artifacts.json"
+          python3 scripts/promotion_preflight.py inspect-platform-api \
+            --run-metadata "$metadata/run.json" \
+            --artifact-metadata "$metadata/artifacts.json" \
+            --repository "$GITHUB_REPOSITORY" --source-sha "$CANDIDATE_SOURCE_SHA" \
+            --run-id "$PLATFORM_RUN_ID" --run-attempt "$PLATFORM_RUN_ATTEMPT" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            --candidate-manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+            --oci-manifest-digest "$OCI_MANIFEST_DIGEST" \
+            --expected-identity-sha256 "$PLATFORM_IDENTITY_SHA256" \
+            --output "$metadata/platform-identity.json"
+          cmp --silent "$metadata/platform-identity.json" \
+            "$prepared/platform-identity.json"
+          while IFS= read -r item; do
+            artifact_id="$(jq -er '.artifact_id' <<<"$item")"
+            digest="$(jq -er '.archive_sha256' <<<"$item")"
+            size="$(jq -er '.archive_size' <<<"$item")"
+            role="$(jq -er '.role' <<<"$item")"
+            scope="$(jq -er '.scope' <<<"$item")"
+            [[ "$artifact_id" =~ ^[1-9][0-9]*$ ]]
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            [[ "$size" =~ ^[1-9][0-9]*$ ]]
+            case "$role:$scope" in
+              candidate-binding:candidate)
+                destination="$observations/candidate-binding"
+                ;;
+              qualification:windows-x86_64-docker-desktop-linux|\
+              qualification:macos-x86_64-colima|\
+              qualification:macos-aarch64-colima)
+                destination="$artifacts/$scope"
+                ;;
+              readback:windows-x86_64-docker-desktop-linux|\
+              readback:macos-x86_64-colima|\
+              readback:macos-aarch64-colima)
+                destination="$observations/readback/$scope"
+                ;;
+              *) exit 1 ;;
+            esac
+            archive="$downloads/$artifact_id.zip"
+            gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" \
+              > "$archive"
+            test "$(stat -c '%s' "$archive")" = "$size"
+            test "sha256:$(sha256sum "$archive" | cut -d ' ' -f 1)" = "$digest"
+            if test "$role" = qualification; then
+              python3 scripts/promotion_preflight.py extract-platform-artifact \
+                --archive "$archive" --destination "$destination"
+            else
+              python3 scripts/promotion_preflight.py extract-platform-observation \
+                --archive "$archive" --destination "$destination" --role "$role"
+            fi
+          done < <(jq -cer '.artifacts[]' "$metadata/platform-identity.json")
+          python3 scripts/promotion_preflight.py verify-platform-consumption \
+            --identity "$metadata/platform-identity.json" \
+            --artifacts-root "$artifacts" --observations-root "$observations" \
+            --candidate-dist "$RUNNER_TEMP/candidate-dist" \
+            --fixture-source "$GITHUB_WORKSPACE/fixtures/python-runtime-break" \
+            --output "$RUNNER_TEMP/write-platform-consumption.json"
+          cmp --silent "$RUNNER_TEMP/write-platform-consumption.json" \
+            "$prepared/platform-consumption.json"
+          python3 scripts/promotion_preflight.py verify-platform-plan-binding \
+            --plan "$prepared/publication-plan.json" \
+            --consumption "$RUNNER_TEMP/write-platform-consumption.json"
       - name: Re-download raw authorization bytes after approval
         env:
           ARTIFACT_ID: ${{ inputs.authorization_artifact_id }}
@@ -537,16 +727,31 @@ jobs:
           test "$(git rev-parse "$marker_ref")" = "$marker_oid"
           authorization="$RUNNER_TEMP/write-authorization"
           trust=.github/release-trust
-          python3 scripts/promotion_preflight.py inspect-trust-material \
+          test -f "$trust/allowed_signers" && test ! -L "$trust/allowed_signers"
+          test -f "$trust/external-policy-transport.json" && \
+            test ! -L "$trust/external-policy-transport.json"
+          git ls-files --error-unmatch -- "$trust/allowed_signers" \
+            "$trust/external-policy-transport.json"
+          policy_root="$RUNNER_TEMP/write-external-policy"
+          mkdir "$policy_root"
+          python3 scripts/external_policy_transport.py fetch \
+            --config "$trust/external-policy-transport.json" \
             --allowed-signers "$trust/allowed_signers" \
-            --expected-policy-digest "$trust/expected-policy-sha256.txt" \
-            > "$RUNNER_TEMP/write-trust-identity.json"
-          expected_policy="$(tr -d '\r\n' < "$trust/expected-policy-sha256.txt")"
+            --candidate-manifest "$dist/candidate-manifest.json" \
+            --output-policy "$policy_root/external-policy.json" \
+            --output-signature "$policy_root/external-policy.json.sig" \
+            > "$RUNNER_TEMP/write-external-policy-transport-receipt.json"
+          cmp --silent "$policy_root/external-policy.json" \
+            "$RUNNER_TEMP/promotion-state/external-policy.json"
+          cmp --silent "$policy_root/external-policy.json.sig" \
+            "$RUNNER_TEMP/promotion-state/external-policy.json.sig"
+          cmp --silent "$RUNNER_TEMP/write-external-policy-transport-receipt.json" \
+            "$RUNNER_TEMP/promotion-state/external-policy-transport-receipt.json"
           python3 scripts/external_authorization.py \
             --authorization "$authorization/external-authorization.json" \
             --signature "$authorization/external-authorization.json.sig" \
-            --policy "$authorization/preregistered-policy.json" \
-            --expected-policy-sha256 "$expected_policy" \
+            --policy "$policy_root/external-policy.json" \
+            --policy-signature "$policy_root/external-policy.json.sig" \
             --allowed-signers "$trust/allowed_signers" \
             --candidate-manifest "$dist/candidate-manifest.json" \
             --oci-provenance "$dist/image-provenance.json" \
@@ -557,8 +762,8 @@ jobs:
             --git-repo . --candidate-dir "$dist" \
             --authorization "$authorization/external-authorization.json" \
             --signature "$authorization/external-authorization.json.sig" \
-            --policy "$authorization/preregistered-policy.json" \
-            --expected-policy-sha256 "$expected_policy" \
+            --policy "$policy_root/external-policy.json" \
+            --policy-signature "$policy_root/external-policy.json.sig" \
             --allowed-signers "$trust/allowed_signers" \
             --evidence "$authorization/external-qualification-evidence.json"
           cmp --silent "$authorization/tag-promotion-attestation.json" \

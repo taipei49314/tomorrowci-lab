@@ -277,6 +277,24 @@ class TagPromotionAttestationTests(unittest.TestCase):
         self.policy_path.write_bytes(
             external_authorization._canonical_bytes(self.policy)
         )
+        policy_signature = Path(str(self.policy_path) + ".sig")
+        if policy_signature.exists():
+            policy_signature.unlink()
+        subprocess.run(
+            [
+                "ssh-keygen",
+                "-Y",
+                "sign",
+                "-q",
+                "-f",
+                str(self.key),
+                "-n",
+                external_authorization.NAMESPACE,
+                str(self.policy_path),
+            ],
+            check=True,
+            capture_output=True,
+        )
         self.authorization.write_bytes(
             external_authorization._canonical_bytes(self.auth)
         )
@@ -304,7 +322,7 @@ class TagPromotionAttestationTests(unittest.TestCase):
             authorization=self.authorization,
             signature=Path(str(self.authorization) + ".sig"),
             policy=self.policy_path,
-            expected_policy_sha256=self._file_digest(self.policy_path),
+            policy_signature=Path(str(self.policy_path) + ".sig"),
             allowed_signers=self.allowed,
             candidate_manifest=self.dist / promotion.MANIFEST_NAME,
             oci_provenance=self.dist / "image-provenance.json",
@@ -847,6 +865,21 @@ class FullPromotionEndToEndTests(unittest.TestCase):
         self.policy_path.write_bytes(
             external_authorization._canonical_bytes(self.policy)
         )
+        subprocess.run(
+            [
+                "ssh-keygen",
+                "-Y",
+                "sign",
+                "-q",
+                "-f",
+                str(self.key),
+                "-n",
+                external_authorization.NAMESPACE,
+                str(self.policy_path),
+            ],
+            check=True,
+            capture_output=True,
+        )
         self.authorization.write_bytes(
             external_authorization._canonical_bytes(self.auth)
         )
@@ -890,7 +923,7 @@ class FullPromotionEndToEndTests(unittest.TestCase):
             authorization=self.authorization,
             signature=Path(str(self.authorization) + ".sig"),
             policy=self.policy_path,
-            expected_policy_sha256=self._file_digest(self.policy_path),
+            policy_signature=Path(str(self.policy_path) + ".sig"),
             allowed_signers=self.allowed,
             candidate_manifest=self.dist / candidate_manifest.MANIFEST_NAME,
             oci_provenance=self.dist / "image-provenance.json",

@@ -239,6 +239,24 @@ class ExternalAuthorizationTests(unittest.TestCase):
 
     def write_and_sign(self) -> None:
         self.write_policy()
+        policy_signature = Path(str(self.policy_path) + ".sig")
+        if policy_signature.exists():
+            policy_signature.unlink()
+        subprocess.run(
+            [
+                "ssh-keygen",
+                "-Y",
+                "sign",
+                "-q",
+                "-f",
+                str(self.key),
+                "-n",
+                verifier.NAMESPACE,
+                str(self.policy_path),
+            ],
+            check=True,
+            capture_output=True,
+        )
         self.authorization.write_bytes(canonical(self.auth))
         signature = Path(str(self.authorization) + ".sig")
         if signature.exists():
@@ -264,7 +282,7 @@ class ExternalAuthorizationTests(unittest.TestCase):
             "authorization": self.authorization,
             "signature": Path(str(self.authorization) + ".sig"),
             "policy": self.policy_path,
-            "expected_policy_sha256": digest(self.policy_path),
+            "policy_signature": Path(str(self.policy_path) + ".sig"),
             "allowed_signers": self.allowed,
             "candidate_manifest": self.manifest,
             "oci_provenance": self.provenance,
@@ -299,9 +317,12 @@ class ExternalAuthorizationTests(unittest.TestCase):
         receipt = json.loads(output.getvalue())
         self.assertEqual(receipt["authorization"]["sha256"], digest(self.authorization))
 
-    def test_rejects_replaced_preregistration_policy(self) -> None:
-        with self.assertRaisesRegex(ValueError, "preregistered digest"):
-            self.verify(expected_policy_sha256="sha256:" + "0" * 64)
+    def test_rejects_replaced_externally_signed_policy(self) -> None:
+        self.policy_path.write_bytes(self.policy_path.read_bytes() + b" ")
+        with self.assertRaisesRegex(
+            ValueError, "canonical JSON|signature verification failed"
+        ):
+            self.verify()
 
     def test_rejects_duplicate_noncanonical_and_unknown_json(self) -> None:
         original = copy.deepcopy(self.auth)
@@ -436,7 +457,6 @@ class ExternalAuthorizationTests(unittest.TestCase):
 
     def test_policy_snapshot_prevents_digest_then_parse_swap(self) -> None:
         good_policy = self.policy_path.read_bytes()
-        good_digest = digest(self.policy_path)
         self.policy["external"]["authorization_id"] = "e" * 64
         self.auth["external"]["authorization_id"] = "e" * 64
         self.write_and_sign()
@@ -454,7 +474,7 @@ class ExternalAuthorizationTests(unittest.TestCase):
             patch("external_authorization._snapshot", side_effect=snapshot_then_swap),
             self.assertRaisesRegex(ValueError, "external run"),
         ):
-            self.verify(expected_policy_sha256=good_digest)
+            self.verify()
 
     def test_authorization_snapshot_prevents_parse_then_signature_swap(self) -> None:
         signed_bytes = self.authorization.read_bytes()

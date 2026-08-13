@@ -16,9 +16,10 @@ import re
 import stat
 import sys
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import candidate_manifest
+import platform_qualification
 import tag_promotion_attestation
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -38,18 +39,25 @@ AUTHORIZATION_FILES = {
     "external-authorization.json",
     "external-authorization.json.sig",
     "external-qualification-evidence.json",
-    "preregistered-policy.json",
     "tag-promotion-attestation.json",
 }
 PREPARED_STATE_FILES = {
     "authorization-marker-identity.json",
     "external-authorization-receipt.json",
+    "external-policy-transport-receipt.json",
+    "external-policy.json",
+    "external-policy.json.sig",
+    "platform-consumption.json",
+    "platform-identity.json",
     "publication-plan.json",
     "release-body.md",
     "remote-state.json",
     "tag-promotion-attestation.json",
-    "tracked-trust-identity.json",
 }
+PLATFORM_INPUT_KIND = "tomorrowci.protected-platform-qualification-input.v1"
+PLATFORM_CONSUMPTION_KIND = "tomorrowci.protected-platform-consumption.v1"
+PLATFORM_WORKFLOW_PATH = ".github/workflows/platform-qualification.yml"
+PLATFORM_IDS = tuple(sorted(platform_qualification.PLATFORMS))
 
 
 def _load_json(path: Path, label: str) -> dict:
@@ -174,6 +182,318 @@ def inspect_ci_run(
     ):
         raise ValueError("CI run repository identity mismatch")
     return expected
+
+
+def _strict_object(value: object, keys: set[str], label: str) -> dict:
+    if type(value) is not dict or set(value) != keys:
+        raise ValueError(f"{label} field inventory mismatch")
+    return value
+
+
+def _platform_artifact_specs(run_attempt: int, source_sha: str) -> list[dict[str, str]]:
+    suffix = f"attempt-{run_attempt}-source-{source_sha}"
+    specs = [
+        {
+            "name": f"platform-qualification-candidate-binding-{suffix}",
+            "role": "candidate-binding",
+            "scope": "candidate",
+        }
+    ]
+    for platform_id in PLATFORM_IDS:
+        specs.extend(
+            (
+                {
+                    "name": f"platform-qualification-{platform_id}-{suffix}",
+                    "role": "qualification",
+                    "scope": platform_id,
+                },
+                {
+                    "name": f"platform-qualification-readback-{platform_id}-{suffix}",
+                    "role": "readback",
+                    "scope": platform_id,
+                },
+            )
+        )
+    return sorted(specs, key=lambda item: item["name"])
+
+
+def _platform_artifact_identity(
+    value: object,
+    *,
+    expected_name: str,
+    role: str,
+    scope: str,
+    repository: str,
+    source_sha: str,
+    run_id: int,
+) -> dict:
+    artifact = _strict_object(
+        value,
+        set(value) if type(value) is dict else set(),
+        f"platform artifact {expected_name}",
+    )
+    artifact_id = artifact.get("id")
+    size = artifact.get("size_in_bytes")
+    digest = artifact.get("digest")
+    workflow_run = artifact.get("workflow_run")
+    if (
+        type(artifact_id) is not int
+        or isinstance(artifact_id, bool)
+        or artifact_id <= 0
+        or type(size) is not int
+        or isinstance(size, bool)
+        or size <= 0
+        or type(digest) is not str
+        or not SHA256.fullmatch(digest)
+        or artifact.get("name") != expected_name
+        or artifact.get("expired") is not False
+        or type(workflow_run) is not dict
+        or workflow_run.get("id") != run_id
+        or workflow_run.get("head_branch") != "master"
+        or workflow_run.get("head_sha") != source_sha
+    ):
+        raise ValueError(f"platform artifact {expected_name} identity mismatch")
+    expected_url = (
+        f"https://api.github.com/repos/{repository}/actions/artifacts/{artifact_id}/zip"
+    )
+    if artifact.get("archive_download_url") != expected_url:
+        raise ValueError(f"platform artifact {expected_name} archive URL mismatch")
+    return {
+        "archive_sha256": digest,
+        "archive_size": size,
+        "artifact_id": artifact_id,
+        "name": expected_name,
+        "role": role,
+        "scope": scope,
+    }
+
+
+def _validate_platform_identity(value: object) -> dict:
+    identity = _strict_object(
+        value,
+        {
+            "artifacts",
+            "candidate",
+            "kind",
+            "project",
+            "schema_version",
+            "status",
+            "workflow",
+        },
+        "platform qualification identity",
+    )
+    if (
+        identity["kind"] != PLATFORM_INPUT_KIND
+        or identity["schema_version"] != 1
+        or identity["status"] != platform_qualification.STATUS
+    ):
+        raise ValueError("platform qualification identity kind/status mismatch")
+    candidate = _strict_object(
+        identity["candidate"],
+        {
+            "manifest_sha256",
+            "oci_manifest_digest",
+            "run_attempt",
+            "run_id",
+            "source_sha",
+        },
+        "platform candidate identity",
+    )
+    project = _strict_object(
+        identity["project"],
+        {"repository", "source_ref", "source_sha"},
+        "platform project identity",
+    )
+    workflow = _strict_object(
+        identity["workflow"],
+        {"conclusion", "path", "run_attempt", "run_id"},
+        "platform workflow identity",
+    )
+    if (
+        type(candidate["run_id"]) is not int
+        or isinstance(candidate["run_id"], bool)
+        or candidate["run_id"] <= 0
+        or type(candidate["run_attempt"]) is not int
+        or isinstance(candidate["run_attempt"], bool)
+        or candidate["run_attempt"] <= 0
+        or type(workflow["run_id"]) is not int
+        or isinstance(workflow["run_id"], bool)
+        or workflow["run_id"] <= 0
+        or type(workflow["run_attempt"]) is not int
+        or isinstance(workflow["run_attempt"], bool)
+        or workflow["run_attempt"] <= 0
+        or type(project["repository"]) is not str
+        or not SLUG.fullmatch(project["repository"])
+        or project["source_ref"] != "refs/heads/master"
+        or project["source_sha"] != candidate["source_sha"]
+        or type(project["source_sha"]) is not str
+        or not SHA.fullmatch(project["source_sha"])
+        or not SHA256.fullmatch(str(candidate["manifest_sha256"]))
+        or not SHA256.fullmatch(str(candidate["oci_manifest_digest"]))
+        or workflow["path"] != PLATFORM_WORKFLOW_PATH
+        or workflow["conclusion"] != "success"
+    ):
+        raise ValueError("platform qualification source/candidate identity mismatch")
+    artifacts = identity["artifacts"]
+    if type(artifacts) is not list:
+        raise ValueError("platform qualification artifact identity is not an array")
+    specs = _platform_artifact_specs(workflow["run_attempt"], project["source_sha"])
+    if len(artifacts) != len(specs):
+        raise ValueError("platform qualification artifact set is incomplete")
+    expected_by_name = {item["name"]: item for item in specs}
+    seen_ids: set[int] = set()
+    names: list[str] = []
+    for artifact in artifacts:
+        item = _strict_object(
+            artifact,
+            {
+                "archive_sha256",
+                "archive_size",
+                "artifact_id",
+                "name",
+                "role",
+                "scope",
+            },
+            "platform artifact identity",
+        )
+        name = item["name"]
+        spec = expected_by_name.get(name) if type(name) is str else None
+        if (
+            spec is None
+            or item["role"] != spec["role"]
+            or item["scope"] != spec["scope"]
+            or type(item["artifact_id"]) is not int
+            or isinstance(item["artifact_id"], bool)
+            or item["artifact_id"] <= 0
+            or item["artifact_id"] in seen_ids
+            or type(item["archive_size"]) is not int
+            or isinstance(item["archive_size"], bool)
+            or item["archive_size"] <= 0
+            or type(item["archive_sha256"]) is not str
+            or not SHA256.fullmatch(item["archive_sha256"])
+        ):
+            raise ValueError("platform qualification artifact identity mismatch")
+        seen_ids.add(item["artifact_id"])
+        names.append(name)
+    if names != sorted(expected_by_name):
+        raise ValueError("platform qualification artifact order/inventory mismatch")
+    return identity
+
+
+def inspect_platform_api(
+    run_metadata: dict,
+    artifact_metadata: dict,
+    *,
+    repository: str,
+    source_sha: str,
+    run_id: str,
+    run_attempt: str,
+    candidate_run_id: str,
+    candidate_run_attempt: str,
+    candidate_manifest_sha256: str,
+    oci_manifest_digest: str,
+    expected_identity_sha256: str | None,
+) -> dict:
+    if (
+        not SLUG.fullmatch(repository)
+        or not SHA.fullmatch(source_sha)
+        or not SHA256.fullmatch(candidate_manifest_sha256)
+        or not SHA256.fullmatch(oci_manifest_digest)
+        or (
+            expected_identity_sha256 is not None
+            and not SHA256.fullmatch(expected_identity_sha256)
+        )
+    ):
+        raise ValueError("platform qualification dispatch identity is malformed")
+    expected_run_id = _positive(run_id, "platform workflow run ID")
+    expected_attempt = _positive(run_attempt, "platform workflow run attempt")
+    candidate_id = _positive(candidate_run_id, "candidate run ID")
+    candidate_attempt = _positive(candidate_run_attempt, "candidate run attempt")
+    repository_identity = run_metadata.get("repository")
+    head_repository = run_metadata.get("head_repository")
+    expected_run = {
+        "conclusion": "success",
+        "event": "workflow_dispatch",
+        "head_branch": "master",
+        "head_sha": source_sha,
+        "id": expected_run_id,
+        "path": PLATFORM_WORKFLOW_PATH,
+        "run_attempt": expected_attempt,
+        "status": "completed",
+    }
+    for key, expected in expected_run.items():
+        if run_metadata.get(key) != expected:
+            raise ValueError(f"platform qualification run {key} mismatch")
+    if (
+        run_metadata.get("name") != "platform-qualification"
+        or type(repository_identity) is not dict
+        or repository_identity.get("full_name") != repository
+        or type(head_repository) is not dict
+        or head_repository.get("full_name") != repository
+    ):
+        raise ValueError("platform qualification run repository identity mismatch")
+    values = artifact_metadata.get("artifacts")
+    if (
+        type(values) is not list
+        or artifact_metadata.get("total_count") != len(values)
+        or len(values) > 100
+    ):
+        raise ValueError("platform artifact API response is incomplete or paginated")
+    specs = _platform_artifact_specs(expected_attempt, source_sha)
+    artifacts: list[dict] = []
+    for spec in specs:
+        matches = [
+            item
+            for item in values
+            if type(item) is dict and item.get("name") == spec["name"]
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                f"platform artifact {spec['name']} is missing or duplicate"
+            )
+        artifacts.append(
+            _platform_artifact_identity(
+                matches[0],
+                expected_name=spec["name"],
+                role=spec["role"],
+                scope=spec["scope"],
+                repository=repository,
+                source_sha=source_sha,
+                run_id=expected_run_id,
+            )
+        )
+    identity = _validate_platform_identity(
+        {
+            "artifacts": artifacts,
+            "candidate": {
+                "manifest_sha256": candidate_manifest_sha256,
+                "oci_manifest_digest": oci_manifest_digest,
+                "run_attempt": candidate_attempt,
+                "run_id": candidate_id,
+                "source_sha": source_sha,
+            },
+            "kind": PLATFORM_INPUT_KIND,
+            "project": {
+                "repository": repository,
+                "source_ref": "refs/heads/master",
+                "source_sha": source_sha,
+            },
+            "schema_version": 1,
+            "status": platform_qualification.STATUS,
+            "workflow": {
+                "conclusion": "success",
+                "path": PLATFORM_WORKFLOW_PATH,
+                "run_attempt": expected_attempt,
+                "run_id": expected_run_id,
+            },
+        }
+    )
+    if (
+        expected_identity_sha256 is not None
+        and _sha256(canonical_bytes(identity)) != expected_identity_sha256
+    ):
+        raise ValueError("platform qualification canonical identity digest mismatch")
+    return identity
 
 
 def inspect_repository_head(
@@ -402,30 +722,6 @@ def inspect_oci_manifest_digest(provenance: Path, expected_digest: str) -> str:
     if actual != expected_digest:
         raise ValueError("OCI detached provenance manifest digest mismatch")
     return actual
-
-
-def inspect_tracked_trust_material(
-    *, allowed_signers: Path, expected_policy_digest: Path
-) -> dict:
-    """Snapshot the repository trust root and exact policy anchor."""
-
-    signers = _snapshot(allowed_signers, "allowed-signers trust root")
-    anchor = _snapshot(expected_policy_digest, "expected policy digest")
-    try:
-        anchor_text = anchor.decode("ascii")
-    except UnicodeDecodeError as exc:
-        raise ValueError("expected policy digest must be ASCII") from exc
-    if not anchor_text.endswith("\n") or anchor_text.count("\n") != 1:
-        raise ValueError("expected policy digest must contain one LF-terminated line")
-    digest = anchor_text[:-1]
-    if not SHA256.fullmatch(digest):
-        raise ValueError("expected policy digest is malformed")
-    if not signers or b"\x00" in signers:
-        raise ValueError("allowed-signers trust root is empty or binary")
-    return {
-        "allowed_signers_sha256": _sha256(signers),
-        "expected_policy_sha256": digest,
-    }
 
 
 def inspect_package_pages(pages: Path, *, package_name: str, owner: str) -> str:
@@ -764,12 +1060,343 @@ def inspect_doctor_output(output: Path, *, expected_version: str) -> dict:
     return {"selected_engine": selected, "status": fields["status"]}
 
 
+def _load_platform_identity(path: Path) -> tuple[dict, bytes]:
+    data = _snapshot(path, "platform qualification identity")
+    value = json.loads(
+        data.decode("utf-8"),
+        object_pairs_hook=lambda pairs: _reject_duplicate_pairs(
+            pairs, "platform qualification identity"
+        ),
+        parse_constant=lambda item: (_ for _ in ()).throw(
+            ValueError(
+                f"platform qualification identity contains non-finite JSON value {item}"
+            )
+        ),
+    )
+    identity = _validate_platform_identity(value)
+    if data != canonical_bytes(identity):
+        raise ValueError("platform qualification identity is not canonical JSON")
+    return identity, data
+
+
+def _artifact_from_identity(identity: dict, *, role: str, scope: str) -> dict:
+    matches = [
+        item
+        for item in identity["artifacts"]
+        if item["role"] == role and item["scope"] == scope
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"platform artifact identity missing for {role}/{scope}")
+    return matches[0]
+
+
+def _platform_observation_bytes(identity: dict, *, role: str, scope: str) -> bytes:
+    project = identity["project"]
+    candidate = identity["candidate"]
+    workflow = identity["workflow"]
+    common = [
+        f"repository: {project['repository']}",
+        f"source_sha: {project['source_sha']}",
+        f"source_ref: {project['source_ref']}",
+        f"workflow_run_id: {workflow['run_id']}",
+        f"workflow_run_attempt: {workflow['run_attempt']}",
+        f"candidate_run_id: {candidate['run_id']}",
+        f"candidate_run_attempt: {candidate['run_attempt']}",
+        f"candidate_source_sha: {candidate['source_sha']}",
+        f"candidate_manifest_sha256: {candidate['manifest_sha256']}",
+        f"oci_manifest_digest: {candidate['oci_manifest_digest']}",
+    ]
+    if role == "candidate-binding" and scope == "candidate":
+        lines = [
+            "kind: tomorrowci.platform-candidate-binding/v1",
+            "status: PASS",
+            *common,
+        ]
+    elif role == "readback" and scope in PLATFORM_IDS:
+        lines = [
+            "kind: tomorrowci.platform-readback/v1",
+            "status: PASS",
+            f"platform_id: {scope}",
+            *common,
+        ]
+    else:
+        raise ValueError("unknown platform observation role/scope")
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def verify_platform_observation(
+    root: Path, identity: dict, *, role: str, scope: str
+) -> str:
+    expected_name = (
+        "candidate-binding-pass.txt"
+        if role == "candidate-binding"
+        else "readback-pass.txt"
+    )
+    try:
+        entries = list(root.iterdir())
+    except OSError as exc:
+        raise ValueError("cannot inspect retained platform observation") from exc
+    if len(entries) != 1 or entries[0].name != expected_name:
+        raise ValueError("retained platform observation inventory mismatch")
+    data = _snapshot(entries[0], "retained platform PASS observation")
+    if data != _platform_observation_bytes(identity, role=role, scope=scope):
+        raise ValueError("retained platform PASS observation identity mismatch")
+    return _sha256(data)
+
+
+def _validate_platform_consumption(value: object) -> dict:
+    consumption = _strict_object(
+        value,
+        {
+            "candidate_binding",
+            "identity",
+            "kind",
+            "platforms",
+            "schema_version",
+            "status",
+        },
+        "platform consumption",
+    )
+    if (
+        consumption["kind"] != PLATFORM_CONSUMPTION_KIND
+        or consumption["schema_version"] != 1
+        or consumption["status"] != platform_qualification.STATUS
+    ):
+        raise ValueError("platform consumption kind/status mismatch")
+    identity = _validate_platform_identity(consumption["identity"])
+    binding = _strict_object(
+        consumption["candidate_binding"],
+        {"artifact", "observation_sha256"},
+        "platform candidate-binding consumption",
+    )
+    if (
+        binding["artifact"]
+        != _artifact_from_identity(
+            identity, role="candidate-binding", scope="candidate"
+        )
+        or type(binding["observation_sha256"]) is not str
+        or not SHA256.fullmatch(binding["observation_sha256"])
+    ):
+        raise ValueError("platform candidate-binding consumption mismatch")
+    platforms = consumption["platforms"]
+    if type(platforms) is not list or len(platforms) != len(PLATFORM_IDS):
+        raise ValueError("platform consumption matrix is incomplete")
+    observed: list[str] = []
+    for row_value in platforms:
+        item = _strict_object(
+            row_value,
+            {
+                "artifact",
+                "capture_sha256",
+                "engine",
+                "evidence",
+                "platform_id",
+                "post_clean",
+                "readback",
+                "record_sha256",
+                "runner",
+            },
+            "platform consumption row",
+        )
+        platform_id = item["platform_id"]
+        if platform_id not in PLATFORM_IDS:
+            raise ValueError("platform consumption has an unknown platform")
+        expected_artifact = _artifact_from_identity(
+            identity, role="qualification", scope=platform_id
+        )
+        expected_readback = _artifact_from_identity(
+            identity, role="readback", scope=platform_id
+        )
+        readback = _strict_object(
+            item["readback"],
+            {"artifact", "observation_sha256"},
+            "platform read-back consumption",
+        )
+        post_clean = _strict_object(
+            item["post_clean"], {"sha256", "status"}, "platform post-clean state"
+        )
+        engine = item["engine"]
+        runner = item["runner"]
+        evidence = item["evidence"]
+        spec = platform_qualification.PLATFORMS[platform_id]
+        if (
+            item["artifact"] != expected_artifact
+            or readback["artifact"] != expected_readback
+            or type(readback["observation_sha256"]) is not str
+            or not SHA256.fullmatch(readback["observation_sha256"])
+            or post_clean["status"] != "EMPTY"
+            or type(post_clean["sha256"]) is not str
+            or not SHA256.fullmatch(post_clean["sha256"])
+            or type(item["record_sha256"]) is not str
+            or not SHA256.fullmatch(item["record_sha256"])
+            or type(item["capture_sha256"]) is not str
+            or not SHA256.fullmatch(item["capture_sha256"])
+            or type(engine) is not dict
+            or engine.get("provider") != spec.provider
+            or engine.get("context") != spec.engine_context
+            or engine.get("os_type") != "linux"
+            or engine.get("server_version") != engine.get("version_output")
+            or type(runner) is not dict
+            or runner.get("environment") != "self-hosted"
+            or runner.get("os") != spec.runner_os
+            or runner.get("arch") != spec.runner_arch
+            or type(evidence) is not dict
+            or evidence.get("replay_count") != 2
+        ):
+            raise ValueError(f"platform consumption row mismatch for {platform_id}")
+        observed.append(platform_id)
+    if observed != list(PLATFORM_IDS):
+        raise ValueError("platform consumption row order/inventory mismatch")
+    return consumption
+
+
+def verify_platform_consumption(
+    *,
+    identity_path: Path,
+    artifacts_root: Path,
+    observations_root: Path,
+    candidate_dist: Path,
+    fixture_source: Path,
+) -> dict:
+    identity, _ = _load_platform_identity(identity_path)
+    expected_artifact_dirs = list(PLATFORM_IDS)
+    try:
+        artifact_dirs = sorted(entry.name for entry in artifacts_root.iterdir())
+        observation_dirs = sorted(entry.name for entry in observations_root.iterdir())
+        readback_dirs = sorted(
+            entry.name for entry in (observations_root / "readback").iterdir()
+        )
+    except OSError as exc:
+        raise ValueError("platform consumption roots are incomplete") from exc
+    if artifact_dirs != expected_artifact_dirs:
+        raise ValueError("platform qualification extracted artifact matrix mismatch")
+    if observation_dirs != ["candidate-binding", "readback"]:
+        raise ValueError("platform observation root inventory mismatch")
+    if readback_dirs != expected_artifact_dirs:
+        raise ValueError("platform read-back observation matrix mismatch")
+    candidate_binding_sha256 = verify_platform_observation(
+        observations_root / "candidate-binding",
+        identity,
+        role="candidate-binding",
+        scope="candidate",
+    )
+    rows: list[dict] = []
+    candidate = identity["candidate"]
+    project = identity["project"]
+    workflow = identity["workflow"]
+    empty_state = {"containers": [], "volumes": []}
+    empty_state_bytes = platform_qualification.canonical_json_bytes(empty_state)
+    for platform_id in PLATFORM_IDS:
+        artifact_root = artifacts_root / platform_id
+        args = argparse.Namespace(
+            artifact_root=artifact_root,
+            candidate_dist=candidate_dist,
+            candidate_run_id=str(candidate["run_id"]),
+            candidate_run_attempt=str(candidate["run_attempt"]),
+            candidate_manifest_sha256=candidate["manifest_sha256"],
+            candidate_source_sha=candidate["source_sha"],
+            oci_manifest_digest=candidate["oci_manifest_digest"],
+            platform_id=platform_id,
+            fixture_source=fixture_source,
+            project_repository=project["repository"],
+            project_source_sha=project["source_sha"],
+            project_source_ref=project["source_ref"],
+            workflow_run_id=str(workflow["run_id"]),
+            workflow_run_attempt=str(workflow["run_attempt"]),
+        )
+        platform_qualification.verify_artifact(args)
+        record_path = artifact_root / platform_qualification.RECORD_NAME
+        record_bytes = _snapshot(record_path, f"{platform_id} qualification record")
+        record = json.loads(
+            record_bytes.decode("utf-8"),
+            object_pairs_hook=lambda pairs, label=(f"{platform_id} qualification record"): (
+                _reject_duplicate_pairs(pairs, label)
+            ),
+        )
+        if record_bytes != platform_qualification.canonical_json_bytes(record):
+            raise ValueError("platform qualification record is not canonical")
+        record_candidate = record.get("candidate")
+        record_workflow = record.get("workflow")
+        record_platform = record.get("platform")
+        if (
+            type(record_candidate) is not dict
+            or record_candidate.get("run_id") != candidate["run_id"]
+            or record_candidate.get("run_attempt") != candidate["run_attempt"]
+            or record_candidate.get("source_sha") != candidate["source_sha"]
+            or record_candidate.get("manifest_sha256") != candidate["manifest_sha256"]
+            or record_candidate.get("oci_manifest_digest")
+            != candidate["oci_manifest_digest"]
+            or record_workflow
+            != {
+                "repository": project["repository"],
+                "run_attempt": workflow["run_attempt"],
+                "run_id": workflow["run_id"],
+                "source_ref": project["source_ref"],
+                "source_sha": project["source_sha"],
+            }
+            or type(record_platform) is not dict
+            or record_platform.get("platform_id") != platform_id
+        ):
+            raise ValueError("verified platform record identity drift")
+        post_state_path = artifact_root / "metadata" / "post-state.json"
+        post_state_bytes = _snapshot(post_state_path, f"{platform_id} post-clean state")
+        if post_state_bytes != empty_state_bytes:
+            raise ValueError(
+                "verified platform artifact does not retain empty post-state"
+            )
+        readback_sha256 = verify_platform_observation(
+            observations_root / "readback" / platform_id,
+            identity,
+            role="readback",
+            scope=platform_id,
+        )
+        rows.append(
+            {
+                "artifact": _artifact_from_identity(
+                    identity, role="qualification", scope=platform_id
+                ),
+                "capture_sha256": record["capture_sha256"],
+                "engine": record_platform["engine"],
+                "evidence": record["evidence"],
+                "platform_id": platform_id,
+                "post_clean": {
+                    "sha256": _sha256(post_state_bytes),
+                    "status": "EMPTY",
+                },
+                "readback": {
+                    "artifact": _artifact_from_identity(
+                        identity, role="readback", scope=platform_id
+                    ),
+                    "observation_sha256": readback_sha256,
+                },
+                "record_sha256": _sha256(record_bytes),
+                "runner": record_platform["runner"],
+            }
+        )
+    return _validate_platform_consumption(
+        {
+            "candidate_binding": {
+                "artifact": _artifact_from_identity(
+                    identity, role="candidate-binding", scope="candidate"
+                ),
+                "observation_sha256": candidate_binding_sha256,
+            },
+            "identity": identity,
+            "kind": PLATFORM_CONSUMPTION_KIND,
+            "platforms": rows,
+            "schema_version": 1,
+            "status": platform_qualification.STATUS,
+        }
+    )
+
+
 def build_publication_plan(
     *,
     attestation_path: Path,
     candidate_dir: Path,
     remote_state_path: Path,
     marker_identity_path: Path,
+    platform_consumption_path: Path,
     release_pages_path: Path,
     ghcr_versions_path: Path,
     repository: str,
@@ -814,6 +1441,40 @@ def build_publication_plan(
         or not SHA256.fullmatch(manifest_digest)
     ):
         raise ValueError("tag-promotion publication identity is malformed")
+    platform_consumption_bytes = _snapshot(
+        platform_consumption_path, "platform qualification consumption"
+    )
+    platform_consumption = _validate_platform_consumption(
+        json.loads(
+            platform_consumption_bytes.decode("utf-8"),
+            object_pairs_hook=lambda pairs: _reject_duplicate_pairs(
+                pairs, "platform qualification consumption"
+            ),
+            parse_constant=lambda item: (_ for _ in ()).throw(
+                ValueError(
+                    f"platform qualification consumption contains non-finite JSON value {item}"
+                )
+            ),
+        )
+    )
+    if platform_consumption_bytes != canonical_bytes(platform_consumption):
+        raise ValueError("platform qualification consumption is not canonical JSON")
+    platform_candidate = platform_consumption["identity"]["candidate"]
+    external_candidate = external.get("candidate") if type(external) is dict else None
+    if (
+        platform_candidate["source_sha"] != source_sha
+        or platform_candidate["manifest_sha256"] != candidate.get("manifest_sha256")
+        or platform_candidate["oci_manifest_digest"] != manifest_digest
+        or type(external_candidate) is not dict
+        or platform_candidate["source_sha"] != external_candidate.get("commit")
+        or platform_candidate["manifest_sha256"]
+        != external_candidate.get("manifest_sha256")
+        or platform_candidate["oci_manifest_digest"]
+        != external_candidate.get("oci_manifest_digest")
+        or platform_candidate["run_id"] != external_candidate.get("run_id")
+        or platform_candidate["run_attempt"] != external_candidate.get("run_attempt")
+    ):
+        raise ValueError("platform consumption differs from authorized candidate")
     tag_name = f"v{version}"
     version_ref = f"refs/tags/{tag_name}"
     marker_ref = f"refs/tags/tomorrowci-authorization/{authorization_id}"
@@ -881,6 +1542,7 @@ def build_publication_plan(
             "plan_is_standalone_authority": False,
             "protected_roll_forward": True,
         },
+        "platform_qualification": platform_consumption,
         "refs": {
             "atomic": True,
             "force": False,
@@ -938,6 +1600,69 @@ def _safe_extract_exact_zip(
                 raise ValueError(f"{label} entry size drift: {name}")
             with (destination / name).open("xb") as handle:
                 handle.write(data)
+
+
+def safe_extract_platform_artifact(archive: Path, destination: Path) -> None:
+    """Extract one digest-verified recursive platform artifact without aliases."""
+
+    destination = destination.absolute()
+    if destination.exists() or destination.is_symlink():
+        raise ValueError("platform artifact extraction destination already exists")
+    destination.mkdir(mode=0o700)
+    with zipfile.ZipFile(archive) as package:
+        entries = package.infolist()
+        if not entries or len(entries) > 50_000:
+            raise ValueError("platform artifact ZIP file count is invalid")
+        total = sum(entry.file_size for entry in entries)
+        if total > 512 * 1024 * 1024:
+            raise ValueError("platform artifact ZIP exceeds size limit")
+        names: set[str] = set()
+        casefolded: set[str] = set()
+        for entry in entries:
+            name = entry.filename
+            relative = PurePosixPath(name)
+            mode = entry.external_attr >> 16
+            folded = name.casefold()
+            if (
+                entry.is_dir()
+                or entry.flag_bits & 0x1
+                or not name
+                or "\\" in name
+                or relative.is_absolute()
+                or str(relative) != name
+                or any(part in {"", ".", ".."} for part in relative.parts)
+                or any(":" in part for part in relative.parts)
+                or name in names
+                or folded in casefolded
+                or (stat.S_IFMT(mode) not in {0, stat.S_IFREG})
+            ):
+                raise ValueError(f"unsafe platform artifact ZIP entry: {name!r}")
+            names.add(name)
+            casefolded.add(folded)
+            data = package.read(entry)
+            if len(data) != entry.file_size:
+                raise ValueError(f"platform artifact entry size drift: {name}")
+            output = destination.joinpath(*relative.parts)
+            output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with output.open("xb") as handle:
+                handle.write(data)
+
+
+def safe_extract_platform_observation(
+    archive: Path, destination: Path, *, role: str
+) -> None:
+    expected = {
+        "candidate-binding": {"candidate-binding-pass.txt"},
+        "readback": {"readback-pass.txt"},
+    }.get(role)
+    if expected is None:
+        raise ValueError("unknown platform observation role")
+    _safe_extract_exact_zip(
+        archive,
+        destination,
+        expected_files=expected,
+        label=f"platform {role} observation",
+    )
 
 
 def safe_extract_authorization(archive: Path, destination: Path) -> None:
@@ -1080,6 +1805,33 @@ def refuse_unconditional_release_publish() -> None:
     )
 
 
+def verify_platform_plan_binding(plan_path: Path, consumption_path: Path) -> dict:
+    plan = _load_json(plan_path, "exact-byte publication plan")
+    data = _snapshot(consumption_path, "platform qualification consumption")
+    consumption = _validate_platform_consumption(
+        json.loads(
+            data.decode("utf-8"),
+            object_pairs_hook=lambda pairs: _reject_duplicate_pairs(
+                pairs, "platform qualification consumption"
+            ),
+            parse_constant=lambda item: (_ for _ in ()).throw(
+                ValueError(
+                    f"platform qualification consumption contains non-finite JSON value {item}"
+                )
+            ),
+        )
+    )
+    if data != canonical_bytes(consumption):
+        raise ValueError("platform qualification consumption is not canonical JSON")
+    if (
+        plan.get("kind") != PUBLICATION_KIND
+        or plan.get("status") != DISABLED_STATUS
+        or plan.get("platform_qualification") != consumption
+    ):
+        raise ValueError("publication plan platform consumption binding mismatch")
+    return consumption
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -1104,6 +1856,19 @@ def main(argv: list[str] | None = None) -> int:
     artifact.add_argument("--metadata", type=Path, required=True)
     artifact.add_argument("--artifact-id", required=True)
     artifact.add_argument("--artifact-sha256", required=True)
+    platform_api = commands.add_parser("inspect-platform-api")
+    platform_api.add_argument("--run-metadata", type=Path, required=True)
+    platform_api.add_argument("--artifact-metadata", type=Path, required=True)
+    platform_api.add_argument("--repository", required=True)
+    platform_api.add_argument("--source-sha", required=True)
+    platform_api.add_argument("--run-id", required=True)
+    platform_api.add_argument("--run-attempt", required=True)
+    platform_api.add_argument("--candidate-run-id", required=True)
+    platform_api.add_argument("--candidate-run-attempt", required=True)
+    platform_api.add_argument("--candidate-manifest-sha256", required=True)
+    platform_api.add_argument("--oci-manifest-digest", required=True)
+    platform_api.add_argument("--expected-identity-sha256")
+    platform_api.add_argument("--output", type=Path, required=True)
     environment = commands.add_parser("inspect-release-environment")
     environment.add_argument("--metadata", type=Path, required=True)
     approval = commands.add_parser("inspect-approval-history")
@@ -1120,6 +1885,25 @@ def main(argv: list[str] | None = None) -> int:
     candidate_extract.add_argument("--archive", type=Path, required=True)
     candidate_extract.add_argument("--destination", type=Path, required=True)
     candidate_extract.add_argument("--version", required=True)
+    platform_extract = commands.add_parser("extract-platform-artifact")
+    platform_extract.add_argument("--archive", type=Path, required=True)
+    platform_extract.add_argument("--destination", type=Path, required=True)
+    platform_observation_extract = commands.add_parser("extract-platform-observation")
+    platform_observation_extract.add_argument("--archive", type=Path, required=True)
+    platform_observation_extract.add_argument("--destination", type=Path, required=True)
+    platform_observation_extract.add_argument(
+        "--role", choices=("candidate-binding", "readback"), required=True
+    )
+    platform_consumption = commands.add_parser("verify-platform-consumption")
+    platform_consumption.add_argument("--identity", type=Path, required=True)
+    platform_consumption.add_argument("--artifacts-root", type=Path, required=True)
+    platform_consumption.add_argument("--observations-root", type=Path, required=True)
+    platform_consumption.add_argument("--candidate-dist", type=Path, required=True)
+    platform_consumption.add_argument("--fixture-source", type=Path, required=True)
+    platform_consumption.add_argument("--output", type=Path, required=True)
+    platform_plan = commands.add_parser("verify-platform-plan-binding")
+    platform_plan.add_argument("--plan", type=Path, required=True)
+    platform_plan.add_argument("--consumption", type=Path, required=True)
     refs = commands.add_parser("inspect-remote-refs")
     refs.add_argument("--observation", type=Path, required=True)
     refs.add_argument("--version-ref", required=True)
@@ -1135,9 +1919,6 @@ def main(argv: list[str] | None = None) -> int:
     oci = commands.add_parser("inspect-oci-manifest")
     oci.add_argument("--provenance", type=Path, required=True)
     oci.add_argument("--expected-digest", required=True)
-    trust = commands.add_parser("inspect-trust-material")
-    trust.add_argument("--allowed-signers", type=Path, required=True)
-    trust.add_argument("--expected-policy-digest", type=Path, required=True)
     packages = commands.add_parser("inspect-package-pages")
     packages.add_argument("--pages", type=Path, required=True)
     packages.add_argument("--package-name", required=True)
@@ -1154,6 +1935,7 @@ def main(argv: list[str] | None = None) -> int:
     plan.add_argument("--candidate-dir", type=Path, required=True)
     plan.add_argument("--remote-state", type=Path, required=True)
     plan.add_argument("--marker-identity", type=Path, required=True)
+    plan.add_argument("--platform-consumption", type=Path, required=True)
     plan.add_argument("--release-pages", type=Path, required=True)
     plan.add_argument("--ghcr-versions", type=Path, required=True)
     plan.add_argument("--repository", required=True)
@@ -1210,6 +1992,26 @@ def main(argv: list[str] | None = None) -> int:
                 artifact_sha256=args.artifact_sha256,
             )
             print(json.dumps(value, sort_keys=True))
+        elif args.command == "inspect-platform-api":
+            value = inspect_platform_api(
+                _load_json(args.run_metadata, "platform workflow run metadata"),
+                _load_json(args.artifact_metadata, "platform artifact API metadata"),
+                repository=args.repository,
+                source_sha=args.source_sha,
+                run_id=args.run_id,
+                run_attempt=args.run_attempt,
+                candidate_run_id=args.candidate_run_id,
+                candidate_run_attempt=args.candidate_run_attempt,
+                candidate_manifest_sha256=args.candidate_manifest_sha256,
+                oci_manifest_digest=args.oci_manifest_digest,
+                expected_identity_sha256=args.expected_identity_sha256,
+            )
+            with args.output.open("xb") as handle:
+                handle.write(canonical_bytes(value))
+            print(
+                "platform qualification API identity: PASS: "
+                f"{_sha256(canonical_bytes(value))}"
+            )
         elif args.command == "inspect-release-environment":
             value = inspect_release_environment(
                 _load_json(args.metadata, "release environment metadata")
@@ -1233,6 +2035,28 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "extract-candidate":
             safe_extract_candidate(args.archive, args.destination, version=args.version)
             print("candidate bundle: PASS")
+        elif args.command == "extract-platform-artifact":
+            safe_extract_platform_artifact(args.archive, args.destination)
+            print("platform qualification artifact: strict extraction PASS")
+        elif args.command == "extract-platform-observation":
+            safe_extract_platform_observation(
+                args.archive, args.destination, role=args.role
+            )
+            print(f"platform {args.role} observation: strict extraction PASS")
+        elif args.command == "verify-platform-consumption":
+            value = verify_platform_consumption(
+                identity_path=args.identity,
+                artifacts_root=args.artifacts_root,
+                observations_root=args.observations_root,
+                candidate_dist=args.candidate_dist,
+                fixture_source=args.fixture_source,
+            )
+            with args.output.open("xb") as handle:
+                handle.write(canonical_bytes(value))
+            print("platform qualification consumption: PASS")
+        elif args.command == "verify-platform-plan-binding":
+            verify_platform_plan_binding(args.plan, args.consumption)
+            print("publication plan platform consumption: PASS")
         elif args.command == "inspect-remote-refs":
             value = remote_state(
                 args.observation.read_text(encoding="utf-8"),
@@ -1255,12 +2079,6 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "inspect-oci-manifest":
             digest = inspect_oci_manifest_digest(args.provenance, args.expected_digest)
             print(f"OCI authoritative manifest digest: PASS: {digest}")
-        elif args.command == "inspect-trust-material":
-            value = inspect_tracked_trust_material(
-                allowed_signers=args.allowed_signers,
-                expected_policy_digest=args.expected_policy_digest,
-            )
-            sys.stdout.buffer.write(canonical_bytes(value))
         elif args.command == "inspect-package-pages":
             print(
                 inspect_package_pages(
@@ -1290,6 +2108,7 @@ def main(argv: list[str] | None = None) -> int:
                 candidate_dir=args.candidate_dir,
                 remote_state_path=args.remote_state,
                 marker_identity_path=args.marker_identity,
+                platform_consumption_path=args.platform_consumption,
                 release_pages_path=args.release_pages,
                 ghcr_versions_path=args.ghcr_versions,
                 repository=args.repository,

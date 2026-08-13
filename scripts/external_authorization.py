@@ -715,7 +715,7 @@ def verify_authorization(
     authorization: Path,
     signature: Path,
     policy: Path,
-    expected_policy_sha256: str,
+    policy_signature: Path,
     allowed_signers: Path,
     candidate_manifest: Path,
     oci_provenance: Path,
@@ -723,11 +723,12 @@ def verify_authorization(
     now: datetime | None = None,
     ssh_keygen: str = "ssh-keygen",
 ) -> VerifiedAuthorization:
-    _text(expected_policy_sha256, SHA256, "expected policy digest")
-
     # Snapshot every input before interpreting any of them.  No source path is
     # reopened after this point.
     policy_snapshot = _snapshot(policy, "authorization policy")
+    policy_signature_snapshot = _snapshot(
+        policy_signature, "authorization policy detached SSH signature"
+    )
     authorization_snapshot = _snapshot(authorization, "external authorization")
     signature_snapshot = _snapshot(signature, "detached SSH signature")
     allowed_snapshot = _snapshot(allowed_signers, "allowed signers trust root")
@@ -735,8 +736,6 @@ def verify_authorization(
     provenance_snapshot = _snapshot(oci_provenance, "OCI provenance")
     evidence_snapshot = _snapshot(evidence, "external qualification evidence")
 
-    if policy_snapshot.sha256 != expected_policy_sha256:
-        raise ValueError("authorization policy does not match preregistered digest")
     policy_value = _load_policy(policy_snapshot)
     auth = _load_authorization(authorization_snapshot)
     policy_candidate = policy_value["candidate"]
@@ -822,6 +821,13 @@ def verify_authorization(
         trust["allowed_signers_sha256"],
     )
     _verify_signature(
+        authorization=policy_snapshot,
+        signature=policy_signature_snapshot,
+        allowed_signers=allowed_snapshot,
+        principal=policy_external["auditor_principal"],
+        ssh_keygen=ssh_keygen,
+    )
+    _verify_signature(
         authorization=authorization_snapshot,
         signature=signature_snapshot,
         allowed_signers=allowed_snapshot,
@@ -858,7 +864,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--authorization", type=Path, required=True)
     parser.add_argument("--signature", type=Path, required=True)
     parser.add_argument("--policy", type=Path, required=True)
-    parser.add_argument("--expected-policy-sha256", required=True)
+    parser.add_argument("--policy-signature", type=Path, required=True)
     parser.add_argument("--allowed-signers", type=Path, required=True)
     parser.add_argument("--candidate-manifest", type=Path, required=True)
     parser.add_argument("--oci-provenance", type=Path, required=True)
