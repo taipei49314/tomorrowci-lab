@@ -19,7 +19,6 @@ from candidate_manifest import (
 )
 from package_release import ZIP_EPOCH, create_archive, extract_archive, verify_archive
 
-
 VERSION = "0.2.0-alpha.1"
 SHA = "1" * 40
 REPOSITORY = "taipei49314/tomorrowci-lab"
@@ -27,6 +26,36 @@ RUN_ID = "31447884019"
 WORKFLOW_REF = (
     "taipei49314/tomorrowci-lab/.github/workflows/candidate.yml@refs/heads/master"
 )
+
+
+def write_canonical_windows_zip_with_nul_readme(archive: Path) -> None:
+    root = f"tomorrowci-v{VERSION}-x86_64-pc-windows-msvc"
+    visible_name = f"{root}/README.md"
+    placeholder = f"{visible_name}Xhidden".encode()
+    malicious = visible_name.encode() + b"\0hidden"
+    entries = (
+        (f"{root}/", stat.S_IFDIR | 0o755, b""),
+        (f"{root}/tomorrowci.exe", stat.S_IFREG | 0o755, b"cli"),
+        (placeholder.decode(), stat.S_IFREG | 0o644, b"readme"),
+        (f"{root}/LICENSE", stat.S_IFREG | 0o644, b"license"),
+        (f"{root}/CHANGELOG.md", stat.S_IFREG | 0o644, b"changes"),
+    )
+    with zipfile.ZipFile(
+        archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+    ) as bundle:
+        for name, mode, data in entries:
+            info = zipfile.ZipInfo(name, ZIP_EPOCH)
+            info.create_system = 3
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = (mode & 0xFFFF) << 16
+            if name.endswith("/"):
+                info.external_attr |= 0x10
+            info.flag_bits |= 0x800
+            bundle.writestr(info, data)
+    data = archive.read_bytes()
+    if len(placeholder) != len(malicious) or data.count(placeholder) != 2:
+        raise AssertionError("ZIP test fixture did not contain two raw member names")
+    archive.write_bytes(data.replace(placeholder, malicious))
 
 
 class ReleaseCandidateTests(unittest.TestCase):
@@ -122,11 +151,37 @@ class ReleaseCandidateTests(unittest.TestCase):
                 (extracted / "tomorrowci.exe").read_bytes(), binary.read_bytes()
             )
 
+    def test_windows_zip_raw_nul_member_alias_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            archive = root / f"tomorrowci-v{VERSION}-x86_64-pc-windows-msvc.zip"
+            write_canonical_windows_zip_with_nul_readme(archive)
+            with zipfile.ZipFile(archive) as bundle:
+                readme = bundle.infolist()[2]
+                self.assertTrue(readme.orig_filename.endswith("README.md\0hidden"))
+                self.assertTrue(readme.filename.endswith("README.md"))
+                self.assertEqual(readme.compress_type, zipfile.ZIP_DEFLATED)
+            with self.assertRaisesRegex(ValueError, "unsafe ZIP member name"):
+                verify_archive(
+                    archive=archive,
+                    version=VERSION,
+                    target="x86_64-pc-windows-msvc",
+                )
+            with self.assertRaisesRegex(ValueError, "unsafe ZIP member name"):
+                extract_archive(
+                    archive=archive,
+                    output_dir=root / "extracted",
+                    version=VERSION,
+                    target="x86_64-pc-windows-msvc",
+                )
+
     def test_zip_symlink_payload_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             archive = Path(raw) / f"tomorrowci-v{VERSION}-x86_64-pc-windows-msvc.zip"
             root = f"tomorrowci-v{VERSION}-x86_64-pc-windows-msvc"
-            with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+            with zipfile.ZipFile(
+                archive, "w", compression=zipfile.ZIP_DEFLATED
+            ) as bundle:
                 for name, mode, data in (
                     (f"{root}/", stat.S_IFDIR | 0o755, b""),
                     (f"{root}/tomorrowci.exe", stat.S_IFLNK | 0o755, b"outside"),
@@ -152,7 +207,9 @@ class ReleaseCandidateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             archive = Path(raw) / f"tomorrowci-v{VERSION}-x86_64-pc-windows-msvc.zip"
             root = f"tomorrowci-v{VERSION}-x86_64-pc-windows-msvc"
-            with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
+            with zipfile.ZipFile(
+                archive, "w", compression=zipfile.ZIP_STORED
+            ) as bundle:
                 for name, mode, data in (
                     (f"{root}/", stat.S_IFDIR | 0o755, b""),
                     (f"{root}/tomorrowci.exe", stat.S_IFREG | 0o755, b"cli"),
@@ -196,8 +253,8 @@ class ReleaseCandidateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "workflow attempt"):
                 verify_candidate(dist=dist, expected_run_attempt=2)
             self.assertEqual(
-                set(path.name for path in dist.iterdir()),
-                set((*payload_names(VERSION), MANIFEST_NAME, CHECKSUMS_NAME)),
+                {path.name for path in dist.iterdir()},
+                {*payload_names(VERSION), MANIFEST_NAME, CHECKSUMS_NAME},
             )
 
     def test_candidate_inventory_requires_exact_oci_evidence_set(self) -> None:

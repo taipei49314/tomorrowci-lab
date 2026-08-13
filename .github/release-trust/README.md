@@ -8,7 +8,12 @@ either trust anchor.
 Do not add fixture keys, policy digests, or policies here.  The transport
 configuration must name one direct HTTPS authority and derive both policy and
 signature URLs from the verified candidate commit and candidate-manifest
-SHA-256.  The fetched policy must be separately SSH-signed by the pinned
+SHA-256. URLs use exactly one spelling: `https://`, lower-case ASCII DNS
+hostname, no trailing dot or explicit port (including `:443`), and a nonempty
+slash-separated path. Percent escapes, backslashes, dot/empty/double path
+segments, credentials, query strings, fragments, and cross-authority policy/
+signature pairs are rejected; parsing and reserializing must preserve the
+exact configured and rendered bytes. The fetched policy must be separately SSH-signed by the pinned
 auditor identity, bind those exact candidate bytes, be current, and have the
 same pinned `allowed_signers` digest. Redirects, proxy credentials, cookies,
 content encodings, duplicate JSON keys, oversized responses, and output

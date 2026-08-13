@@ -90,7 +90,13 @@ class ExternalPolicyTransportTests(unittest.TestCase):
                     },
                     "status": "CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED",
                     "version": "0.2.0-alpha.1",
-                    "workflow": {},
+                    "workflow": {
+                        "name": "release-candidate",
+                        "run_attempt": 1,
+                        "run_id": 1,
+                        "run_url": "https://github.com/candidate-owner/candidate/actions/runs/1/attempts/1",
+                        "workflow_ref": "candidate-owner/candidate/.github/workflows/candidate.yml@refs/heads/master",
+                    },
                 }
             )
         )
@@ -205,6 +211,63 @@ class ExternalPolicyTransportTests(unittest.TestCase):
         self.config.write_bytes(canonical(bad_config))
         with self.assertRaisesRegex(ValueError, "candidate identity field"):
             transport.load_transport(self.config, self.allowed)
+
+    def test_rejects_noncanonical_or_cross_authority_templates(self) -> None:
+        original = self.config.read_text(encoding="utf-8")
+        bad_templates = (
+            "https://audit.example/v1/%2e%2e/{candidate_commit}/{candidate_manifest_sha256_hex}.json",
+            "https://audit.example/v1/%2F{candidate_commit}/{candidate_manifest_sha256_hex}.json",
+            "https://audit.example./v1/{candidate_commit}/{candidate_manifest_sha256_hex}.json",
+            "https://AUDIT.example/v1/{candidate_commit}/{candidate_manifest_sha256_hex}.json",
+            "https://audit.example:443/v1/{candidate_commit}/{candidate_manifest_sha256_hex}.json",
+            "https://audit.example/v1//{candidate_commit}/{candidate_manifest_sha256_hex}.json",
+            "https://audit.example/v1/{candidate_commit}/{candidate_manifest_sha256_hex}.json?x=1",
+        )
+        for template in bad_templates:
+            with self.subTest(template=template):
+                config = json.loads(original)
+                config["transport"]["policy_url_template"] = template
+                self.config.write_bytes(canonical(config))
+                with self.assertRaisesRegex(ValueError, "canonical HTTPS URL"):
+                    transport.load_transport(self.config, self.allowed)
+
+        config = json.loads(original)
+        config["transport"]["signature_url_template"] = config["transport"][
+            "signature_url_template"
+        ].replace("audit.example", "signature.example")
+        self.config.write_bytes(canonical(config))
+        with self.assertRaisesRegex(ValueError, "same authority"):
+            transport.load_transport(self.config, self.allowed)
+
+    def test_candidate_identity_rejects_non_authoritative_manifest(self) -> None:
+        original = self.manifest.read_text(encoding="utf-8")
+        cases = (
+            ("kind", "tomorrowci.other-candidate.v1"),
+            ("schema_version", 2),
+            ("status", "RELEASE_AUTHORIZED"),
+            ("version", "not-semver"),
+        )
+        for key, value in cases:
+            with self.subTest(key=key):
+                manifest = json.loads(original)
+                manifest[key] = value
+                self.manifest.write_bytes(canonical(manifest))
+                with self.assertRaisesRegex(ValueError, "candidate manifest"):
+                    transport._candidate_identity(self.manifest)
+
+        manifest = json.loads(original)
+        manifest["source"]["dirty"] = True
+        self.manifest.write_bytes(canonical(manifest))
+        with self.assertRaisesRegex(ValueError, "clean master candidate"):
+            transport._candidate_identity(self.manifest)
+
+        manifest = json.loads(original)
+        manifest["workflow"]["workflow_ref"] = (
+            "other/repo/.github/workflows/candidate.yml@refs/heads/master"
+        )
+        self.manifest.write_bytes(canonical(manifest))
+        with self.assertRaisesRegex(ValueError, "workflow is not authoritative"):
+            transport._candidate_identity(self.manifest)
 
 
 if __name__ == "__main__":
