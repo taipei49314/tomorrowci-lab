@@ -26,6 +26,7 @@ RUN_ID = "31447884019"
 WORKFLOW_REF = (
     "taipei49314/tomorrowci-lab/.github/workflows/candidate.yml@refs/heads/master"
 )
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def write_canonical_windows_zip_with_nul_readme(archive: Path) -> None:
@@ -230,6 +231,19 @@ class ReleaseCandidateTests(unittest.TestCase):
                     version=VERSION,
                     target="x86_64-pc-windows-msvc",
                 )
+
+    def test_windows_candidate_requires_static_crt_and_pe_import_check(self) -> None:
+        config = (ROOT / ".cargo/config.toml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github/workflows/candidate.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("target-feature=+crt-static", config)
+        self.assertIn(
+            'RUSTFLAGS = "-C link-arg=/Brepro -C target-feature=+crt-static"',
+            workflow,
+        )
+        self.assertIn("Get-Command dumpbin.exe -ErrorAction Stop", workflow)
+        self.assertIn("VCRUNTIME[0-9_]*\\.dll", workflow)
 
     def test_candidate_manifest_binds_exact_payload_source_and_run(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

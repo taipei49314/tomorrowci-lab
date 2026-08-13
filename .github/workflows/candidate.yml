@@ -129,15 +129,22 @@ jobs:
           $env:SOURCE_DATE_EPOCH = "0"
           # MSVC's linker otherwise records COFF/debug timestamps even when the
           # Rust inputs and SOURCE_DATE_EPOCH are identical.
-          $env:RUSTFLAGS = "-C link-arg=/Brepro"
+          $env:RUSTFLAGS = "-C link-arg=/Brepro -C target-feature=+crt-static"
           foreach ($slot in @("a", "b")) {
             $targetDir = Join-Path $env:RUNNER_TEMP "tomorrowci-repro-$slot"
             if (Test-Path $targetDir) { throw "non-clean target directory: $targetDir" }
             $env:CARGO_TARGET_DIR = $targetDir
             cargo build -p tomorrowci-cli --release --locked --target "${{ matrix.target }}"
             if ($LASTEXITCODE -ne 0) { throw "cargo build $slot failed" }
+            $binary = "$targetDir/${{ matrix.target }}/release/tomorrowci.exe"
+            $dumpbin = (Get-Command dumpbin.exe -ErrorAction Stop).Source
+            $imports = (& $dumpbin /dependents $binary 2>&1 | Out-String)
+            if ($LASTEXITCODE -ne 0) { throw "dumpbin dependency inspection failed" }
+            if ($imports -match '(?im)^\s*VCRUNTIME[0-9_]*\.dll\s*$') {
+              throw "Windows candidate retains an app-local-resolvable MSVC runtime import"
+            }
             python scripts/package_release.py create `
-              --binary "$targetDir/${{ matrix.target }}/release/tomorrowci.exe" `
+              --binary $binary `
               --output-dir "dist/$slot" `
               --version $version `
               --target "${{ matrix.target }}"

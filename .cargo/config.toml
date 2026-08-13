@@ -1,0 +1,5 @@
+[target.x86_64-pc-windows-msvc]
+# Keep the project-owned Windows candidate independent of an app-local
+# VCRUNTIME140.dll. Windows system/API-set DLLs remain an explicit platform
+# boundary; the redistributable MSVC runtime is linked into the executable.
+rustflags = ["-C", "target-feature=+crt-static"]
