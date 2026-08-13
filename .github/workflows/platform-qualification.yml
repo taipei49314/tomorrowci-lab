@@ -37,6 +37,32 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: Initialize candidate-binding fail-only observation
+        env:
+          ARTIFACT_ROOT: ${{ runner.temp }}/platform-qualification-candidate-binding-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+        run: |
+          set -euo pipefail
+          test ! -e "$ARTIFACT_ROOT"
+          mkdir "$ARTIFACT_ROOT"
+          {
+            printf '%s\n' 'kind: tomorrowci.platform-candidate-binding/v1'
+            printf '%s\n' 'status: FAIL_ONLY'
+            printf 'repository: %s\n' "$GITHUB_REPOSITORY"
+            printf 'source_sha: %s\n' "$GITHUB_SHA"
+            printf 'source_ref: %s\n' "$GITHUB_REF"
+            printf 'workflow_run_id: %s\n' "$GITHUB_RUN_ID"
+            printf 'workflow_run_attempt: %s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'candidate_run_id: %s\n' "$CANDIDATE_RUN_ID"
+            printf 'candidate_run_attempt: %s\n' "$CANDIDATE_RUN_ATTEMPT"
+            printf 'candidate_source_sha: %s\n' "$CANDIDATE_SOURCE_SHA"
+            printf 'candidate_manifest_sha256: %s\n' "$CANDIDATE_MANIFEST_SHA256"
+            printf 'oci_manifest_digest: %s\n' "$OCI_MANIFEST_DIGEST"
+          } > "$ARTIFACT_ROOT/candidate-binding-failure.txt"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -139,6 +165,40 @@ jobs:
           if value["oci"]["manifest"]["digest"] != sys.argv[2]:
               raise SystemExit("OCI manifest digest input mismatch")
           PY
+      - name: Mark candidate binding successful
+        env:
+          ARTIFACT_ROOT: ${{ runner.temp }}/platform-qualification-candidate-binding-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+        run: |
+          set -euo pipefail
+          test -f "$ARTIFACT_ROOT/candidate-binding-failure.txt"
+          printf '%s\n' \
+            'kind: tomorrowci.platform-candidate-binding/v1' \
+            'status: PASS' \
+            "repository: $GITHUB_REPOSITORY" \
+            "source_sha: $GITHUB_SHA" \
+            "source_ref: $GITHUB_REF" \
+            "workflow_run_id: $GITHUB_RUN_ID" \
+            "workflow_run_attempt: $GITHUB_RUN_ATTEMPT" \
+            "candidate_run_id: $CANDIDATE_RUN_ID" \
+            "candidate_run_attempt: $CANDIDATE_RUN_ATTEMPT" \
+            "candidate_source_sha: $CANDIDATE_SOURCE_SHA" \
+            "candidate_manifest_sha256: $CANDIDATE_MANIFEST_SHA256" \
+            "oci_manifest_digest: $OCI_MANIFEST_DIGEST" \
+            > "$ARTIFACT_ROOT/candidate-binding-pass.txt"
+          rm "$ARTIFACT_ROOT/candidate-binding-failure.txt"
+      - name: Retain exact candidate-binding observation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: platform-qualification-candidate-binding-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/platform-qualification-candidate-binding-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/
+          if-no-files-found: error
+          retention-days: 90
 
   windows-x86_64:
     needs: candidate-binding
@@ -148,6 +208,11 @@ jobs:
       - name: Initialize Windows fail-only workflow observation
         env:
           ARTIFACT_ROOT: ${{ runner.temp }}/platform-qualification-windows-x86_64-docker-desktop-linux-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -161,8 +226,14 @@ jobs:
             'platform_id: windows-x86_64-docker-desktop-linux',
             "repository: $env:GITHUB_REPOSITORY",
             "source_sha: $env:GITHUB_SHA",
+            "source_ref: $env:GITHUB_REF",
             "workflow_run_id: $env:GITHUB_RUN_ID",
-            "workflow_run_attempt: $env:GITHUB_RUN_ATTEMPT"
+            "workflow_run_attempt: $env:GITHUB_RUN_ATTEMPT",
+            "candidate_run_id: $env:CANDIDATE_RUN_ID",
+            "candidate_run_attempt: $env:CANDIDATE_RUN_ATTEMPT",
+            "candidate_source_sha: $env:CANDIDATE_SOURCE_SHA",
+            "candidate_manifest_sha256: $env:CANDIDATE_MANIFEST_SHA256",
+            "oci_manifest_digest: $env:OCI_MANIFEST_DIGEST"
           )
           $utf8 = [System.Text.UTF8Encoding]::new($false)
           [IO.File]::WriteAllText(
@@ -226,6 +297,11 @@ jobs:
       - name: Initialize macOS x86_64 fail-only workflow observation
         env:
           ARTIFACT_ROOT: ${{ runner.temp }}/platform-qualification-macos-x86_64-colima-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
         run: |
           set -euo pipefail
           test ! -e "$ARTIFACT_ROOT"
@@ -236,8 +312,14 @@ jobs:
             printf '%s\n' 'platform_id: macos-x86_64-colima'
             printf 'repository: %s\n' "$GITHUB_REPOSITORY"
             printf 'source_sha: %s\n' "$GITHUB_SHA"
+            printf 'source_ref: %s\n' "$GITHUB_REF"
             printf 'workflow_run_id: %s\n' "$GITHUB_RUN_ID"
             printf 'workflow_run_attempt: %s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'candidate_run_id: %s\n' "$CANDIDATE_RUN_ID"
+            printf 'candidate_run_attempt: %s\n' "$CANDIDATE_RUN_ATTEMPT"
+            printf 'candidate_source_sha: %s\n' "$CANDIDATE_SOURCE_SHA"
+            printf 'candidate_manifest_sha256: %s\n' "$CANDIDATE_MANIFEST_SHA256"
+            printf 'oci_manifest_digest: %s\n' "$OCI_MANIFEST_DIGEST"
           } > "$ARTIFACT_ROOT/workflow-preflight.txt"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -291,6 +373,11 @@ jobs:
       - name: Initialize macOS arm64 fail-only workflow observation
         env:
           ARTIFACT_ROOT: ${{ runner.temp }}/platform-qualification-macos-aarch64-colima-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
         run: |
           set -euo pipefail
           test ! -e "$ARTIFACT_ROOT"
@@ -301,8 +388,14 @@ jobs:
             printf '%s\n' 'platform_id: macos-aarch64-colima'
             printf 'repository: %s\n' "$GITHUB_REPOSITORY"
             printf 'source_sha: %s\n' "$GITHUB_SHA"
+            printf 'source_ref: %s\n' "$GITHUB_REF"
             printf 'workflow_run_id: %s\n' "$GITHUB_RUN_ID"
             printf 'workflow_run_attempt: %s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'candidate_run_id: %s\n' "$CANDIDATE_RUN_ID"
+            printf 'candidate_run_attempt: %s\n' "$CANDIDATE_RUN_ATTEMPT"
+            printf 'candidate_source_sha: %s\n' "$CANDIDATE_SOURCE_SHA"
+            printf 'candidate_manifest_sha256: %s\n' "$CANDIDATE_MANIFEST_SHA256"
+            printf 'oci_manifest_digest: %s\n' "$OCI_MANIFEST_DIGEST"
           } > "$ARTIFACT_ROOT/workflow-preflight.txt"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -366,6 +459,43 @@ jobs:
             python: python3
     runs-on: ${{ matrix.runner }}
     steps:
+      - name: Initialize read-back fail-only observation
+        env:
+          ARTIFACT_ROOT: ${{ runner.temp }}/platform-qualification-readback-${{ matrix.platform_id }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+          PLATFORM_ID: ${{ matrix.platform_id }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path -LiteralPath $env:ARTIFACT_ROOT) {
+            throw 'platform read-back observation root already exists'
+          }
+          New-Item -ItemType Directory -Path $env:ARTIFACT_ROOT | Out-Null
+          $lines = @(
+            'kind: tomorrowci.platform-readback/v1',
+            'status: FAIL_ONLY',
+            "platform_id: $env:PLATFORM_ID",
+            "repository: $env:GITHUB_REPOSITORY",
+            "source_sha: $env:GITHUB_SHA",
+            "source_ref: $env:GITHUB_REF",
+            "workflow_run_id: $env:GITHUB_RUN_ID",
+            "workflow_run_attempt: $env:GITHUB_RUN_ATTEMPT",
+            "candidate_run_id: $env:CANDIDATE_RUN_ID",
+            "candidate_run_attempt: $env:CANDIDATE_RUN_ATTEMPT",
+            "candidate_source_sha: $env:CANDIDATE_SOURCE_SHA",
+            "candidate_manifest_sha256: $env:CANDIDATE_MANIFEST_SHA256",
+            "oci_manifest_digest: $env:OCI_MANIFEST_DIGEST"
+          )
+          $utf8 = [System.Text.UTF8Encoding]::new($false)
+          [IO.File]::WriteAllText(
+            (Join-Path $env:ARTIFACT_ROOT 'readback-failure.txt'),
+            (($lines -join "`n") + "`n"),
+            $utf8
+          )
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -405,3 +535,49 @@ jobs:
           )
           & '${{ matrix.python }}' @arguments
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Mark read-back successful
+        env:
+          ARTIFACT_ROOT: ${{ runner.temp }}/platform-qualification-readback-${{ matrix.platform_id }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          OCI_MANIFEST_DIGEST: ${{ inputs.oci_manifest_digest }}
+          PLATFORM_ID: ${{ matrix.platform_id }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $failure = Join-Path $env:ARTIFACT_ROOT 'readback-failure.txt'
+          if (-not (Test-Path -LiteralPath $failure -PathType Leaf)) {
+            throw 'platform read-back failure observation is missing'
+          }
+          $lines = @(
+            'kind: tomorrowci.platform-readback/v1',
+            'status: PASS',
+            "platform_id: $env:PLATFORM_ID",
+            "repository: $env:GITHUB_REPOSITORY",
+            "source_sha: $env:GITHUB_SHA",
+            "source_ref: $env:GITHUB_REF",
+            "workflow_run_id: $env:GITHUB_RUN_ID",
+            "workflow_run_attempt: $env:GITHUB_RUN_ATTEMPT",
+            "candidate_run_id: $env:CANDIDATE_RUN_ID",
+            "candidate_run_attempt: $env:CANDIDATE_RUN_ATTEMPT",
+            "candidate_source_sha: $env:CANDIDATE_SOURCE_SHA",
+            "candidate_manifest_sha256: $env:CANDIDATE_MANIFEST_SHA256",
+            "oci_manifest_digest: $env:OCI_MANIFEST_DIGEST"
+          )
+          $utf8 = [System.Text.UTF8Encoding]::new($false)
+          [IO.File]::WriteAllText(
+            (Join-Path $env:ARTIFACT_ROOT 'readback-pass.txt'),
+            (($lines -join "`n") + "`n"),
+            $utf8
+          )
+          Remove-Item -LiteralPath $failure
+      - name: Retain exact read-back observation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: platform-qualification-readback-${{ matrix.platform_id }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
+          path: ${{ runner.temp }}/platform-qualification-readback-${{ matrix.platform_id }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/
+          if-no-files-found: error
+          retention-days: 90
