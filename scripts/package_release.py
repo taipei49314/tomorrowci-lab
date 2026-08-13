@@ -9,9 +9,9 @@ import io
 import stat
 import sys
 import tarfile
+import unicodedata
 import zipfile
 from pathlib import Path, PurePosixPath
-
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ("README.md", "LICENSE", "CHANGELOG.md")
@@ -41,7 +41,7 @@ def expected_entries(version: str, target: str) -> list[tuple[str, int]]:
     return [
         (f"{root}/", 0o755),
         (f"{root}/{executable}", 0o755),
-        *( (f"{root}/{name}", 0o644) for name in DOCS ),
+        *((f"{root}/{name}", 0o644) for name in DOCS),
     ]
 
 
@@ -80,7 +80,9 @@ def _tar_bytes(version: str, target: str, payload: dict[str, bytes]) -> bytes:
             entry.mtime = FIXED_MTIME
             archive.addfile(entry, io.BytesIO(data))
     result = io.BytesIO()
-    with gzip.GzipFile(filename="", fileobj=result, mode="wb", mtime=FIXED_MTIME) as zipped:
+    with gzip.GzipFile(
+        filename="", fileobj=result, mode="wb", mtime=FIXED_MTIME
+    ) as zipped:
         zipped.write(raw.getvalue())
     return result.getvalue()
 
@@ -93,7 +95,11 @@ def _zip_bytes(version: str, target: str, payload: dict[str, bytes]) -> bytes:
     ) as archive:
         names = [(f"{root}/", b"", 0o755)]
         names.extend(
-            (f"{root}/{name}", payload[name], 0o755 if name == "tomorrowci.exe" else 0o644)
+            (
+                f"{root}/{name}",
+                payload[name],
+                0o755 if name == "tomorrowci.exe" else 0o644,
+            )
             for name in ("tomorrowci.exe", *DOCS)
         )
         for name, data, mode in names:
@@ -139,6 +145,21 @@ def _safe_member(name: str) -> None:
         raise ValueError(f"unsafe archive member: {name!r}")
 
 
+def _safe_zip_member(info: zipfile.ZipInfo) -> str:
+    raw_name = info.orig_filename
+    name = info.filename
+    if (
+        type(raw_name) is not str
+        or type(name) is not str
+        or raw_name != name
+        or any(unicodedata.category(character) == "Cc" for character in raw_name)
+        or any(unicodedata.category(character) == "Cc" for character in name)
+    ):
+        raise ValueError(f"unsafe ZIP member name: {raw_name!r}")
+    _safe_member(name)
+    return name
+
+
 def verify_archive(
     *,
     archive: Path,
@@ -155,36 +176,36 @@ def verify_archive(
                 raise ValueError("ZIP archive comment is forbidden")
             actual = []
             for info in bundle.infolist():
-                _safe_member(info.filename)
+                name = _safe_zip_member(info)
                 raw_mode = (info.external_attr >> 16) & 0xFFFF
                 mode = raw_mode & 0o777
-                actual.append((info.filename, mode))
-                expected_mode = expected_modes.get(info.filename)
-                file_type = stat.S_IFDIR if info.filename.endswith("/") else stat.S_IFREG
+                actual.append((name, mode))
+                expected_mode = expected_modes.get(name)
+                file_type = stat.S_IFDIR if name.endswith("/") else stat.S_IFREG
                 expected_attr = ((file_type | (expected_mode or 0)) & 0xFFFF) << 16
-                if info.filename.endswith("/"):
+                if name.endswith("/"):
                     expected_attr |= 0x10
                 if expected_mode is None or info.external_attr != expected_attr:
-                    raise ValueError(f"non-canonical ZIP type/permissions: {info.filename}")
+                    raise ValueError(f"non-canonical ZIP type/permissions: {name}")
                 if info.date_time != ZIP_EPOCH:
-                    raise ValueError(f"non-deterministic ZIP timestamp: {info.filename}")
+                    raise ValueError(f"non-deterministic ZIP timestamp: {name}")
                 if info.create_system != 3 or info.extra or info.comment:
-                    raise ValueError(f"non-canonical ZIP metadata: {info.filename}")
+                    raise ValueError(f"non-canonical ZIP metadata: {name}")
                 if info.compress_type != zipfile.ZIP_DEFLATED:
-                    raise ValueError(f"non-canonical ZIP compression: {info.filename}")
+                    raise ValueError(f"non-canonical ZIP compression: {name}")
                 if info.flag_bits & 0x1:
-                    raise ValueError(f"encrypted ZIP member is forbidden: {info.filename}")
-                if info.filename.endswith("/"):
+                    raise ValueError(f"encrypted ZIP member is forbidden: {name}")
+                if name.endswith("/"):
                     if not stat.S_ISDIR(raw_mode) or not info.is_dir():
-                        raise ValueError(f"ZIP directory type mismatch: {info.filename}")
+                        raise ValueError(f"ZIP directory type mismatch: {name}")
                     if not (info.external_attr & 0x10):
-                        raise ValueError(f"ZIP directory DOS attribute missing: {info.filename}")
+                        raise ValueError(f"ZIP directory DOS attribute missing: {name}")
                     if bundle.read(info):
-                        raise ValueError(f"ZIP directory contains data: {info.filename}")
+                        raise ValueError(f"ZIP directory contains data: {name}")
                 else:
                     if not stat.S_ISREG(raw_mode) or info.is_dir():
-                        raise ValueError(f"ZIP payload must be a regular file: {info.filename}")
-                    observed_payload[PurePosixPath(info.filename).name] = bundle.read(info)
+                        raise ValueError(f"ZIP payload must be a regular file: {name}")
+                    observed_payload[PurePosixPath(name).name] = bundle.read(info)
     else:
         if archive.read_bytes()[: len(GZIP_HEADER)] != GZIP_HEADER:
             raise ValueError("non-canonical gzip header")
@@ -192,7 +213,11 @@ def verify_archive(
             actual = []
             for info in bundle.getmembers():
                 _safe_member(info.name)
-                name = f"{info.name}/" if info.isdir() and not info.name.endswith("/") else info.name
+                name = (
+                    f"{info.name}/"
+                    if info.isdir() and not info.name.endswith("/")
+                    else info.name
+                )
                 actual.append((name, info.mode & 0o777))
                 expected_mode = expected_modes.get(name)
                 if expected_mode is None or info.mode != expected_mode:
@@ -209,19 +234,26 @@ def verify_archive(
                         raise ValueError(f"TAR payload cannot be read: {info.name}")
                     observed_payload[PurePosixPath(info.name).name] = handle.read()
     if actual != expected:
-        raise ValueError(f"archive inventory mismatch: expected {expected!r}, got {actual!r}")
+        raise ValueError(
+            f"archive inventory mismatch: expected {expected!r}, got {actual!r}"
+        )
     if expected_payload is not None and observed_payload != expected_payload:
         raise ValueError("archived payload bytes do not match the release inputs")
 
 
-def extract_archive(*, archive: Path, output_dir: Path, version: str, target: str) -> Path:
+def extract_archive(
+    *, archive: Path, output_dir: Path, version: str, target: str
+) -> Path:
     verify_archive(archive=archive, version=version, target=target)
     if output_dir.exists():
         raise ValueError(f"refusing non-fresh extraction directory: {output_dir}")
     output_dir.mkdir(parents=True)
     if target == WINDOWS_TARGET:
         with zipfile.ZipFile(archive) as bundle:
-            members = [(info.filename, info.is_dir(), bundle.read(info)) for info in bundle.infolist()]
+            members = [
+                (_safe_zip_member(info), info.is_dir(), bundle.read(info))
+                for info in bundle.infolist()
+            ]
     else:
         members = []
         with tarfile.open(archive, mode="r:gz") as bundle:
@@ -277,7 +309,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(result)
         elif args.command == "verify":
-            verify_archive(archive=args.archive, version=args.version, target=args.target)
+            verify_archive(
+                archive=args.archive, version=args.version, target=args.target
+            )
             print(f"package-release: PASS: {args.archive}")
         else:
             result = extract_archive(
