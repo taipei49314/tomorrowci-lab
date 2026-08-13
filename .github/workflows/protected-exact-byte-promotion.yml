@@ -217,30 +217,34 @@ jobs:
           python3 scripts/promotion_preflight.py inspect-oci-manifest \
             --provenance "$dist/image-provenance.json" \
             --expected-digest "$OCI_MANIFEST_DIGEST"
-      - name: Require immutable repository trust material and verify authorization
+      - name: Fetch candidate-derived externally signed policy and verify authorization
         env:
           CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
         run: |
           set -euo pipefail
           trust=.github/release-trust
           test -f "$trust/allowed_signers" && test ! -L "$trust/allowed_signers"
-          test -f "$trust/expected-policy-sha256.txt" && \
-            test ! -L "$trust/expected-policy-sha256.txt"
+          test -f "$trust/external-policy-transport.json" && \
+            test ! -L "$trust/external-policy-transport.json"
           git ls-files --error-unmatch -- "$trust/allowed_signers" \
-            "$trust/expected-policy-sha256.txt"
-          python3 scripts/promotion_preflight.py inspect-trust-material \
-            --allowed-signers "$trust/allowed_signers" \
-            --expected-policy-digest "$trust/expected-policy-sha256.txt" \
-            > "$RUNNER_TEMP/tracked-trust-identity.json"
-          expected_policy="$(tr -d '\r\n' < "$trust/expected-policy-sha256.txt")"
-          [[ "$expected_policy" =~ ^sha256:[0-9a-f]{64}$ ]]
-          authorization="$RUNNER_TEMP/authorization"
+            "$trust/external-policy-transport.json"
+          policy_root="$RUNNER_TEMP/external-policy"
+          mkdir "$policy_root"
           dist="$RUNNER_TEMP/candidate-dist"
+          python3 scripts/external_policy_transport.py fetch \
+            --config "$trust/external-policy-transport.json" \
+            --allowed-signers "$trust/allowed_signers" \
+            --candidate-manifest "$dist/candidate-manifest.json" \
+            --output-policy "$policy_root/external-policy.json" \
+            --output-signature "$policy_root/external-policy.json.sig" \
+            > "$RUNNER_TEMP/external-policy-transport-receipt.json"
+          test -s "$RUNNER_TEMP/external-policy-transport-receipt.json"
+          authorization="$RUNNER_TEMP/authorization"
           python3 scripts/external_authorization.py \
             --authorization "$authorization/external-authorization.json" \
             --signature "$authorization/external-authorization.json.sig" \
-            --policy "$authorization/preregistered-policy.json" \
-            --expected-policy-sha256 "$expected_policy" \
+            --policy "$policy_root/external-policy.json" \
+            --policy-signature "$policy_root/external-policy.json.sig" \
             --allowed-signers "$trust/allowed_signers" \
             --candidate-manifest "$dist/candidate-manifest.json" \
             --oci-provenance "$dist/image-provenance.json" \
@@ -257,7 +261,7 @@ jobs:
           dist="$RUNNER_TEMP/candidate-dist"
           trust=.github/release-trust
           version="$(python3 scripts/version_contract.py)"
-          authorization_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["external"]["authorization_id"])' "$authorization/preregistered-policy.json")"
+          authorization_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["external"]["authorization_id"])' "$RUNNER_TEMP/external-policy/external-policy.json")"
           [[ "$authorization_id" =~ ^[0-9a-f]{64}$ ]]
           export GIT_COMMITTER_NAME="TomorrowCI Release Bot"
           export GIT_COMMITTER_EMAIL="release@tomorrowci.invalid"
@@ -273,14 +277,13 @@ jobs:
               "$CANDIDATE_SOURCE_SHA" \
               --message "Consume TomorrowCI external authorization $authorization_id"
           fi
-          expected_policy="$(tr -d '\r\n' < "$trust/expected-policy-sha256.txt")"
           python3 scripts/tag_promotion_attestation.py \
             --attestation "$authorization/tag-promotion-attestation.json" \
             --git-repo . --candidate-dir "$dist" \
             --authorization "$authorization/external-authorization.json" \
             --signature "$authorization/external-authorization.json.sig" \
-            --policy "$authorization/preregistered-policy.json" \
-            --expected-policy-sha256 "$expected_policy" \
+            --policy "$RUNNER_TEMP/external-policy/external-policy.json" \
+            --policy-signature "$RUNNER_TEMP/external-policy/external-policy.json.sig" \
             --allowed-signers "$trust/allowed_signers" \
             --evidence "$authorization/external-qualification-evidence.json"
           tag_oid="$(git rev-parse "$version_ref")"
@@ -301,8 +304,10 @@ jobs:
             --output "$state_root/remote-state.json"
           cp "$authorization/tag-promotion-attestation.json" "$state_root/"
           cp "$RUNNER_TEMP/external-authorization-receipt.json" "$state_root/"
+          cp "$RUNNER_TEMP/external-policy-transport-receipt.json" "$state_root/"
+          cp "$RUNNER_TEMP/external-policy/external-policy.json" "$state_root/"
+          cp "$RUNNER_TEMP/external-policy/external-policy.json.sig" "$state_root/"
           cp "$RUNNER_TEMP/authorization-marker-identity.json" "$state_root/"
-          cp "$RUNNER_TEMP/tracked-trust-identity.json" "$state_root/"
           test -z "$(git status --porcelain --untracked-files=all)"
       - name: Snapshot exact GitHub Release and GHCR states and build disabled plan
         id: publication-plan
@@ -537,16 +542,31 @@ jobs:
           test "$(git rev-parse "$marker_ref")" = "$marker_oid"
           authorization="$RUNNER_TEMP/write-authorization"
           trust=.github/release-trust
-          python3 scripts/promotion_preflight.py inspect-trust-material \
+          test -f "$trust/allowed_signers" && test ! -L "$trust/allowed_signers"
+          test -f "$trust/external-policy-transport.json" && \
+            test ! -L "$trust/external-policy-transport.json"
+          git ls-files --error-unmatch -- "$trust/allowed_signers" \
+            "$trust/external-policy-transport.json"
+          policy_root="$RUNNER_TEMP/write-external-policy"
+          mkdir "$policy_root"
+          python3 scripts/external_policy_transport.py fetch \
+            --config "$trust/external-policy-transport.json" \
             --allowed-signers "$trust/allowed_signers" \
-            --expected-policy-digest "$trust/expected-policy-sha256.txt" \
-            > "$RUNNER_TEMP/write-trust-identity.json"
-          expected_policy="$(tr -d '\r\n' < "$trust/expected-policy-sha256.txt")"
+            --candidate-manifest "$dist/candidate-manifest.json" \
+            --output-policy "$policy_root/external-policy.json" \
+            --output-signature "$policy_root/external-policy.json.sig" \
+            > "$RUNNER_TEMP/write-external-policy-transport-receipt.json"
+          cmp --silent "$policy_root/external-policy.json" \
+            "$RUNNER_TEMP/promotion-state/external-policy.json"
+          cmp --silent "$policy_root/external-policy.json.sig" \
+            "$RUNNER_TEMP/promotion-state/external-policy.json.sig"
+          cmp --silent "$RUNNER_TEMP/write-external-policy-transport-receipt.json" \
+            "$RUNNER_TEMP/promotion-state/external-policy-transport-receipt.json"
           python3 scripts/external_authorization.py \
             --authorization "$authorization/external-authorization.json" \
             --signature "$authorization/external-authorization.json.sig" \
-            --policy "$authorization/preregistered-policy.json" \
-            --expected-policy-sha256 "$expected_policy" \
+            --policy "$policy_root/external-policy.json" \
+            --policy-signature "$policy_root/external-policy.json.sig" \
             --allowed-signers "$trust/allowed_signers" \
             --candidate-manifest "$dist/candidate-manifest.json" \
             --oci-provenance "$dist/image-provenance.json" \
@@ -557,8 +577,8 @@ jobs:
             --git-repo . --candidate-dir "$dist" \
             --authorization "$authorization/external-authorization.json" \
             --signature "$authorization/external-authorization.json.sig" \
-            --policy "$authorization/preregistered-policy.json" \
-            --expected-policy-sha256 "$expected_policy" \
+            --policy "$policy_root/external-policy.json" \
+            --policy-signature "$policy_root/external-policy.json.sig" \
             --allowed-signers "$trust/allowed_signers" \
             --evidence "$authorization/external-qualification-evidence.json"
           cmp --silent "$authorization/tag-promotion-attestation.json" \

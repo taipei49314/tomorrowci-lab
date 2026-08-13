@@ -38,17 +38,18 @@ AUTHORIZATION_FILES = {
     "external-authorization.json",
     "external-authorization.json.sig",
     "external-qualification-evidence.json",
-    "preregistered-policy.json",
     "tag-promotion-attestation.json",
 }
 PREPARED_STATE_FILES = {
     "authorization-marker-identity.json",
     "external-authorization-receipt.json",
+    "external-policy-transport-receipt.json",
+    "external-policy.json",
+    "external-policy.json.sig",
     "publication-plan.json",
     "release-body.md",
     "remote-state.json",
     "tag-promotion-attestation.json",
-    "tracked-trust-identity.json",
 }
 
 
@@ -402,30 +403,6 @@ def inspect_oci_manifest_digest(provenance: Path, expected_digest: str) -> str:
     if actual != expected_digest:
         raise ValueError("OCI detached provenance manifest digest mismatch")
     return actual
-
-
-def inspect_tracked_trust_material(
-    *, allowed_signers: Path, expected_policy_digest: Path
-) -> dict:
-    """Snapshot the repository trust root and exact policy anchor."""
-
-    signers = _snapshot(allowed_signers, "allowed-signers trust root")
-    anchor = _snapshot(expected_policy_digest, "expected policy digest")
-    try:
-        anchor_text = anchor.decode("ascii")
-    except UnicodeDecodeError as exc:
-        raise ValueError("expected policy digest must be ASCII") from exc
-    if not anchor_text.endswith("\n") or anchor_text.count("\n") != 1:
-        raise ValueError("expected policy digest must contain one LF-terminated line")
-    digest = anchor_text[:-1]
-    if not SHA256.fullmatch(digest):
-        raise ValueError("expected policy digest is malformed")
-    if not signers or b"\x00" in signers:
-        raise ValueError("allowed-signers trust root is empty or binary")
-    return {
-        "allowed_signers_sha256": _sha256(signers),
-        "expected_policy_sha256": digest,
-    }
 
 
 def inspect_package_pages(pages: Path, *, package_name: str, owner: str) -> str:
@@ -1135,9 +1112,6 @@ def main(argv: list[str] | None = None) -> int:
     oci = commands.add_parser("inspect-oci-manifest")
     oci.add_argument("--provenance", type=Path, required=True)
     oci.add_argument("--expected-digest", required=True)
-    trust = commands.add_parser("inspect-trust-material")
-    trust.add_argument("--allowed-signers", type=Path, required=True)
-    trust.add_argument("--expected-policy-digest", type=Path, required=True)
     packages = commands.add_parser("inspect-package-pages")
     packages.add_argument("--pages", type=Path, required=True)
     packages.add_argument("--package-name", required=True)
@@ -1255,12 +1229,6 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "inspect-oci-manifest":
             digest = inspect_oci_manifest_digest(args.provenance, args.expected_digest)
             print(f"OCI authoritative manifest digest: PASS: {digest}")
-        elif args.command == "inspect-trust-material":
-            value = inspect_tracked_trust_material(
-                allowed_signers=args.allowed_signers,
-                expected_policy_digest=args.expected_policy_digest,
-            )
-            sys.stdout.buffer.write(canonical_bytes(value))
         elif args.command == "inspect-package-pages":
             print(
                 inspect_package_pages(

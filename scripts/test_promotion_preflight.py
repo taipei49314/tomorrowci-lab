@@ -312,7 +312,10 @@ class PromotionWorkflowStaticTests(unittest.TestCase):
         self.assertIn("assert-release-publish-nonclobber", text)
         self.assertIn("inspect-authorization-marker", text)
         self.assertIn("inspect-oci-manifest", text)
-        self.assertIn("inspect-trust-material", text)
+        self.assertIn("scripts/external_policy_transport.py fetch", text)
+        self.assertGreaterEqual(text.count("external-policy-transport.json"), 4)
+        self.assertNotIn("expected-policy-sha256.txt", text)
+        self.assertNotIn("preregistered-policy.json", text)
         self.assertIn("build-publication-plan", text)
         self.assertIn("ghcr-version-pages.json", text)
         self.assertIn("tag-promotion-attestation.json", text)
@@ -821,19 +824,6 @@ class PublicationPrimitiveTests(unittest.TestCase):
             preflight.inspect_doctor_output(doctor, expected_version=self.VERSION)
 
     def test_trust_and_package_snapshots_are_strict(self) -> None:
-        signers = self.root / "allowed_signers"
-        signers.write_text("auditor ssh-ed25519 AAAA fixture\n", encoding="utf-8")
-        anchor = self.root / "expected-policy-sha256.txt"
-        anchor.write_bytes(("sha256:" + "3" * 64 + "\n").encode("ascii"))
-        identity = preflight.inspect_tracked_trust_material(
-            allowed_signers=signers, expected_policy_digest=anchor
-        )
-        self.assertEqual(identity["expected_policy_sha256"], "sha256:" + "3" * 64)
-        anchor.write_bytes(("sha256:" + "3" * 64 + "\r\n").encode("ascii"))
-        with self.assertRaisesRegex(ValueError, "malformed"):
-            preflight.inspect_tracked_trust_material(
-                allowed_signers=signers, expected_policy_digest=anchor
-            )
         packages = self._pages(
             "packages.json",
             [

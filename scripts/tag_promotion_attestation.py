@@ -493,7 +493,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--authorization", type=Path, required=True)
     parser.add_argument("--signature", type=Path, required=True)
     parser.add_argument("--policy", type=Path, required=True)
-    parser.add_argument("--expected-policy-sha256", required=True)
+    parser.add_argument("--policy-signature", type=Path, required=True)
     parser.add_argument("--allowed-signers", type=Path, required=True)
     parser.add_argument("--evidence", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -502,7 +502,7 @@ def main(argv: list[str] | None = None) -> int:
             authorization=args.authorization,
             signature=args.signature,
             policy=args.policy,
-            expected_policy_sha256=args.expected_policy_sha256,
+            policy_signature=args.policy_signature,
             allowed_signers=args.allowed_signers,
             candidate_manifest=args.candidate_dir / MANIFEST_NAME,
             oci_provenance=args.candidate_dir / "image-provenance.json",
