@@ -17,6 +17,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import promotion_preflight as preflight
 
 
+def write_nul_suffixed_member(
+    archive: Path, *, visible_name: str, payload: bytes
+) -> None:
+    """Write the same NUL-suffixed raw name in local and central headers."""
+
+    placeholder = f"{visible_name}Xhidden".encode()
+    malicious = visible_name.encode() + b"\0hidden"
+    entry = zipfile.ZipInfo(placeholder.decode())
+    entry.create_system = 3
+    entry.external_attr = (stat.S_IFREG | 0o600) << 16
+    with zipfile.ZipFile(archive, "w") as package:
+        package.writestr(entry, payload)
+    data = archive.read_bytes()
+    if len(placeholder) != len(malicious) or data.count(placeholder) != 2:
+        raise AssertionError("ZIP test fixture did not contain two raw member names")
+    archive.write_bytes(data.replace(placeholder, malicious))
+
+
 class PromotionPlatformTests(unittest.TestCase):
     REPOSITORY = "owner/repo"
     SOURCE = "d" * 40
@@ -200,6 +218,29 @@ class PromotionPlatformTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsafe"):
             preflight.safe_extract_platform_artifact(
                 symlink, self.root / "symlink-output"
+            )
+
+    def test_exact_and_recursive_extract_reject_raw_nul_suffix_aliases(self) -> None:
+        observation = self.root / "nul-observation.zip"
+        write_nul_suffixed_member(
+            observation, visible_name="readback-pass.txt", payload=b"PASS\n"
+        )
+        with zipfile.ZipFile(observation) as package:
+            entry = package.infolist()[0]
+            self.assertEqual(entry.filename, "readback-pass.txt")
+            self.assertEqual(entry.orig_filename, "readback-pass.txt\0hidden")
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            preflight.safe_extract_platform_observation(
+                observation, self.root / "nul-observation-output", role="readback"
+            )
+
+        artifact = self.root / "nul-platform.zip"
+        write_nul_suffixed_member(
+            artifact, visible_name="metadata/post-state.json", payload=b"{}\n"
+        )
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            preflight.safe_extract_platform_artifact(
+                artifact, self.root / "nul-platform-output"
             )
 
     def _write_observation(

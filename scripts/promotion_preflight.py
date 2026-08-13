@@ -15,6 +15,7 @@ import json
 import re
 import stat
 import sys
+import unicodedata
 import zipfile
 from pathlib import Path, PurePosixPath
 
@@ -1578,13 +1579,12 @@ def _safe_extract_exact_zip(
     destination.mkdir(mode=0o700)
     with zipfile.ZipFile(archive) as package:
         entries = package.infolist()
-        names = [entry.filename for entry in entries]
+        names = [_safe_zip_member_name(entry, label) for entry in entries]
         if len(names) != len(set(names)) or set(names) != expected_files:
             raise ValueError(f"{label} bundle inventory mismatch")
         if sum(entry.file_size for entry in entries) > max_uncompressed_bytes:
             raise ValueError(f"{label} bundle exceeds size limit")
-        for entry in entries:
-            name = entry.filename
+        for entry, name in zip(entries, names, strict=True):
             mode = entry.external_attr >> 16
             if (
                 entry.is_dir()
@@ -1600,6 +1600,22 @@ def _safe_extract_exact_zip(
                 raise ValueError(f"{label} entry size drift: {name}")
             with (destination / name).open("xb") as handle:
                 handle.write(data)
+
+
+def _safe_zip_member_name(entry: zipfile.ZipInfo, label: str) -> str:
+    """Return an unmodified ZIP member name without hidden control aliases."""
+
+    raw_name = entry.orig_filename
+    name = entry.filename
+    if (
+        type(raw_name) is not str
+        or type(name) is not str
+        or raw_name != name
+        or any(unicodedata.category(character) == "Cc" for character in raw_name)
+        or any(unicodedata.category(character) == "Cc" for character in name)
+    ):
+        raise ValueError(f"unsafe {label} ZIP entry name: {raw_name!r}")
+    return name
 
 
 def safe_extract_platform_artifact(archive: Path, destination: Path) -> None:
@@ -1619,7 +1635,7 @@ def safe_extract_platform_artifact(archive: Path, destination: Path) -> None:
         names: set[str] = set()
         casefolded: set[str] = set()
         for entry in entries:
-            name = entry.filename
+            name = _safe_zip_member_name(entry, "platform artifact")
             relative = PurePosixPath(name)
             mode = entry.external_attr >> 16
             folded = name.casefold()

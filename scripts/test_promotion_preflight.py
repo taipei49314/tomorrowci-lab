@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import stat
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,26 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import promotion_preflight as preflight
+
+
+def write_nul_suffixed_inventory(
+    archive: Path, *, names: set[str], aliased_name: str
+) -> None:
+    """Write an exact inventory with one raw NUL-suffixed member name."""
+
+    placeholder = f"{aliased_name}Xhidden".encode()
+    malicious = aliased_name.encode() + b"\0hidden"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for name in sorted(names):
+            stored_name = placeholder.decode() if name == aliased_name else name
+            entry = zipfile.ZipInfo(stored_name)
+            entry.create_system = 3
+            entry.external_attr = (stat.S_IFREG | 0o600) << 16
+            bundle.writestr(entry, f"{name}\n".encode())
+    data = archive.read_bytes()
+    if len(placeholder) != len(malicious) or data.count(placeholder) != 2:
+        raise AssertionError("ZIP test fixture did not contain two raw member names")
+    archive.write_bytes(data.replace(placeholder, malicious))
 
 
 class PromotionStateTests(unittest.TestCase):
@@ -866,6 +887,17 @@ class PublicationPrimitiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "inventory mismatch"):
             preflight.safe_extract_prepared_state(bad, self.root / "bad-extracted")
 
+        nul_alias = self.root / "nul-prepared.zip"
+        write_nul_suffixed_inventory(
+            nul_alias,
+            names=preflight.PREPARED_STATE_FILES,
+            aliased_name="publication-plan.json",
+        )
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            preflight.safe_extract_prepared_state(
+                nul_alias, self.root / "nul-prepared-extracted"
+            )
+
     def test_candidate_extract_uses_only_the_verified_archive_inventory(self) -> None:
         source = self.root / "candidate-archive-source"
         source.mkdir()
@@ -892,6 +924,17 @@ class PublicationPrimitiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "inventory mismatch"):
             preflight.safe_extract_candidate(
                 bad, self.root / "candidate-extra-extracted", version=self.VERSION
+            )
+
+        nul_alias = self.root / "nul-candidate.zip"
+        write_nul_suffixed_inventory(
+            nul_alias,
+            names=names,
+            aliased_name=preflight.candidate_manifest.MANIFEST_NAME,
+        )
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            preflight.safe_extract_candidate(
+                nul_alias, self.root / "nul-candidate-extracted", version=self.VERSION
             )
 
     def test_release_environment_requires_independent_approval(self) -> None:
