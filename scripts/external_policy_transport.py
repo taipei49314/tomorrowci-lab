@@ -30,6 +30,10 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/+\-]{0,199}$")
 _TEMPLATE = re.compile(r"\{(candidate_commit|candidate_manifest_sha256_hex)\}")
+_HOST = re.compile(
+    r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*"
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+)
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -55,6 +59,49 @@ def _snapshot(path: Path, label: str) -> authorization._Snapshot:
     return authorization._snapshot(path, label)
 
 
+def _direct_https_url(value: object, label: str) -> urllib.parse.SplitResult:
+    """Parse the one accepted spelling of a direct external HTTPS URL.
+
+    Authority is deliberately a DNS hostname, lower-case ASCII, and has no
+    explicit port.  Paths have no escaping or normalization aliases.  The
+    exact parse/reserialize comparison makes future URL handling changes fail
+    closed instead of silently broadening the transport grammar.
+    """
+    if type(value) is not str or len(value) > 2048 or not value.isascii():
+        raise ValueError(f"invalid {label}")
+    if not value.startswith("https://"):
+        raise ValueError(f"{label} must be a direct canonical HTTPS URL")
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"{label} must be a direct canonical HTTPS URL") from exc
+    hostname = parsed.hostname
+    path_parts = parsed.path.split("/")
+    if (
+        parsed.scheme != "https"
+        or not hostname
+        or parsed.netloc != hostname
+        or not _HOST.fullmatch(hostname)
+        or hostname.endswith(".")
+        or ".." in hostname
+        or port is not None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or "%" in parsed.netloc
+        or "%" in parsed.path
+        or "\\" in parsed.path
+        or not parsed.path.startswith("/")
+        or len(path_parts) < 2
+        or any(not part or part in {".", ".."} for part in path_parts[1:])
+        or urllib.parse.urlunsplit(parsed) != value
+    ):
+        raise ValueError(f"{label} must be a direct canonical HTTPS URL")
+    return parsed
+
+
 def _url_template(value: object, label: str) -> str:
     if type(value) is not str or len(value) > 2048:
         raise ValueError(f"invalid {label}")
@@ -68,25 +115,27 @@ def _url_template(value: object, label: str) -> str:
         or _TEMPLATE.sub("", value).find("}") >= 0
     ):
         raise ValueError(f"{label} has an unknown template field")
-    parsed = urllib.parse.urlsplit(
+    parsed_template = urllib.parse.urlsplit(value)
+    if "{" in parsed_template.netloc or "}" in parsed_template.netloc:
+        raise ValueError(f"{label} must keep candidate identity in the path")
+    _direct_https_url(
         value.replace("{candidate_commit}", "a" * 40).replace(
             "{candidate_manifest_sha256_hex}", "b" * 64
-        )
+        ),
+        label,
     )
-    if (
-        parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.port not in (None, 443)
-        or parsed.query
-        or parsed.fragment
-        or not parsed.path.startswith("/")
-        or "/../" in f"/{parsed.path}/"
-        or "//" in parsed.path
-    ):
-        raise ValueError(f"{label} must be a direct canonical HTTPS URL")
     return value
+
+
+def _template_authority(template: str, label: str) -> str:
+    parsed = _direct_https_url(
+        template.replace("{candidate_commit}", "a" * 40).replace(
+            "{candidate_manifest_sha256_hex}", "b" * 64
+        ),
+        label,
+    )
+    assert parsed.hostname is not None
+    return parsed.hostname
 
 
 def load_transport(
@@ -140,6 +189,10 @@ def load_transport(
     )
     if policy_template == signature_template:
         raise ValueError("policy and signature URLs must differ")
+    if _template_authority(
+        policy_template, "policy URL template"
+    ) != _template_authority(signature_template, "policy signature URL template"):
+        raise ValueError("policy and signature URLs must have the same authority")
     return value, config_snapshot, allowed_snapshot
 
 
@@ -161,6 +214,14 @@ def _candidate_identity(candidate_manifest: Path) -> tuple[str, str, str]:
         },
         "candidate manifest",
     )
+    if (
+        manifest["kind"] != "tomorrowci.release-candidate.v1"
+        or manifest["schema_version"] != 1
+        or manifest["status"] != "CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED"
+        or type(manifest["version"]) is not str
+        or not authorization.is_semver(manifest["version"])
+    ):
+        raise ValueError("candidate manifest identity mismatch")
     source = authorization._object(
         manifest["source"],
         {"commit", "dirty", "ref", "repository"},
@@ -174,6 +235,26 @@ def _candidate_identity(candidate_manifest: Path) -> tuple[str, str, str]:
         raise ValueError("candidate manifest commit is invalid")
     if source["dirty"] is not False or source["ref"] != "refs/heads/master":
         raise ValueError("candidate manifest source is not a clean master candidate")
+    workflow = authorization._object(
+        manifest["workflow"],
+        {"name", "run_attempt", "run_id", "run_url", "workflow_ref"},
+        "candidate manifest workflow",
+    )
+    if (
+        workflow["name"] != "release-candidate"
+        or type(workflow["run_id"]) is not int
+        or workflow["run_id"] < 1
+        or type(workflow["run_attempt"]) is not int
+        or workflow["run_attempt"] < 1
+        or workflow["workflow_ref"]
+        != f"{source['repository']}/.github/workflows/candidate.yml@{source['ref']}"
+        or workflow["run_url"]
+        != (
+            f"https://github.com/{source['repository']}/actions/runs/"
+            f"{workflow['run_id']}/attempts/{workflow['run_attempt']}"
+        )
+    ):
+        raise ValueError("candidate manifest workflow is not authoritative")
     return source["repository"], source["commit"], snapshot.sha256
 
 
@@ -196,21 +277,22 @@ def render_urls(
         # The template was prevalidated, but parse again after rendering to make
         # this boundary explicit and prevent future token changes from widening it.
         _url_template(template, "policy transport URL template")
-        if (
-            urllib.parse.urlsplit(url).hostname
-            != urllib.parse.urlsplit(
-                template.replace("{candidate_commit}", "a" * 40).replace(
-                    "{candidate_manifest_sha256_hex}", "b" * 64
-                )
-            ).hostname
+        parsed = _direct_https_url(url, "rendered external policy URL")
+        assert parsed.hostname is not None
+        if parsed.hostname != _template_authority(
+            template, "policy transport URL template"
         ):
             raise ValueError("rendered external policy authority changed")
         return url
 
     transport = config["transport"]
-    return render(transport["policy_url_template"]), render(
-        transport["signature_url_template"]
-    )
+    policy_url = render(transport["policy_url_template"])
+    signature_url = render(transport["signature_url_template"])
+    if urllib.parse.urlsplit(policy_url).hostname != urllib.parse.urlsplit(
+        signature_url
+    ).hostname:
+        raise ValueError("policy and signature URLs must have the same authority")
+    return policy_url, signature_url
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
