@@ -18,6 +18,7 @@ import sys
 import zipfile
 from pathlib import Path
 
+import candidate_manifest
 import tag_promotion_attestation
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -902,7 +903,12 @@ def build_publication_plan(
 
 
 def _safe_extract_exact_zip(
-    archive: Path, destination: Path, *, expected_files: set[str], label: str
+    archive: Path,
+    destination: Path,
+    *,
+    expected_files: set[str],
+    label: str,
+    max_uncompressed_bytes: int = 64 * 1024 * 1024,
 ) -> None:
     destination = destination.absolute()
     if destination.exists():
@@ -913,7 +919,7 @@ def _safe_extract_exact_zip(
         names = [entry.filename for entry in entries]
         if len(names) != len(set(names)) or set(names) != expected_files:
             raise ValueError(f"{label} bundle inventory mismatch")
-        if sum(entry.file_size for entry in entries) > 64 * 1024 * 1024:
+        if sum(entry.file_size for entry in entries) > max_uncompressed_bytes:
             raise ValueError(f"{label} bundle exceeds size limit")
         for entry in entries:
             name = entry.filename
@@ -949,6 +955,28 @@ def safe_extract_prepared_state(archive: Path, destination: Path) -> None:
         destination,
         expected_files=PREPARED_STATE_FILES,
         label="prepared state",
+    )
+
+
+def safe_extract_candidate(archive: Path, destination: Path, *, version: str) -> None:
+    """Extract only the exact frozen candidate inventory from verified raw bytes.
+
+    The Actions artifact downloader is intentionally not the trust boundary for
+    promotion.  Callers must first authenticate the API ZIP's size and digest,
+    then use this strict extraction before candidate-manifest verification.
+    """
+
+    expected_files = {
+        *candidate_manifest.payload_names(version),
+        candidate_manifest.CHECKSUMS_NAME,
+        candidate_manifest.MANIFEST_NAME,
+    }
+    _safe_extract_exact_zip(
+        archive,
+        destination,
+        expected_files=expected_files,
+        label="candidate",
+        max_uncompressed_bytes=2 * 1024 * 1024 * 1024,
     )
 
 
@@ -1088,6 +1116,10 @@ def main(argv: list[str] | None = None) -> int:
     state_extract = commands.add_parser("extract-prepared-state")
     state_extract.add_argument("--archive", type=Path, required=True)
     state_extract.add_argument("--destination", type=Path, required=True)
+    candidate_extract = commands.add_parser("extract-candidate")
+    candidate_extract.add_argument("--archive", type=Path, required=True)
+    candidate_extract.add_argument("--destination", type=Path, required=True)
+    candidate_extract.add_argument("--version", required=True)
     refs = commands.add_parser("inspect-remote-refs")
     refs.add_argument("--observation", type=Path, required=True)
     refs.add_argument("--version-ref", required=True)
@@ -1198,6 +1230,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "extract-prepared-state":
             safe_extract_prepared_state(args.archive, args.destination)
             print("prepared state bundle: PASS")
+        elif args.command == "extract-candidate":
+            safe_extract_candidate(args.archive, args.destination, version=args.version)
+            print("candidate bundle: PASS")
         elif args.command == "inspect-remote-refs":
             value = remote_state(
                 args.observation.read_text(encoding="utf-8"),

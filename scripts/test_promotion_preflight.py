@@ -338,6 +338,8 @@ class PromotionWorkflowStaticTests(unittest.TestCase):
         self.assertIn("inspect-doctor-output", text)
         self.assertGreaterEqual(text.count("artifact-ids:"), 2)
         self.assertIn("extract-prepared-state", text)
+        self.assertEqual(text.count("extract-candidate"), 2)
+        self.assertEqual(text.count("uses: actions/download-artifact@"), 2)
         self.assertNotIn(
             "name: protected-promotion-preflight-${{ github.run_id }}-attempt-${{ github.run_attempt }}",
             text.split("\n  write:", 1)[1],
@@ -389,6 +391,12 @@ class PromotionWorkflowStaticTests(unittest.TestCase):
         self.assertLess(
             write.index("Re-download raw authorization bytes after approval"),
             write.index("assert-ghcr-nonclobber-write"),
+        )
+        self.assertLess(
+            write.index("Revalidate candidate API bytes after approval"),
+            write.index(
+                "Extract the revalidated raw candidate artifact after approval"
+            ),
         )
         self.assertLess(
             write.index("inspect-immutable-release-setting"),
@@ -710,6 +718,34 @@ class PublicationPrimitiveTests(unittest.TestCase):
             bundle.write(source / "publication-plan.json", "publication-plan.json")
         with self.assertRaisesRegex(ValueError, "inventory mismatch"):
             preflight.safe_extract_prepared_state(bad, self.root / "bad-extracted")
+
+    def test_candidate_extract_uses_only_the_verified_archive_inventory(self) -> None:
+        source = self.root / "candidate-archive-source"
+        source.mkdir()
+        names = {
+            *preflight.candidate_manifest.payload_names(self.VERSION),
+            preflight.candidate_manifest.CHECKSUMS_NAME,
+            preflight.candidate_manifest.MANIFEST_NAME,
+        }
+        for name in names:
+            (source / name).write_bytes(f"{name}\n".encode())
+        archive = self.root / "candidate.zip"
+        with zipfile.ZipFile(archive, "w") as bundle:
+            for name in sorted(names):
+                bundle.write(source / name, name)
+        destination = self.root / "candidate-extracted"
+        preflight.safe_extract_candidate(archive, destination, version=self.VERSION)
+        self.assertEqual({entry.name for entry in destination.iterdir()}, names)
+
+        bad = self.root / "candidate-extra.zip"
+        with zipfile.ZipFile(bad, "w") as bundle:
+            for name in sorted(names):
+                bundle.write(source / name, name)
+            bundle.writestr("unexpected", b"unexpected\n")
+        with self.assertRaisesRegex(ValueError, "inventory mismatch"):
+            preflight.safe_extract_candidate(
+                bad, self.root / "candidate-extra-extracted", version=self.VERSION
+            )
 
     def test_release_environment_requires_independent_approval(self) -> None:
         environment = {
