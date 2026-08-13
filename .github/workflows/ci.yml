@@ -32,6 +32,7 @@ jobs:
           python3 scripts/test_historical_regressions.py
           python3 scripts/test_config_schema.py
           python3 scripts/test_external_authorization.py
+          python3 scripts/test_external_policy_transport.py
           python3 scripts/test_tag_promotion_attestation.py
           python3 scripts/test_external_target_preregistration.py
           python3 scripts/test_external_observation.py
