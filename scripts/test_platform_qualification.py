@@ -123,6 +123,25 @@ class PlatformQualificationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "aliases are forbidden"):
                 contract.tree_snapshot(source, exclude_internal=True)
 
+    def test_temporary_directory_requires_verified_plain_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            parent = root / "plain"
+            parent.mkdir()
+            with contract._temporary_directory(
+                prefix="qualification-", parent=parent, label="test temporary"
+            ) as created:
+                self.assertEqual(Path(created).parent, parent.resolve())
+            alias = root / "alias"
+            try:
+                alias.symlink_to(parent, target_is_directory=True)
+            except OSError:
+                self.skipTest("directory symlink creation is unavailable")
+            with self.assertRaisesRegex(ValueError, "ancestor aliases are forbidden"):
+                contract._temporary_directory(
+                    prefix="qualification-", parent=alias, label="test temporary"
+                )
+
     def test_capture_binds_clean_engine_source_and_replays(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -194,6 +213,37 @@ class PlatformQualificationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     self.capture(metadata)
 
+    def test_runtime_engine_capture_is_internally_consistent_and_stable(self) -> None:
+        with (
+            mock.patch(
+                "run_platform_qualification._line",
+                side_effect=["desktop-linux", "28.0.4"],
+            ),
+            mock.patch(
+                "run_platform_qualification._json_command",
+                return_value={"ServerVersion": "28.0.5"},
+            ),
+            mock.patch("run_platform_qualification._provider_status"),
+            self.assertRaisesRegex(ValueError, "ServerVersion contradict"),
+        ):
+            runner._engine_identity("windows-x86_64-docker-desktop-linux")
+
+        expected = {
+            "context": "colima",
+            "info": {
+                "Architecture": "aarch64",
+                "OSType": "linux",
+                "OperatingSystem": "Ubuntu",
+                "ServerVersion": "28.0.4",
+            },
+            "provider": {"socket": "unix:///one.sock"},
+            "version": "28.0.4",
+        }
+        actual = json.loads(json.dumps(expected))
+        actual["provider"] = {"socket": "unix:///two.sock"}
+        with self.assertRaisesRegex(ValueError, "provider identity changed"):
+            runner._assert_engine_identity(expected, actual, "after scan")
+
     def test_capture_requires_colima_docker_runtime_and_matching_architecture(
         self,
     ) -> None:
@@ -257,6 +307,25 @@ class PlatformQualificationTests(unittest.TestCase):
             )
 
             status["runtime"] = "containerd"
+            write_json(
+                metadata / "provider-status.json",
+                {"colima": status, "docker_context": [context]},
+            )
+            with self.assertRaisesRegex(ValueError, "runtime/provider identity"):
+                contract.create_capture(
+                    metadata_root=metadata,
+                    platform_id="macos-aarch64-colima",
+                    runner_name="ephemeral-macos-arm64-01",
+                    runner_os="macOS",
+                    runner_arch="ARM64",
+                    project_repository="taipei49314/tomorrowci-lab",
+                    project_source_sha=SHA,
+                    project_source_ref="refs/heads/master",
+                    workflow_run_id="12345",
+                    workflow_run_attempt="1",
+                )
+            status["runtime"] = "docker"
+            status["docker_socket"] = "unix:///tmp/unrelated.sock"
             write_json(
                 metadata / "provider-status.json",
                 {"colima": status, "docker_context": [context]},
@@ -448,6 +517,19 @@ class PlatformQualificationTests(unittest.TestCase):
                     "28.0.4",
                 )
 
+            run_manifest = run_root / "run.json"
+            document = json.loads(run_manifest.read_text(encoding="utf-8"))
+            document["results"][1]["environment"]["engine_version"] = "28.0.5"
+            write_json(run_manifest, document)
+            with self.assertRaisesRegex(ValueError, "exact Docker/image identity"):
+                contract._verify_run(
+                    run_root,
+                    Path("tomorrowci.exe"),
+                    "0.2.0-alpha.1",
+                    SHA,
+                    "28.0.4",
+                )
+
     def test_copy_evidence_rejects_source_drift_during_retention(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -456,6 +538,7 @@ class PlatformQualificationTests(unittest.TestCase):
             artifact.mkdir()
             original_snapshot = runner.contract.tree_snapshot
             source_snapshots = 0
+            verified_before = original_snapshot(source, exclude_internal=False)
 
             def snapshot(path: Path, *, exclude_internal: bool) -> object:
                 nonlocal source_snapshots
@@ -472,7 +555,18 @@ class PlatformQualificationTests(unittest.TestCase):
                 ),
                 self.assertRaisesRegex(ValueError, "changed while it was retained"),
             ):
-                runner._copy_evidence(source, artifact, RUN_ID)
+                runner._copy_evidence(source, artifact, RUN_ID, verified_before)
+
+    def test_copy_evidence_rejects_drift_after_verify_before_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = self.make_run(root)
+            artifact = root / "artifact"
+            artifact.mkdir()
+            verified_before = contract.tree_snapshot(source, exclude_internal=False)
+            (source / "run.json").write_text("{}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "changed while it was verified"):
+                runner._copy_evidence(source, artifact, RUN_ID, verified_before)
 
     def test_manual_workflow_is_read_only_fail_closed_and_retains_three_platforms(
         self,
@@ -498,9 +592,11 @@ class PlatformQualificationTests(unittest.TestCase):
         for platform_id in contract.PLATFORMS:
             self.assertIn(platform_id, workflow)
             self.assertIn(f"platform-qualification-{platform_id}", workflow)
-        self.assertEqual(workflow.count("if: always()"), 3)
-        self.assertEqual(workflow.count("retention-days: 90"), 3)
+        self.assertEqual(workflow.count("if: always()"), 5)
+        self.assertEqual(workflow.count("retention-days: 90"), 5)
         self.assertEqual(workflow.count("include-hidden-files: true"), 3)
+        self.assertIn("candidate-binding-failure.txt", workflow)
+        self.assertIn("readback-failure.txt", workflow)
         self.assertIn("verify-artifact", workflow)
         self.assertIn("--oci-manifest-digest", workflow)
         self.assertIn("persist-credentials: false", workflow)
@@ -523,11 +619,14 @@ class PlatformQualificationTests(unittest.TestCase):
             artifact = root / "artifact"
             args = mock.Mock(
                 artifact_root=artifact,
+                candidate_manifest_sha256="sha256:" + "2" * 64,
                 candidate_run_attempt="1",
                 candidate_run_id="12345",
                 candidate_source_sha=SHA,
+                oci_manifest_digest="sha256:" + "3" * 64,
                 platform_id="macos-aarch64-colima",
                 project_repository="taipei49314/tomorrowci-lab",
+                project_source_ref="refs/heads/master",
                 project_source_sha=SHA,
                 workflow_run_attempt="1",
                 workflow_run_id="67890",
@@ -542,6 +641,9 @@ class PlatformQualificationTests(unittest.TestCase):
             )
             self.assertEqual(failure["status"], "FAIL")
             self.assertEqual(failure["error"], "preflight failed")
+            self.assertEqual(failure["candidate_run_id"], "12345")
+            self.assertEqual(failure["workflow_run_attempt"], "1")
+            self.assertEqual(failure["project_source_sha"], SHA)
             self.assertFalse((artifact / contract.RECORD_NAME).exists())
 
     def test_workflow_preflight_is_exactly_bound_and_consumed(self) -> None:
@@ -549,8 +651,14 @@ class PlatformQualificationTests(unittest.TestCase):
             artifact = Path(raw) / "artifact"
             artifact.mkdir()
             args = mock.Mock(
+                candidate_manifest_sha256="sha256:" + "2" * 64,
+                candidate_run_attempt="1",
+                candidate_run_id="12345",
+                candidate_source_sha=SHA,
+                oci_manifest_digest="sha256:" + "3" * 64,
                 platform_id="macos-x86_64-colima",
                 project_repository="taipei49314/tomorrowci-lab",
+                project_source_ref="refs/heads/master",
                 project_source_sha=SHA,
                 workflow_run_attempt="2",
                 workflow_run_id="67890",

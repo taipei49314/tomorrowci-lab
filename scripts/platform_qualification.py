@@ -138,6 +138,14 @@ def _plain_directory(path: Path, label: str) -> Path:
     return resolved
 
 
+def _temporary_directory(
+    *, prefix: str, parent: Path, label: str
+) -> tempfile.TemporaryDirectory[str]:
+    """Create a temporary directory below an already verified plain parent."""
+    plain_parent = _plain_directory(parent, f"{label} parent")
+    return tempfile.TemporaryDirectory(prefix=prefix, dir=plain_parent)
+
+
 def _is_reparse(info: os.stat_result) -> bool:
     attributes = getattr(info, "st_file_attributes", 0)
     flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
@@ -695,8 +703,10 @@ def _candidate(
     package_release.verify_archive(archive=archive, version=version, target=spec.target)
     archive_record = _file_record(archive, "platform candidate archive")
     binary_bytes = _snapshot_file(candidate_binary, "candidate platform binary")
-    with tempfile.TemporaryDirectory(
-        prefix="tomorrowci-platform-archive-", dir=dist.parent
+    with _temporary_directory(
+        prefix="tomorrowci-platform-archive-",
+        parent=dist.parent,
+        label="platform archive extraction",
     ) as raw:
         extracted = package_release.extract_archive(
             archive=archive,
@@ -732,6 +742,31 @@ def _candidate(
         "source_sha": source_sha,
         "version": version,
     }
+
+
+def _result_engine_versions(results: object, engine_version: str) -> list[str]:
+    if type(results) is not list or len(results) < 2:
+        raise ValueError("platform evidence must contain baseline and future results")
+    if type(results[0]) is not dict or results[0].get("verdict") != "BASELINE_PASS":
+        raise ValueError("platform baseline did not pass")
+    forbidden = {"BLOCKED", "UNSUPPORTED", "INCONCLUSIVE", "FLAKY", "BASELINE_INVALID"}
+    future_failures = []
+    for result in results:
+        if type(result) is not dict or result.get("verdict") in forbidden:
+            raise ValueError("platform evidence contains a non-authoritative verdict")
+        environment = result.get("environment")
+        if (
+            type(environment) is not dict
+            or environment.get("engine") != "docker"
+            or environment.get("engine_version") != engine_version
+            or not IMAGE_DIGEST.fullmatch(str(environment.get("image_digest")))
+        ):
+            raise ValueError("platform result lacks exact Docker/image identity")
+        if result.get("verdict") == "FUTURE_FAIL":
+            future_failures.append(result["scenario_id"])
+    if not future_failures:
+        raise ValueError("platform fixture did not observe its required future failure")
+    return future_failures
 
 
 def _verify_run(
@@ -802,28 +837,7 @@ def _verify_run(
         or identity.get("container_engine") != "docker"
     ):
         raise ValueError("platform evidence identity is incomplete or inconsistent")
-    results = manifest["results"]
-    if type(results) is not list or len(results) < 2:
-        raise ValueError("platform evidence must contain baseline and future results")
-    if results[0].get("verdict") != "BASELINE_PASS":
-        raise ValueError("platform baseline did not pass")
-    forbidden = {"BLOCKED", "UNSUPPORTED", "INCONCLUSIVE", "FLAKY", "BASELINE_INVALID"}
-    future_failures = []
-    for result in results:
-        if type(result) is not dict or result.get("verdict") in forbidden:
-            raise ValueError("platform evidence contains a non-authoritative verdict")
-        environment = result.get("environment")
-        if (
-            type(environment) is not dict
-            or environment.get("engine") != "docker"
-            or environment.get("engine_version") != engine_version
-            or not IMAGE_DIGEST.fullmatch(str(environment.get("image_digest")))
-        ):
-            raise ValueError("platform result lacks exact Docker/image identity")
-        if result.get("verdict") == "FUTURE_FAIL":
-            future_failures.append(result["scenario_id"])
-    if not future_failures:
-        raise ValueError("platform fixture did not observe its required future failure")
+    future_failures = _result_engine_versions(manifest["results"], engine_version)
     frontier = manifest["frontier"]
     if (
         type(frontier) is not dict
@@ -1002,8 +1016,10 @@ def verify_artifact(args: argparse.Namespace) -> None:
         args.candidate_dist
         / f"tomorrowci-v{version}-{spec.target}.{spec.archive_extension}"
     )
-    with tempfile.TemporaryDirectory(
-        prefix="tomorrowci-platform-readback-", dir=artifact.parent
+    with _temporary_directory(
+        prefix="tomorrowci-platform-readback-",
+        parent=artifact.parent,
+        label="platform artifact read-back",
     ) as raw:
         extracted = package_release.extract_archive(
             archive=archive,

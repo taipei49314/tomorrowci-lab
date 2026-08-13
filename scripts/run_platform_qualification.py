@@ -113,17 +113,75 @@ def _provider_status(platform_id: str) -> dict[str, object]:
     return value
 
 
-def _copy_evidence(source: Path, artifact_root: Path, run_id: str) -> Path:
-    before = contract.tree_snapshot(source, exclude_internal=False)
+def _engine_identity(platform_id: str) -> dict[str, object]:
+    context = _line(["docker", "context", "show"], timeout=30)
+    version = _line(
+        ["docker", "version", "--format", "{{.Server.Version}}"], timeout=30
+    )
+    info = _json_command(["docker", "info", "--format", "{{json .}}"])
+    if type(info) is not dict:
+        raise ValueError("Docker engine identity is not a JSON object")
+    if info.get("ServerVersion") != version:
+        raise ValueError("Docker version and info ServerVersion contradict each other")
+    return {
+        "context": context,
+        "info": info,
+        "provider": _provider_status(platform_id),
+        "version": version,
+    }
+
+
+def _assert_engine_identity(
+    expected: dict[str, object], actual: dict[str, object], phase: str
+) -> None:
+    if actual["context"] != expected["context"]:
+        raise ValueError(f"Docker context changed {phase}")
+    if actual["version"] != expected["version"]:
+        raise ValueError(f"Docker server version changed {phase}")
+    expected_info = expected["info"]
+    actual_info = actual["info"]
+    if type(expected_info) is not dict or type(actual_info) is not dict:
+        raise ValueError(f"Docker engine identity is malformed {phase}")
+    if any(
+        actual_info.get(key) != expected_info.get(key)
+        for key in ("Architecture", "OSType", "OperatingSystem", "ServerVersion")
+    ):
+        raise ValueError(f"Docker engine identity changed {phase}")
+    if actual["provider"] != expected["provider"]:
+        raise ValueError(f"platform provider identity changed {phase}")
+
+
+def _write_engine_identity(metadata: Path, identity: dict[str, object]) -> None:
+    (metadata / "engine-context.txt").write_text(
+        str(identity["context"]) + "\n", encoding="utf-8", newline="\n"
+    )
+    (metadata / "engine-version.txt").write_text(
+        str(identity["version"]) + "\n", encoding="utf-8", newline="\n"
+    )
+    (metadata / "engine-info.json").write_bytes(
+        contract.canonical_json_bytes(identity["info"])
+    )
+    _write_json(metadata / "provider-status.json", identity["provider"])
+
+
+def _copy_evidence(
+    source: Path,
+    artifact_root: Path,
+    run_id: str,
+    verified_before: dict[str, object],
+) -> Path:
+    source_after_verify = contract.tree_snapshot(source, exclude_internal=False)
+    if verified_before != source_after_verify:
+        raise ValueError("platform evidence changed while it was verified")
     runs = artifact_root / ".tomorrowci" / "runs"
     runs.mkdir(parents=True, exist_ok=True)
     destination = runs / run_id
     if destination.exists():
         raise ValueError("platform evidence destination already exists")
     shutil.copytree(source, destination, symlinks=False)
-    after = contract.tree_snapshot(source, exclude_internal=False)
+    source_after_copy = contract.tree_snapshot(source, exclude_internal=False)
     copied = contract.tree_snapshot(destination, exclude_internal=False)
-    if before != after or before != copied:
+    if verified_before != source_after_copy or verified_before != copied:
         raise ValueError("platform evidence changed while it was retained")
     return destination
 
@@ -135,8 +193,14 @@ def _workflow_preflight_bytes(args: argparse.Namespace) -> bytes:
         f"platform_id: {args.platform_id}\n"
         f"repository: {args.project_repository}\n"
         f"source_sha: {args.project_source_sha}\n"
+        f"source_ref: {args.project_source_ref}\n"
         f"workflow_run_id: {args.workflow_run_id}\n"
         f"workflow_run_attempt: {args.workflow_run_attempt}\n"
+        f"candidate_run_id: {args.candidate_run_id}\n"
+        f"candidate_run_attempt: {args.candidate_run_attempt}\n"
+        f"candidate_source_sha: {args.candidate_source_sha}\n"
+        f"candidate_manifest_sha256: {args.candidate_manifest_sha256}\n"
+        f"oci_manifest_digest: {args.oci_manifest_digest}\n"
     ).encode()
 
 
@@ -157,6 +221,28 @@ def _consume_workflow_preflight(artifact: Path, args: argparse.Namespace) -> Non
     path.unlink()
     if path.exists():
         raise ValueError("platform workflow preflight could not be consumed")
+
+
+def _failure_document(
+    args: argparse.Namespace, error: Exception, run_id: str | None
+) -> dict[str, object]:
+    return {
+        "candidate_manifest_sha256": args.candidate_manifest_sha256,
+        "candidate_run_attempt": args.candidate_run_attempt,
+        "candidate_run_id": args.candidate_run_id,
+        "candidate_source_sha": args.candidate_source_sha,
+        "error": str(error),
+        "kind": "tomorrowci.platform-qualification-failure/v1",
+        "oci_manifest_digest": args.oci_manifest_digest,
+        "platform_id": args.platform_id,
+        "project_repository": args.project_repository,
+        "project_source_ref": args.project_source_ref,
+        "project_source_sha": args.project_source_sha,
+        "run_id": run_id,
+        "status": "FAIL",
+        "workflow_run_attempt": args.workflow_run_attempt,
+        "workflow_run_id": args.workflow_run_id,
+    }
 
 
 def _record_context(
@@ -243,24 +329,7 @@ def qualify(args: argparse.Namespace) -> None:
     try:
         source_snapshot = contract.tree_snapshot(fixture, exclude_internal=True)
         _write_json(metadata / "source-before.json", source_snapshot)
-        context = _line(["docker", "context", "show"], timeout=30)
-        (metadata / "engine-context.txt").write_text(
-            context + "\n", encoding="utf-8", newline="\n"
-        )
-        version = _line(
-            ["docker", "version", "--format", "{{.Server.Version}}"], timeout=30
-        )
-        (metadata / "engine-version.txt").write_text(
-            version + "\n", encoding="utf-8", newline="\n"
-        )
-        parsed_info = _json_command(["docker", "info", "--format", "{{json .}}"])
-        if type(parsed_info) is not dict:
-            raise ValueError("Docker engine identity is not a JSON object")
-        (metadata / "engine-info.json").write_bytes(
-            contract.canonical_json_bytes(parsed_info)
-        )
-        provider_status = _provider_status(args.platform_id)
-        _write_json(metadata / "provider-status.json", provider_status)
+        initial_engine = _engine_identity(args.platform_id)
         _write_json(metadata / "pre-state.json", _engine_state())
 
         manifest = candidate_manifest.verify_candidate(
@@ -293,8 +362,10 @@ def qualify(args: argparse.Namespace) -> None:
             args.candidate_dist
             / f"tomorrowci-v{version_number}-{spec.target}.{spec.archive_extension}"
         )
-        candidate_temp = tempfile.TemporaryDirectory(
-            prefix="tomorrowci-platform-candidate-", dir=artifact.parent
+        candidate_temp = contract._temporary_directory(
+            prefix="tomorrowci-platform-candidate-",
+            parent=artifact.parent,
+            label="platform candidate extraction",
         )
         extract = Path(candidate_temp.name) / "extract"
         package_root = package_release.extract_archive(
@@ -327,6 +398,17 @@ def qualify(args: argparse.Namespace) -> None:
         run_id = run_ids[0]
         original_run = fixture / ".tomorrowci" / "runs" / run_id
         contract._plain_directory(original_run, "platform scan run root")
+        scan_engine = _engine_identity(args.platform_id)
+        _assert_engine_identity(initial_engine, scan_engine, "during platform scan")
+        _write_engine_identity(metadata, scan_engine)
+        scan_manifest, _ = contract._load_json(
+            original_run / "run.json", "post-scan platform run manifest"
+        )
+        if type(scan_manifest) is not dict:
+            raise ValueError("post-scan platform run manifest is not an object")
+        contract._result_engine_versions(
+            scan_manifest.get("results"), str(scan_engine["version"])
+        )
         _run([str(binary), "verify", run_id], cwd=fixture, timeout=120)
         frontier, _ = contract._load_json(original_run / "frontier.json", "frontier")
         if (
@@ -350,30 +432,17 @@ def qualify(args: argparse.Namespace) -> None:
             log=metadata / "replay-2.txt",
         )
         _run([str(binary), "verify", run_id], cwd=fixture, timeout=120)
-        if _line(["docker", "context", "show"], timeout=30) != context:
-            raise ValueError("Docker context changed during platform qualification")
-        if (
-            _line(
-                ["docker", "version", "--format", "{{.Server.Version}}"],
-                timeout=30,
-            )
-            != version
-        ):
-            raise ValueError("Docker server version changed during qualification")
-        final_info = _json_command(["docker", "info", "--format", "{{json .}}"])
-        if type(final_info) is not dict or any(
-            final_info.get(key) != parsed_info.get(key)
-            for key in ("Architecture", "OSType", "OperatingSystem", "ServerVersion")
-        ):
-            raise ValueError("Docker engine identity changed during qualification")
-        if _provider_status(args.platform_id) != provider_status:
-            raise ValueError("platform provider identity changed during qualification")
+        verified_before = contract.tree_snapshot(original_run, exclude_internal=False)
+        final_engine = _engine_identity(args.platform_id)
+        _assert_engine_identity(
+            scan_engine, final_engine, "after platform verify and replay"
+        )
         _write_json(
             metadata / "source-after.json",
             contract.tree_snapshot(fixture, exclude_internal=True),
         )
         _write_json(metadata / "post-state.json", _engine_state())
-        run_root = _copy_evidence(original_run, artifact, run_id)
+        run_root = _copy_evidence(original_run, artifact, run_id, verified_before)
         capture_args = _record_context(args, metadata, binary, run_root)
         capture = contract.create_capture(
             metadata_root=metadata,
@@ -406,13 +475,7 @@ def qualify(args: argparse.Namespace) -> None:
         try:
             _write_json(
                 artifact / "failure.json",
-                {
-                    "error": str(error),
-                    "kind": "tomorrowci.platform-qualification-failure/v1",
-                    "platform_id": args.platform_id,
-                    "run_id": run_id,
-                    "status": "FAIL",
-                },
+                _failure_document(args, error, run_id),
             )
         except QUALIFICATION_ERRORS as retention_error:
             retention_errors.append(f"failure record: {retention_error}")
@@ -433,7 +496,10 @@ def qualify(args: argparse.Namespace) -> None:
             if run_id is not None and run_root is None:
                 candidate_run = fixture / ".tomorrowci" / "runs" / run_id
                 if candidate_run.is_dir():
-                    _copy_evidence(candidate_run, artifact, run_id)
+                    failure_before = contract.tree_snapshot(
+                        candidate_run, exclude_internal=False
+                    )
+                    _copy_evidence(candidate_run, artifact, run_id, failure_before)
         except QUALIFICATION_ERRORS as retention_error:
             retention_errors.append(f"run evidence copy: {retention_error}")
         for retention_error in retention_errors:
@@ -497,19 +563,7 @@ def _retain_uncaught_failure(args: argparse.Namespace, error: Exception) -> None
             return
         _write_json(
             failure_path,
-            {
-                "candidate_run_attempt": args.candidate_run_attempt,
-                "candidate_run_id": args.candidate_run_id,
-                "candidate_source_sha": args.candidate_source_sha,
-                "error": str(error),
-                "kind": "tomorrowci.platform-qualification-failure/v1",
-                "platform_id": args.platform_id,
-                "project_source_sha": args.project_source_sha,
-                "run_id": None,
-                "status": "FAIL",
-                "workflow_run_attempt": args.workflow_run_attempt,
-                "workflow_run_id": args.workflow_run_id,
-            },
+            _failure_document(args, error, None),
         )
     except QUALIFICATION_ERRORS as retention_error:
         print(
