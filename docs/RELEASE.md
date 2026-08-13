@@ -86,6 +86,15 @@ The historical `release.yml` workflow is retired and disabled. Candidate work
 uses a new workflow path that did not exist at any published historical tag,
 so `workflow_dispatch` cannot select old tag-controlled publishing code.
 
+The protected promotion workflow also requires the exact platform run ID,
+attempt, and canonical seven-artifact identity described in
+[`PLATFORM_PROTOCOL.md`](qualification/PLATFORM_PROTOCOL.md). Its prepare and
+protected write phases independently download the raw GitHub artifact ZIPs and
+re-run the checked-in verifier before any possible mutation. This consumption
+contract does not itself record a platform result or confer release authority;
+the platform gates remain `NOT_RUN` until the dedicated-runner protocol has
+actually completed.
+
 ## Provenance
 
 The current development line documents the path toward signed provenance:

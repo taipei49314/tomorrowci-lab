@@ -99,6 +99,53 @@ artifacts, re-run all jobs rather than only a failed read-back job. Any tracked
 fix changes `master`; therefore it invalidates the candidate and requires a new
 candidate plus a new platform run.
 
+## Protected promotion consumption
+
+The protected promotion workflow accepts a platform qualification only as the
+exact tuple of platform run ID, positive run attempt, and canonical platform
+identity digest. The identity is produced from the GitHub Actions run and
+artifact API observations by:
+
+```text
+python scripts/promotion_preflight.py inspect-platform-api \
+  --run-metadata platform-run.json \
+  --artifact-metadata platform-artifacts.json \
+  --repository OWNER/REPOSITORY \
+  --source-sha SOURCE_COMMIT \
+  --candidate-run-id CANDIDATE_RUN_ID \
+  --candidate-run-attempt CANDIDATE_RUN_ATTEMPT \
+  --candidate-manifest-sha256 sha256:CANDIDATE_MANIFEST_DIGEST \
+  --oci-manifest-digest sha256:OCI_MANIFEST_DIGEST \
+  --run-id PLATFORM_RUN_ID \
+  --run-attempt PLATFORM_RUN_ATTEMPT \
+  --output platform-identity.json
+```
+
+Its canonical SHA-256 is the dispatch identity. It binds one candidate-binding
+artifact, all three attempt/source-scoped platform artifacts, and all three
+repository-operated read-back artifacts, including their immutable artifact
+IDs, API ZIP sizes, and API ZIP digests. A missing, expired, duplicate, renamed,
+or differently associated artifact is not interchangeable.
+
+Both the unprivileged prepare job and the protected write job independently
+query the run and artifact APIs, download all seven raw ZIP archives by artifact
+ID, verify the API size and digest, and recursively extract them with the strict
+archive policy. They then invoke the checked-in platform verifier for every
+native qualification record. The resulting canonical consumption document
+binds final source and candidate identity, platform run/attempt, runner,
+provider, Docker context endpoint, engine and server versions, captured record
+and evidence digests, empty post-run state, and the corresponding fresh
+read-back observation. The exact consumption is embedded in the publication
+plan and rechecked after approval.
+
+Any identity drift, verifier failure, non-empty post-state, read-back mismatch,
+or prepare/write byte difference fails before a remote mutation step. A GitHub
+re-run requires all platform jobs, a new attempt-scoped seven-artifact set, and
+a newly reviewed identity digest. This consumer contract does not change the
+current qualification status: the three platform gates remain `NOT_RUN` until
+real dedicated runners complete the protocol and retained read-back is
+recorded.
+
 GitHub-hosted macOS arm64 runners do not provide the nested virtualization
 needed for this engine gate. A physical or otherwise supported self-hosted
 runner is therefore an external infrastructure requirement, not a reason to

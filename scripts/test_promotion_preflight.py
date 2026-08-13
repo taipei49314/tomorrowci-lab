@@ -331,6 +331,21 @@ class PromotionWorkflowStaticTests(unittest.TestCase):
         self.assertIn("/approvals", text)
         self.assertIn("inspect-promotion-run", text)
         self.assertIn("inspect-repository-head", text)
+        for platform_input in (
+            "platform_qualification_run_id:",
+            "platform_qualification_run_attempt:",
+            "platform_qualification_identity_sha256:",
+        ):
+            self.assertIn(platform_input, text)
+        self.assertGreaterEqual(text.count("inspect-platform-api"), 2)
+        self.assertGreaterEqual(text.count("verify-platform-consumption"), 2)
+        self.assertIn("verify-platform-plan-binding", text)
+        self.assertGreaterEqual(
+            text.count(
+                'gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip"'
+            ),
+            2,
+        )
         self.assertIn("release-readback:", text)
         for runner in ("ubuntu-24.04", "macos-15", "windows-2025"):
             self.assertIn(f"os: {runner}", text)
@@ -402,6 +417,16 @@ class PromotionWorkflowStaticTests(unittest.TestCase):
             ),
         )
         self.assertLess(
+            write.index(
+                "Re-download and reverify all platform evidence after approval"
+            ),
+            write.index("assert-ghcr-nonclobber-write"),
+        )
+        self.assertLess(
+            write.index("verify-platform-plan-binding"),
+            write.index("assert-ghcr-nonclobber-write"),
+        )
+        self.assertLess(
             write.index("inspect-immutable-release-setting"),
             write.index("git push --atomic"),
         )
@@ -445,8 +470,14 @@ class PromotionWorkflowStaticTests(unittest.TestCase):
             "scripts/external_authorization.py",
             "scripts/tag_promotion_attestation.py",
             "scripts/promotion_preflight.py inspect-remote-refs",
+            "scripts/promotion_preflight.py inspect-platform-api",
+            "scripts/promotion_preflight.py verify-platform-consumption",
         ):
             self.assertIn(invocation, text)
+        helper = (self.ROOT / "scripts/promotion_preflight.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("platform_qualification.verify_artifact(args)", helper)
 
 
 class PublicationPrimitiveTests(unittest.TestCase):
@@ -474,7 +505,16 @@ class PublicationPrimitiveTests(unittest.TestCase):
                 "source_sha": self.SOURCE,
                 "version": self.VERSION,
             },
-            "external_authorization": {"authorization": {"id": self.AUTHORIZATION_ID}},
+            "external_authorization": {
+                "authorization": {"id": self.AUTHORIZATION_ID},
+                "candidate": {
+                    "commit": self.SOURCE,
+                    "manifest_sha256": "sha256:" + "f" * 64,
+                    "oci_manifest_digest": self.OCI_DIGEST,
+                    "run_attempt": 1,
+                    "run_id": 123,
+                },
+            },
             "kind": preflight.tag_promotion_attestation.KIND,
             "oci": {
                 "manifest_sha256": self.OCI_DIGEST,
@@ -491,6 +531,98 @@ class PublicationPrimitiveTests(unittest.TestCase):
             },
         }
         self.attestation = self._json("attestation.json", self.attestation_value)
+        platform_artifacts = []
+        for index, spec in enumerate(
+            preflight._platform_artifact_specs(1, self.SOURCE), start=1
+        ):
+            platform_artifacts.append(
+                {
+                    "archive_sha256": "sha256:" + f"{index:064x}",
+                    "archive_size": index,
+                    "artifact_id": index,
+                    **spec,
+                }
+            )
+        platform_identity = {
+            "artifacts": platform_artifacts,
+            "candidate": {
+                "manifest_sha256": "sha256:" + "f" * 64,
+                "oci_manifest_digest": self.OCI_DIGEST,
+                "run_attempt": 1,
+                "run_id": 123,
+                "source_sha": self.SOURCE,
+            },
+            "kind": preflight.PLATFORM_INPUT_KIND,
+            "project": {
+                "repository": "owner/repo",
+                "source_ref": "refs/heads/master",
+                "source_sha": self.SOURCE,
+            },
+            "schema_version": 1,
+            "status": preflight.platform_qualification.STATUS,
+            "workflow": {
+                "conclusion": "success",
+                "path": preflight.PLATFORM_WORKFLOW_PATH,
+                "run_attempt": 1,
+                "run_id": 456,
+            },
+        }
+        platform_rows = []
+        for platform_id in preflight.PLATFORM_IDS:
+            spec = preflight.platform_qualification.PLATFORMS[platform_id]
+            platform_rows.append(
+                {
+                    "artifact": preflight._artifact_from_identity(
+                        platform_identity, role="qualification", scope=platform_id
+                    ),
+                    "capture_sha256": "sha256:" + "2" * 64,
+                    "engine": {
+                        "context": spec.engine_context,
+                        "os_type": "linux",
+                        "provider": spec.provider,
+                        "server_version": "1",
+                        "version_output": "1",
+                    },
+                    "evidence": {"replay_count": 2},
+                    "platform_id": platform_id,
+                    "post_clean": {
+                        "sha256": "sha256:" + "3" * 64,
+                        "status": "EMPTY",
+                    },
+                    "readback": {
+                        "artifact": preflight._artifact_from_identity(
+                            platform_identity, role="readback", scope=platform_id
+                        ),
+                        "observation_sha256": "sha256:" + "4" * 64,
+                    },
+                    "record_sha256": "sha256:" + "5" * 64,
+                    "runner": {
+                        "arch": spec.runner_arch,
+                        "environment": "self-hosted",
+                        "os": spec.runner_os,
+                    },
+                }
+            )
+        self.platform_consumption = self.root / "platform-consumption.json"
+        self.platform_consumption.write_bytes(
+            preflight.canonical_bytes(
+                {
+                    "candidate_binding": {
+                        "artifact": preflight._artifact_from_identity(
+                            platform_identity,
+                            role="candidate-binding",
+                            scope="candidate",
+                        ),
+                        "observation_sha256": "sha256:" + "6" * 64,
+                    },
+                    "identity": platform_identity,
+                    "kind": preflight.PLATFORM_CONSUMPTION_KIND,
+                    "platforms": platform_rows,
+                    "schema_version": 1,
+                    "status": preflight.platform_qualification.STATUS,
+                }
+            )
+        )
         marker_name = f"tomorrowci-authorization/{self.AUTHORIZATION_ID}"
         self.marker = self._json(
             "marker.json",
@@ -536,6 +668,7 @@ class PublicationPrimitiveTests(unittest.TestCase):
             candidate_dir=self.candidate,
             remote_state_path=self.remote,
             marker_identity_path=self.marker,
+            platform_consumption_path=self.platform_consumption,
             release_pages_path=self.release_pages,
             ghcr_versions_path=self.version_pages,
             repository="owner/repo",
@@ -578,6 +711,10 @@ class PublicationPrimitiveTests(unittest.TestCase):
         self.assertEqual(plan["ghcr"]["state"], "READY_FOR_EXACT_OCI_COPY")
         self.assertEqual(plan["ghcr"]["tool"], preflight.ORAS_TOOL)
         self.assertEqual(
+            len(plan["platform_qualification"]["platforms"]),
+            len(preflight.PLATFORM_IDS),
+        )
+        self.assertEqual(
             [item["name"] for item in plan["release"]["assets"]],
             ["asset.bin", "tag-promotion-attestation.json"],
         )
@@ -591,6 +728,13 @@ class PublicationPrimitiveTests(unittest.TestCase):
         self.asset.write_bytes(b"candidate bytes")
         (self.candidate / "extra").write_text("x", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "does not equal"):
+            self.plan()
+
+    def test_platform_consumption_candidate_drift_fails_closed(self) -> None:
+        consumption = json.loads(self.platform_consumption.read_text(encoding="utf-8"))
+        consumption["identity"]["candidate"]["run_attempt"] = 2
+        self.platform_consumption.write_bytes(preflight.canonical_bytes(consumption))
+        with self.assertRaisesRegex(ValueError, "authorized candidate"):
             self.plan()
 
     def test_release_absent_partial_and_immutable_exact_states(self) -> None:
