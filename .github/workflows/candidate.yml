@@ -129,15 +129,17 @@ jobs:
           $env:SOURCE_DATE_EPOCH = "0"
           # MSVC's linker otherwise records COFF/debug timestamps even when the
           # Rust inputs and SOURCE_DATE_EPOCH are identical.
-          $env:RUSTFLAGS = "-C link-arg=/Brepro"
+          $env:RUSTFLAGS = "-C link-arg=/Brepro -C target-feature=+crt-static"
           foreach ($slot in @("a", "b")) {
             $targetDir = Join-Path $env:RUNNER_TEMP "tomorrowci-repro-$slot"
             if (Test-Path $targetDir) { throw "non-clean target directory: $targetDir" }
             $env:CARGO_TARGET_DIR = $targetDir
             cargo build -p tomorrowci-cli --release --locked --target "${{ matrix.target }}"
             if ($LASTEXITCODE -ne 0) { throw "cargo build $slot failed" }
+            $binary = "$targetDir/${{ matrix.target }}/release/tomorrowci.exe"
+            & scripts/verify-windows-runtime.ps1 -Binary $binary
             python scripts/package_release.py create `
-              --binary "$targetDir/${{ matrix.target }}/release/tomorrowci.exe" `
+              --binary $binary `
               --output-dir "dist/$slot" `
               --version $version `
               --target "${{ matrix.target }}"
