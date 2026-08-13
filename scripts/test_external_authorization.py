@@ -319,7 +319,9 @@ class ExternalAuthorizationTests(unittest.TestCase):
 
     def test_rejects_replaced_externally_signed_policy(self) -> None:
         self.policy_path.write_bytes(self.policy_path.read_bytes() + b" ")
-        with self.assertRaisesRegex(ValueError, "canonical JSON|signature verification failed"):
+        with self.assertRaisesRegex(
+            ValueError, "canonical JSON|signature verification failed"
+        ):
             self.verify()
 
     def test_rejects_duplicate_noncanonical_and_unknown_json(self) -> None:

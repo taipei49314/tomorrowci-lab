@@ -77,10 +77,20 @@ class ExternalPolicyTransportTests(unittest.TestCase):
         self.manifest.write_bytes(
             canonical(
                 {
-                    "build": {}, "kind": "tomorrowci.release-candidate.v1", "payload": [],
-                    "promotion": {}, "schema_version": 1,
-                    "source": {"commit": self.commit, "dirty": False, "ref": "refs/heads/master", "repository": "candidate-owner/candidate"},
-                    "status": "CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED", "version": "0.2.0-alpha.1", "workflow": {},
+                    "build": {},
+                    "kind": "tomorrowci.release-candidate.v1",
+                    "payload": [],
+                    "promotion": {},
+                    "schema_version": 1,
+                    "source": {
+                        "commit": self.commit,
+                        "dirty": False,
+                        "ref": "refs/heads/master",
+                        "repository": "candidate-owner/candidate",
+                    },
+                    "status": "CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED",
+                    "version": "0.2.0-alpha.1",
+                    "workflow": {},
                 }
             )
         )
@@ -89,31 +99,109 @@ class ExternalPolicyTransportTests(unittest.TestCase):
         self.policy.write_bytes(
             canonical(
                 {
-                    "candidate": {"commit": self.commit, "manifest_sha256": self.manifest_digest, "oci_manifest_digest": "sha256:" + "2" * 64, "oci_provenance_sha256": "sha256:" + "3" * 64, "ref": "refs/heads/master", "repository": "candidate-owner/candidate", "run_attempt": 1, "run_id": 1, "version": "0.2.0-alpha.1"},
-                    "external": {"artifact_name": "evidence", "auditor_principal": self.principal, "authorization_id": "4" * 64, "commit": "b" * 40, "engine_name": "docker", "repository": "independent-owner/audit", "run_attempt": 1, "run_id": 2, "workflow_path": ".github/workflows/audit.yml"},
-                    "kind": authorization.POLICY_KIND, "schema_version": 1,
-                    "trust": {"allowed_signers_sha256": digest(self.allowed.read_bytes()), "namespace": authorization.NAMESPACE},
-                    "validity": {"not_after": "2026-08-12T00:00:00Z", "not_before": "2026-08-11T00:00:00Z"},
+                    "candidate": {
+                        "commit": self.commit,
+                        "manifest_sha256": self.manifest_digest,
+                        "oci_manifest_digest": "sha256:" + "2" * 64,
+                        "oci_provenance_sha256": "sha256:" + "3" * 64,
+                        "ref": "refs/heads/master",
+                        "repository": "candidate-owner/candidate",
+                        "run_attempt": 1,
+                        "run_id": 1,
+                        "version": "0.2.0-alpha.1",
+                    },
+                    "external": {
+                        "artifact_name": "evidence",
+                        "auditor_principal": self.principal,
+                        "authorization_id": "4" * 64,
+                        "commit": "b" * 40,
+                        "engine_name": "docker",
+                        "repository": "independent-owner/audit",
+                        "run_attempt": 1,
+                        "run_id": 2,
+                        "workflow_path": ".github/workflows/audit.yml",
+                    },
+                    "kind": authorization.POLICY_KIND,
+                    "schema_version": 1,
+                    "trust": {
+                        "allowed_signers_sha256": digest(self.allowed.read_bytes()),
+                        "namespace": authorization.NAMESPACE,
+                    },
+                    "validity": {
+                        "not_after": "2026-08-12T00:00:00Z",
+                        "not_before": "2026-08-11T00:00:00Z",
+                    },
                 }
             )
         )
-        subprocess.run(["ssh-keygen", "-Y", "sign", "-q", "-f", str(self.key), "-n", authorization.NAMESPACE, str(self.policy)], check=True, capture_output=True)
+        subprocess.run(
+            [
+                "ssh-keygen",
+                "-Y",
+                "sign",
+                "-q",
+                "-f",
+                str(self.key),
+                "-n",
+                authorization.NAMESPACE,
+                str(self.policy),
+            ],
+            check=True,
+            capture_output=True,
+        )
         self.config = self.root / "transport.json"
-        self.config.write_bytes(canonical({"kind": transport.KIND, "schema_version": 1, "transport": {"maximum_bytes": 65536, "policy_url_template": "https://audit.example/v1/{candidate_commit}/{candidate_manifest_sha256_hex}.json", "signature_url_template": "https://audit.example/v1/{candidate_commit}/{candidate_manifest_sha256_hex}.json.sig"}, "trust": {"allowed_signers_sha256": digest(self.allowed.read_bytes()), "auditor_principal": self.principal, "namespace": authorization.NAMESPACE}}))
+        self.config.write_bytes(
+            canonical(
+                {
+                    "kind": transport.KIND,
+                    "schema_version": 1,
+                    "transport": {
+                        "maximum_bytes": 65536,
+                        "policy_url_template": "https://audit.example/v1/{candidate_commit}/{candidate_manifest_sha256_hex}.json",
+                        "signature_url_template": "https://audit.example/v1/{candidate_commit}/{candidate_manifest_sha256_hex}.json.sig",
+                    },
+                    "trust": {
+                        "allowed_signers_sha256": digest(self.allowed.read_bytes()),
+                        "auditor_principal": self.principal,
+                        "namespace": authorization.NAMESPACE,
+                    },
+                }
+            )
+        )
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
     def test_fetches_only_derived_signed_exact_candidate_policy(self) -> None:
-        policy_url, signature_url = transport.render_urls(transport.load_transport(self.config, self.allowed)[0], candidate_commit=self.commit, candidate_manifest_sha256=self.manifest_digest)
-        receipt = transport.fetch_policy(config=self.config, allowed_signers=self.allowed, candidate_manifest=self.manifest, output_policy=self.root / "output-policy.json", output_signature=self.root / "output-policy.json.sig", opener=_Opener({policy_url: self.policy.read_bytes(), signature_url: Path(str(self.policy) + ".sig").read_bytes()}))
+        policy_url, signature_url = transport.render_urls(
+            transport.load_transport(self.config, self.allowed)[0],
+            candidate_commit=self.commit,
+            candidate_manifest_sha256=self.manifest_digest,
+        )
+        receipt = transport.fetch_policy(
+            config=self.config,
+            allowed_signers=self.allowed,
+            candidate_manifest=self.manifest,
+            output_policy=self.root / "output-policy.json",
+            output_signature=self.root / "output-policy.json.sig",
+            opener=_Opener(
+                {
+                    policy_url: self.policy.read_bytes(),
+                    signature_url: Path(str(self.policy) + ".sig").read_bytes(),
+                }
+            ),
+        )
         self.assertEqual(receipt["candidate"]["manifest_sha256"], self.manifest_digest)
         self.assertEqual(receipt["policy"]["sha256"], digest(self.policy.read_bytes()))
-        self.assertEqual((self.root / "output-policy.json").read_bytes(), self.policy.read_bytes())
+        self.assertEqual(
+            (self.root / "output-policy.json").read_bytes(), self.policy.read_bytes()
+        )
 
     def test_rejects_caller_selected_or_unsigned_policy(self) -> None:
         bad_config = json.loads(self.config.read_text(encoding="utf-8"))
-        bad_config["transport"]["policy_url_template"] = "https://audit.example/policy.json"
+        bad_config["transport"]["policy_url_template"] = (
+            "https://audit.example/policy.json"
+        )
         self.config.write_bytes(canonical(bad_config))
         with self.assertRaisesRegex(ValueError, "candidate identity field"):
             transport.load_transport(self.config, self.allowed)
