@@ -47,7 +47,7 @@ hex = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 uuid = { version = "1", features = ["v4", "serde"] }
-toml = "0.8"
+toml = "1.1"
 regex = "1"
 tempfile = "3"
 indexmap = { version = "2", features = ["serde"] }
