@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Guard exact clean master and verify frozen preregistration first
         env:
           CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
@@ -89,7 +89,7 @@ jobs:
           test "$(stat -c '%s' "$archive")" = "$artifact_size"
           test "sha256:$(sha256sum "$archive" | cut -d ' ' -f 1)" = "$artifact_digest"
       - name: Download exact candidate artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-candidate-dist-attempt-${{ inputs.candidate_run_attempt }}
           path: ${{ runner.temp }}/candidate-dist
@@ -173,7 +173,7 @@ jobs:
             --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
           test -z "$(git status --porcelain --untracked-files=all)"
       - name: Upload exact candidate input binding
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: tomorrowci-candidate-input-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
           path: ${{ runner.temp }}/tomorrowci-candidate-input-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/*
@@ -219,7 +219,7 @@ jobs:
             commit: b8915ed30fcfca3300e3796fa35ddd0a9a0a5db7
             config: docs/qualification/external-targets/configs/rust-human-panic.podman.tomorrowci.json
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Verify preregistration before execution
         run: |
           set -euo pipefail
@@ -229,7 +229,7 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
           python3 scripts/external_target_preregistration.py
       - name: Download verified candidate input
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: tomorrowci-candidate-input-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
           path: ${{ runner.temp }}/candidate-input
@@ -398,7 +398,7 @@ jobs:
           qualification_phase="complete"
       - name: Upload raw target observation even when qualification fails
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: raw-external-observation-${{ matrix.target_id }}-${{ matrix.engine }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
           path: ${{ runner.temp }}/raw-external-observation-${{ matrix.target_id }}-${{ matrix.engine }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/
@@ -406,7 +406,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - name: Upload isolated target and engine evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: external-qualification-${{ matrix.target_id }}-${{ matrix.engine }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
           path: ${{ runner.temp }}/external-qualification-${{ matrix.target_id }}-${{ matrix.engine }}-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/
@@ -422,9 +422,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download six non-authoritative raw observations
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: raw-external-observation-*-*-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
           path: ${{ runner.temp }}/raw-observations
@@ -438,7 +438,7 @@ jobs:
             --observations-root "$RUNNER_TEMP/raw-observations" \
             --output "$summary_root/summary.json"
       - name: Upload non-authoritative raw observation summary
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: raw-external-observation-summary-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
           path: ${{ runner.temp }}/raw-external-observation-summary-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/summary.json
@@ -450,7 +450,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Guard exact clean qualification source
         run: |
           set -euo pipefail
@@ -459,12 +459,12 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
           python3 scripts/external_target_preregistration.py
       - name: Download verified candidate input
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: tomorrowci-candidate-input-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
           path: ${{ runner.temp }}/candidate-input
       - name: Download six qualification artifacts into isolated roots
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: external-qualification-*-*-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
           path: ${{ runner.temp }}/qualification-artifacts
@@ -534,7 +534,7 @@ jobs:
             --summary "$summary_root/project-owned-summary.json"
           test -z "$(git status --porcelain --untracked-files=all)"
       - name: Upload canonical project-owned summary
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: external-qualification-summary-attempt-${{ github.run_attempt }}-source-${{ github.sha }}
           path: ${{ runner.temp }}/external-qualification-summary-attempt-${{ github.run_attempt }}-source-${{ github.sha }}/project-owned-summary.json
