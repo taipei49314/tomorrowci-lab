@@ -1,5 +1,8 @@
+import unittest
+
 import app
 
 
-def test_ok():
-    assert app.ok() is True
+class AppTests(unittest.TestCase):
+    def test_ok(self):
+        self.assertTrue(app.ok())
