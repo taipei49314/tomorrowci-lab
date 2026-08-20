@@ -59,6 +59,15 @@ PLATFORM_INPUT_KIND = "tomorrowci.protected-platform-qualification-input.v1"
 PLATFORM_CONSUMPTION_KIND = "tomorrowci.protected-platform-consumption.v1"
 PLATFORM_WORKFLOW_PATH = ".github/workflows/platform-qualification.yml"
 PLATFORM_IDS = tuple(sorted(platform_qualification.PLATFORMS))
+RUN_COORDINATE_FIELDS = (
+    "candidate_run_attempt",
+    "candidate_run_id",
+    "ci_run_attempt",
+    "ci_run_id",
+    "platform_qualification_run_attempt",
+    "platform_qualification_run_id",
+)
+MAX_RUN_COORDINATES_BYTES = 2048
 
 
 def _load_json(path: Path, label: str) -> dict:
@@ -146,6 +155,30 @@ def _positive(value: str, label: str) -> int:
     if type(value) is not str or not POSITIVE.fullmatch(value):
         raise ValueError(f"{label} must be a positive decimal integer")
     return int(value)
+
+
+def parse_dispatch_run_coordinates(raw: str) -> dict[str, str]:
+    if type(raw) is not str or not raw:
+        raise ValueError("dispatch run coordinates must be a nonempty JSON string")
+    if len(raw.encode("utf-8")) > MAX_RUN_COORDINATES_BYTES:
+        raise ValueError("dispatch run coordinates exceed the size limit")
+    value = json.loads(
+        raw,
+        object_pairs_hook=lambda pairs: _reject_duplicate_pairs(
+            pairs, "dispatch run coordinates"
+        ),
+        parse_constant=lambda item: (_ for _ in ()).throw(
+            ValueError(f"dispatch run coordinates contain non-finite value {item}")
+        ),
+    )
+    if type(value) is not dict or set(value) != set(RUN_COORDINATE_FIELDS):
+        raise ValueError("dispatch run coordinates have an invalid field set")
+    for field in RUN_COORDINATE_FIELDS:
+        _positive(value[field], field.replace("_", " "))
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    if raw != canonical:
+        raise ValueError("dispatch run coordinates must use canonical JSON bytes")
+    return value
 
 
 def inspect_ci_run(
@@ -1851,6 +1884,8 @@ def verify_platform_plan_binding(plan_path: Path, consumption_path: Path) -> dic
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
+    dispatch = commands.add_parser("parse-dispatch-run-coordinates")
+    dispatch.add_argument("--value", required=True)
     ci = commands.add_parser("inspect-ci-api")
     ci.add_argument("--metadata", type=Path, required=True)
     ci.add_argument("--repository", required=True)
@@ -1975,7 +2010,11 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("assert-release-publish-nonclobber")
     args = parser.parse_args(argv)
     try:
-        if args.command == "inspect-ci-api":
+        if args.command == "parse-dispatch-run-coordinates":
+            value = parse_dispatch_run_coordinates(args.value)
+            for field in RUN_COORDINATE_FIELDS:
+                print(f"{field}={value[field]}")
+        elif args.command == "inspect-ci-api":
             value = inspect_ci_run(
                 _load_json(args.metadata, "CI run metadata"),
                 repository=args.repository,

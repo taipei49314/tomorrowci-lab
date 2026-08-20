@@ -298,6 +298,47 @@ class AuthorizationMarkerTests(unittest.TestCase):
             self.inspect()
 
 
+class PromotionDispatchInputTests(unittest.TestCase):
+    VALUE = {
+        "candidate_run_attempt": "2",
+        "candidate_run_id": "200",
+        "ci_run_attempt": "1",
+        "ci_run_id": "100",
+        "platform_qualification_run_attempt": "3",
+        "platform_qualification_run_id": "300",
+    }
+
+    def test_accepts_only_canonical_exact_run_coordinates(self) -> None:
+        raw = json.dumps(self.VALUE, sort_keys=True, separators=(",", ":"))
+        self.assertEqual(preflight.parse_dispatch_run_coordinates(raw), self.VALUE)
+
+    def test_rejects_ambiguous_or_incomplete_run_coordinates(self) -> None:
+        canonical = json.dumps(self.VALUE, sort_keys=True, separators=(",", ":"))
+        cases = {
+            "duplicate": canonical.replace(
+                '"ci_run_id":"100"', '"ci_run_id":"100","ci_run_id":"101"'
+            ),
+            "missing": json.dumps(
+                {key: value for key, value in self.VALUE.items() if key != "ci_run_id"},
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            "unknown": json.dumps(
+                {**self.VALUE, "extra": "1"}, sort_keys=True, separators=(",", ":")
+            ),
+            "numeric": canonical.replace('"ci_run_id":"100"', '"ci_run_id":100'),
+            "zero": canonical.replace('"ci_run_id":"100"', '"ci_run_id":"0"'),
+            "leading-zero": canonical.replace(
+                '"ci_run_id":"100"', '"ci_run_id":"0100"'
+            ),
+            "noncanonical": json.dumps(self.VALUE, sort_keys=False),
+        }
+        for name, value in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises((ValueError, json.JSONDecodeError)):
+                    preflight.parse_dispatch_run_coordinates(value)
+
+
 class PromotionWorkflowStaticTests(unittest.TestCase):
     ROOT = Path(__file__).resolve().parents[1]
     WORKFLOW = ROOT / ".github/workflows/protected-exact-byte-promotion.yml"
@@ -321,6 +362,15 @@ class PromotionWorkflowStaticTests(unittest.TestCase):
     def test_permissions_concurrency_roll_forward_and_isolated_ghcr_gate(self) -> None:
         text = self.WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("workflow_dispatch:", text)
+        dispatch = text.split("    inputs:\n", 1)[1].split("\npermissions:", 1)[0]
+        dispatch_inputs = [
+            line.strip().removesuffix(":")
+            for line in dispatch.splitlines()
+            if line.startswith("      ") and not line.startswith("        ")
+        ]
+        self.assertLessEqual(len(dispatch_inputs), 10)
+        self.assertEqual(len(dispatch_inputs), 8)
+        self.assertIn("run_coordinates", dispatch_inputs)
         self.assertNotIn("\n  push:", text)
         self.assertIn("  actions: read\n  contents: read\n  packages: read\n", text)
         self.assertIn("group: protected-exact-byte-promotion", text)

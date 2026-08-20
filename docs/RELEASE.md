@@ -95,6 +95,18 @@ The historical `release.yml` workflow is retired and disabled. Candidate work
 uses a new workflow path that did not exist at any published historical tag,
 so `workflow_dispatch` cannot select old tag-controlled publishing code.
 
+The protected dispatch carries its six CI, candidate, and platform run
+coordinates in the `run_coordinates` string input so the workflow remains
+within GitHub's ten-input limit. The value must be canonical JSON with exactly
+these string fields (replace the example values):
+
+```json
+{"candidate_run_attempt":"1","candidate_run_id":"200","ci_run_attempt":"1","ci_run_id":"100","platform_qualification_run_attempt":"1","platform_qualification_run_id":"300"}
+```
+
+Duplicate, missing, unknown, numeric, zero, leading-zero, oversized, or
+non-canonical values fail before any remote state is inspected or mutated.
+
 The protected promotion workflow also requires the exact platform run ID,
 attempt, and canonical seven-artifact identity described in
 [`PLATFORM_PROTOCOL.md`](qualification/PLATFORM_PROTOCOL.md). Its prepare and
